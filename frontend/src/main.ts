@@ -19,4 +19,15 @@ app.use(createPinia());
 app.use(router);
 app.use(i18n);
 
+// Suppress TDesign textarea autosize error when DOM element is unmounted
+// before the async height calculation fires (known TDesign issue).
+window.addEventListener('unhandledrejection', (event) => {
+  if (
+    event.reason instanceof TypeError &&
+    event.reason.message?.includes('getComputedStyle')
+  ) {
+    event.preventDefault();
+  }
+});
+
 app.mount("#app");

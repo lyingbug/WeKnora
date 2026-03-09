@@ -963,6 +963,7 @@ export default {
     readOnlyFromAgent: "仅在此对话中只读，不显示在知识库列表中",
   },
   agent: {
+    think: "思考",
     taskLabel: "任务:",
     copy: "复制",
     addToKnowledgeBase: "添加到知识库",

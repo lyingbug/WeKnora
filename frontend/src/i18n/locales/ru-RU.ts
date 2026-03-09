@@ -265,6 +265,7 @@ export default {
     rebuildInProgress: 'Документ сейчас анализируется, попробуйте позже'
   },
   agent: {
+    think: 'Размышление',
     taskLabel: 'Задача:',
     copy: 'Копировать',
     addToKnowledgeBase: 'Добавить в базу знаний',

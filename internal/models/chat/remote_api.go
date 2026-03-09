@@ -169,11 +169,11 @@ func (c *RemoteAPIChat) BuildChatCompletionRequest(messages []Message, opts *Cha
 }
 
 // logRequest 记录请求日志
-func (c *RemoteAPIChat) logRequest(ctx context.Context, req any, isStream bool) {
-	if jsonData, err := json.MarshalIndent(req, "", "  "); err == nil {
-		logger.Infof(ctx, "[LLM Request] model=%s, stream=%v, request:\n%s", c.modelName, isStream, string(jsonData))
-	}
-}
+// func (c *RemoteAPIChat) logRequest(ctx context.Context, req any, isStream bool) {
+// 	if jsonData, err := json.MarshalIndent(req, "", "  "); err == nil {
+// 		logger.Infof(ctx, "[LLM Request] model=%s, stream=%v, request:\n%s", c.modelName, isStream, string(jsonData))
+// 	}
+// }
 
 // Chat 进行非流式聊天
 func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *ChatOptions) (*types.ChatResponse, error) {
@@ -187,7 +187,7 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 		}
 	}
 
-	c.logRequest(ctx, req, false)
+	// c.logRequest(ctx, req, false)
 
 	resp, err := c.client.CreateChatCompletion(ctx, req)
 	if err != nil {
@@ -312,7 +312,7 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 		}
 	}
 
-	c.logRequest(ctx, req, true)
+	// c.logRequest(ctx, req, true)
 
 	streamChan := make(chan types.StreamResponse)
 

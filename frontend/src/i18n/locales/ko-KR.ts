@@ -970,6 +970,7 @@ export default {
     readOnlyFromAgent: "이 대화에서는 읽기 전용이며 지식베이스 목록에는 표시되지 않습니다.",
   },
   agent: {
+    think: "사고",
     taskLabel: "작업:",
     copy: "복사",
     addToKnowledgeBase: "지식베이스에 추가",

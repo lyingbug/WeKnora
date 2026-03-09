@@ -308,20 +308,35 @@ func (e *AgentEngine) executeLoop(
 				"round":      state.CurrentRound + 1,
 				"answer_len": len(response.Content),
 			})
-			state.FinalAnswer = response.Content
-			state.IsComplete = true
-			state.RoundSteps = append(state.RoundSteps, step)
+		state.FinalAnswer = response.Content
+		state.IsComplete = true
+		state.RoundSteps = append(state.RoundSteps, step)
 
-			// Emit final answer done marker
+		// LLM answered directly without calling the final_answer tool.
+		// The content was only streamed as thought events, so re-emit it as final answer.
+		answerEventID := generateEventID("answer")
+		if response.Content != "" {
 			e.eventBus.Emit(ctx, event.Event{
-				ID:        generateEventID("answer-done"),
+				ID:        answerEventID,
 				Type:      event.EventAgentFinalAnswer,
 				SessionID: sessionID,
 				Data: event.AgentFinalAnswerData{
-					Content: "",
-					Done:    true,
+					Content: response.Content,
+					Done:    false,
 				},
 			})
+		}
+
+		// Emit final answer done marker
+		e.eventBus.Emit(ctx, event.Event{
+			ID:        answerEventID,
+			Type:      event.EventAgentFinalAnswer,
+			SessionID: sessionID,
+			Data: event.AgentFinalAnswerData{
+				Content: "",
+				Done:    true,
+			},
+		})
 			logger.Infof(
 				ctx,
 				"[Agent][Round-%d] Duration: %dms",
@@ -824,6 +839,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 
 	pendingToolCalls := make(map[string]bool)
 	thinkingToolIDs := make(map[string]string) // tool_call_id -> event ID for thinking tool streams
+	hasEmittedThought := false
 
 	// Generate a single ID for this entire thinking stream
 	thinkingID := generateEventID("thinking")
@@ -895,16 +911,30 @@ func (e *AgentEngine) streamThinkingToEventBus(
 			}
 
 			if chunk.Content != "" {
-				// logger.Debugf(ctx, "[Agent][Thinking][Iteration-%d] Emitting thought chunk: %d chars",
-				// 	iteration+1, len(chunk.Content))
+				hasEmittedThought = true
 				e.eventBus.Emit(ctx, event.Event{
-					ID:        thinkingID, // Same ID for all chunks in this stream
+					ID:        thinkingID,
 					Type:      event.EventAgentThought,
 					SessionID: sessionID,
 					Data: event.AgentThoughtData{
 						Content:   chunk.Content,
 						Iteration: iteration,
-						Done:      chunk.Done,
+						Done:      false,
+					},
+				})
+			}
+
+			// Emit thought done marker when the stream ends, only if we emitted content
+			if chunk.Done && hasEmittedThought {
+				hasEmittedThought = false
+				e.eventBus.Emit(ctx, event.Event{
+					ID:        thinkingID,
+					Type:      event.EventAgentThought,
+					SessionID: sessionID,
+					Data: event.AgentThoughtData{
+						Content:   "",
+						Iteration: iteration,
+						Done:      true,
 					},
 				})
 			}

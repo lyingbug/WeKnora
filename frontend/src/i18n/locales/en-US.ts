@@ -275,6 +275,7 @@ export default {
   },
 
   agent: {
+    think: 'Thinking',
     taskLabel: 'Task:',
     copy: 'Copy',
     addToKnowledgeBase: 'Add to Knowledge Base',

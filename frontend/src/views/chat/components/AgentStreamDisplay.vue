@@ -792,22 +792,40 @@ const buildFullEventList = (stream: any[]) => {
       lastTask = currentTask;
     }
 
-    // Merge consecutive thinking-like events
+    // Merge consecutive thinking-like events with deduplication.
+    // The LLM may output the same reasoning as both regular content (type:'thinking')
+    // and a thinking tool argument (type:'tool_call', tool_name:'thinking'), so we
+    // skip content that is already contained in the accumulated text.
     if (isThinkingLikeEvent(event) && result.length > 0) {
       const prev = result[result.length - 1];
       if (isThinkingLikeEvent(prev)) {
-        // Merge into previous: combine content
         const prevContent = prev._mergedContent || getThinkingContent(prev);
         const curContent = getThinkingContent(event);
+        // Skip empty or already-contained content
+        if (!curContent || prevContent.includes(curContent)) {
+          continue;
+        }
+        // New content is a superset of previous — replace
+        if (curContent.includes(prevContent)) {
+          result[result.length - 1] = {
+            type: 'thinking',
+            event_id: prev.event_id || (event.type === 'thinking' ? event.event_id : prev.event_id),
+            content: curContent,
+            thinking: prev.thinking || event.thinking,
+            timestamp: prev.timestamp,
+            _mergedContent: curContent,
+          };
+          continue;
+        }
+        // Truly different content — concatenate
         const merged = [prevContent, curContent].filter(Boolean).join('\n\n');
-        // Replace previous with a merged thinking event
         result[result.length - 1] = {
           type: 'thinking',
           event_id: prev.event_id,
           content: merged,
           thinking: prev.thinking || event.thinking,
           timestamp: prev.timestamp,
-          _mergedContent: merged, // track for further merges
+          _mergedContent: merged,
         };
         continue;
       }
@@ -1902,8 +1920,8 @@ const handleAddToKnowledge = (answerEvent: any) => {
 .tree-child {
   position: relative;
   padding-left: 20px; // space for the horizontal branch
-  padding-bottom: 0;
-  margin-bottom: 6px; // gap between children
+  padding-bottom: 6px; // use padding so ::before vertical line covers the gap
+  margin-bottom: 0;
 
   // vertical trunk line (continues for non-last children)
   &::before {
@@ -1913,7 +1931,7 @@ const handleAddToKnowledge = (answerEvent: any) => {
     top: 0;
     bottom: 0;
     width: 0;
-    border-left: 1px dashed var(--td-component-stroke);
+    border-left: 1px dashed var(--td-component-border);
   }
 
   // horizontal branch connector
@@ -1923,12 +1941,12 @@ const handleAddToKnowledge = (answerEvent: any) => {
     top: 15px; // align with the middle of the child card header
     width: 16px;
     height: 0;
-    border-top: 1px dashed var(--td-component-stroke);
+    border-top: 1px dashed var(--td-component-border);
   }
 
   // last child: vertical line only goes to the branch, then stops
   &.tree-child-last {
-    margin-bottom: 0;
+    padding-bottom: 0;
 
     &::before {
       bottom: auto;
@@ -2092,7 +2110,7 @@ const handleAddToKnowledge = (answerEvent: any) => {
   }
 
   .answer-toolbar {
-    margin-top: 4px;
+    margin-top: 14px;
   }
 }
 
