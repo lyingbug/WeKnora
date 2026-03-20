@@ -177,6 +177,20 @@ type CustomAgentConfig struct {
 	FallbackResponse string `yaml:"fallback_response" json:"fallback_response"`
 	// Fallback prompt (when FallbackStrategy is "model")
 	FallbackPrompt string `yaml:"fallback_prompt" json:"fallback_prompt"`
+
+	// ===== Sub-Agent Settings =====
+	// Whether this agent can delegate tasks to sub-agents
+	SubAgentEnabled bool `yaml:"sub_agent_enabled" json:"sub_agent_enabled"`
+	// Maximum sub-agent recursion depth (default: 3)
+	SubAgentMaxDepth int `yaml:"sub_agent_max_depth" json:"sub_agent_max_depth"`
+	// Maximum parallel sub-agents for fan_out_agents tool (default: 5)
+	SubAgentMaxParallel int `yaml:"sub_agent_max_parallel" json:"sub_agent_max_parallel"`
+	// Token budget for all sub-agent executions (default: 256K)
+	SubAgentTokenBudget int `yaml:"sub_agent_token_budget" json:"sub_agent_token_budget"`
+	// List of agent IDs this agent is allowed to call as sub-agents
+	AllowedSubAgents []string `yaml:"allowed_sub_agents" json:"allowed_sub_agents"`
+	// Whether this agent can be called as a sub-agent by other agents (default: false)
+	CanBeSubAgent bool `yaml:"can_be_sub_agent" json:"can_be_sub_agent"`
 }
 
 // Value implements driver.Valuer interface for CustomAgentConfig
@@ -245,6 +259,16 @@ func (a *CustomAgent) EnsureDefaults() {
 	}
 	if a.Config.MaxCompletionTokens == 0 {
 		a.Config.MaxCompletionTokens = 2048
+	}
+	// Sub-agent defaults
+	if a.Config.SubAgentMaxDepth == 0 {
+		a.Config.SubAgentMaxDepth = 3
+	}
+	if a.Config.SubAgentMaxParallel == 0 {
+		a.Config.SubAgentMaxParallel = 5
+	}
+	if a.Config.SubAgentTokenBudget == 0 {
+		a.Config.SubAgentTokenBudget = 256 * 1024 // 256K tokens
 	}
 	// Agent mode should always enable multi-turn conversation
 	if a.Config.AgentMode == AgentModeSmartReasoning {

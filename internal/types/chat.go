@@ -60,6 +60,15 @@ const (
 	ResponseTypeAgentQuery ResponseType = "agent_query"
 	// Complete response type (agent complete)
 	ResponseTypeComplete ResponseType = "complete"
+
+	// Sub-agent response types
+	ResponseTypeSubAgentStart    ResponseType = "sub_agent_start"
+	ResponseTypeSubAgentThought  ResponseType = "sub_agent_thought"
+	ResponseTypeSubAgentToolCall ResponseType = "sub_agent_tool_call"
+	ResponseTypeSubAgentToolResult ResponseType = "sub_agent_tool_result"
+	ResponseTypeSubAgentAnswer   ResponseType = "sub_agent_answer"
+	ResponseTypeSubAgentComplete ResponseType = "sub_agent_complete"
+	ResponseTypeSubAgentError    ResponseType = "sub_agent_error"
 )
 
 // StreamResponse stream response

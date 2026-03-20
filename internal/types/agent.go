@@ -38,6 +38,13 @@ type AgentConfig struct {
 	SkillsEnabled bool     `json:"skills_enabled"` // Whether skills are enabled (default: false)
 	SkillDirs     []string `json:"skill_dirs"`     // Directories to search for skills
 	AllowedSkills []string `json:"allowed_skills"` // Skill names whitelist (empty = allow all)
+
+	// Sub-agent configuration
+	SubAgentEnabled     bool     `json:"sub_agent_enabled"`      // Whether sub-agent delegation is enabled
+	SubAgentMaxDepth    int      `json:"sub_agent_max_depth"`    // Maximum recursion depth (default: 3)
+	SubAgentMaxParallel int      `json:"sub_agent_max_parallel"` // Max parallel sub-agents for fan_out (default: 5)
+	SubAgentTokenBudget int      `json:"sub_agent_token_budget"` // Global token budget for all sub-agents (default: 256K)
+	AllowedSubAgents    []string `json:"allowed_sub_agents"`     // Whitelist of sub-agent IDs (empty = deny all)
 }
 
 // SessionAgentConfig represents session-level agent configuration
@@ -182,6 +189,22 @@ type AgentState struct {
 	IsComplete    bool            `json:"is_complete"`    // Whether agent has finished
 	FinalAnswer   string          `json:"final_answer"`   // The final answer to the query
 	KnowledgeRefs []*SearchResult `json:"knowledge_refs"` // Collected knowledge references
+
+	// Sub-agent execution records (populated when sub-agents are called)
+	SubAgentCalls []SubAgentCallRecord `json:"sub_agent_calls,omitempty"`
+}
+
+// SubAgentCallRecord records a single sub-agent invocation
+type SubAgentCallRecord struct {
+	TraceID    string `json:"trace_id"`
+	AgentID    string `json:"agent_id"`
+	AgentName  string `json:"agent_name"`
+	Task       string `json:"task"`
+	Depth      int    `json:"depth"`
+	Steps      int    `json:"steps"`
+	DurationMs int64  `json:"duration_ms"`
+	Success    bool   `json:"success"`
+	Error      string `json:"error,omitempty"`
 }
 
 // FunctionDefinition represents a function definition for LLM function calling
