@@ -54,6 +54,16 @@ const (
 	EventAgentReferences  EventType = "references"   // 知识引用
 	EventAgentFinalAnswer EventType = "final_answer" // 最终答案
 
+	// Sub-agent streaming events (forwarded from child agents with hierarchy metadata)
+	EventSubAgentStart      EventType = "sub_agent.start"        // 子 Agent 开始执行
+	EventSubAgentThought    EventType = "sub_agent.thought"      // 子 Agent 思考过程
+	EventSubAgentToolCall   EventType = "sub_agent.tool_call"    // 子 Agent 工具调用
+	EventSubAgentToolResult EventType = "sub_agent.tool_result"  // 子 Agent 工具结果
+	EventSubAgentReflection EventType = "sub_agent.reflection"   // 子 Agent 反思
+	EventSubAgentAnswer     EventType = "sub_agent.final_answer" // 子 Agent 最终答案
+	EventSubAgentComplete   EventType = "sub_agent.complete"     // 子 Agent 执行完成
+	EventSubAgentError      EventType = "sub_agent.error"        // 子 Agent 执行错误
+
 	// Error events
 	EventError EventType = "error" // 错误事件
 

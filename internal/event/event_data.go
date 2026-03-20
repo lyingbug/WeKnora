@@ -208,3 +208,26 @@ type StopData struct {
 	MessageID string `json:"message_id"`
 	Reason    string `json:"reason,omitempty"` // Optional reason for stopping
 }
+
+// === Sub-Agent Event Data Structures ===
+
+// SubAgentStartData represents sub-agent start event data
+type SubAgentStartData struct {
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name"`
+	Task      string `json:"task"`
+	Depth     int    `json:"depth"`
+	TraceID   string `json:"trace_id"`
+}
+
+// SubAgentCompleteData represents sub-agent completion event data
+type SubAgentCompleteData struct {
+	AgentID     string `json:"agent_id"`
+	AgentName   string `json:"agent_name"`
+	FinalAnswer string `json:"final_answer"`
+	Depth       int    `json:"depth"`
+	DurationMs  int64  `json:"duration_ms"`
+	StepsCount  int    `json:"steps_count"`
+	TokensUsed  int    `json:"tokens_used"`
+	TraceID     string `json:"trace_id"`
+}
