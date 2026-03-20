@@ -40,6 +40,7 @@ type agentService struct {
 	chunkService          interfaces.ChunkService
 	duckdb                *sql.DB
 	webSearchStateService interfaces.WebSearchStateService
+	customAgentService    interfaces.CustomAgentService
 }
 
 // NewAgentService creates a new agent service
@@ -57,6 +58,7 @@ func NewAgentService(
 	webSearchService interfaces.WebSearchService,
 	duckdb *sql.DB,
 	webSearchStateService interfaces.WebSearchStateService,
+	customAgentService interfaces.CustomAgentService,
 ) interfaces.AgentService {
 	return &agentService{
 		cfg:                   cfg,
@@ -72,6 +74,7 @@ func NewAgentService(
 		webSearchService:      webSearchService,
 		duckdb:                duckdb,
 		webSearchStateService: webSearchStateService,
+		customAgentService:    customAgentService,
 	}
 }
 
@@ -213,6 +216,15 @@ func (s *agentService) CreateAgentEngine(
 		} else if skillsManager != nil {
 			engine.SetSkillsManager(skillsManager)
 			logger.Infof(ctx, "Skills manager initialized with %d skills", len(skillsManager.GetAllMetadata()))
+		}
+	}
+
+	// Load sub-agent metadata for prompt injection
+	if config.SubAgentEnabled && len(config.AllowedSubAgents) > 0 {
+		subAgentInfos := s.loadSubAgentInfos(ctx, config.AllowedSubAgents)
+		if len(subAgentInfos) > 0 {
+			engine.SetSubAgentInfos(subAgentInfos)
+			logger.Infof(ctx, "Sub-agent infos loaded: %d agents available for delegation", len(subAgentInfos))
 		}
 	}
 
@@ -407,6 +419,14 @@ func (s *agentService) registerTools(
 		case tools.ToolFinalAnswer:
 			toolToRegister = tools.NewFinalAnswerTool()
 			logger.Infof(ctx, "Registered final_answer tool")
+
+		case tools.ToolCallSubAgent:
+			// Handled separately after the loop (requires orchestrator)
+			continue
+		case tools.ToolFanOutAgents:
+			// Handled separately after the loop (requires orchestrator)
+			continue
+
 		default:
 			logger.Warnf(ctx, "Unknown tool: %s", toolName)
 		}
@@ -420,6 +440,33 @@ func (s *agentService) registerTools(
 	}
 
 	logger.Infof(ctx, "Registered %d tools", len(registry.ListTools()))
+
+	// Register sub-agent tools if enabled
+	if config.SubAgentEnabled && len(config.AllowedSubAgents) > 0 {
+		tokenBudget := agent.NewTokenBudget(config.SubAgentTokenBudget)
+		orchestrator := agent.NewSubAgentOrchestrator(
+			s,
+			s.customAgentService,
+			s.modelService,
+			s.eventBus,
+			sessionID,
+			config,
+			tokenBudget,
+		)
+
+		// Check if call_sub_agent is in allowed tools
+		for _, tn := range allowedTools {
+			if tn == tools.ToolCallSubAgent {
+				registry.RegisterTool(tools.NewCallSubAgentTool(orchestrator, config.AllowedSubAgents))
+				logger.Infof(ctx, "Registered call_sub_agent tool with %d allowed sub-agents", len(config.AllowedSubAgents))
+			}
+			if tn == tools.ToolFanOutAgents {
+				registry.RegisterTool(tools.NewFanOutAgentsTool(orchestrator, config.AllowedSubAgents, config.SubAgentMaxParallel))
+				logger.Infof(ctx, "Registered fan_out_agents tool with max_parallel=%d", config.SubAgentMaxParallel)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -595,4 +642,26 @@ func (s *agentService) getSelectedDocumentInfos(ctx context.Context, knowledgeID
 
 	logger.Infof(ctx, "Loaded %d selected documents metadata for prompt", len(selectedDocs))
 	return selectedDocs, nil
+}
+
+// loadSubAgentInfos loads metadata for the allowed sub-agents so it can be injected into the system prompt.
+func (s *agentService) loadSubAgentInfos(ctx context.Context, allowedIDs []string) []agent.SubAgentInfo {
+	infos := make([]agent.SubAgentInfo, 0, len(allowedIDs))
+	for _, id := range allowedIDs {
+		ca, err := s.customAgentService.GetAgentByID(ctx, id)
+		if err != nil {
+			logger.Warnf(ctx, "Failed to load sub-agent metadata for %s: %v", id, err)
+			continue
+		}
+		if !ca.Config.CanBeSubAgent {
+			logger.Warnf(ctx, "Sub-agent %s is not configured as callable sub-agent, skipping", id)
+			continue
+		}
+		infos = append(infos, agent.SubAgentInfo{
+			ID:          ca.ID,
+			Name:        ca.Name,
+			Description: ca.Description,
+		})
+	}
+	return infos
 }

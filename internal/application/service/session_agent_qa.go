@@ -232,6 +232,15 @@ func (s *sessionService) buildAgentConfig(
 		agentConfig.SystemPrompt = customAgent.Config.SystemPrompt
 	}
 
+	// Configure sub-agent delegation if enabled
+	if customAgent.Config.SubAgentEnabled {
+		agentConfig.SubAgentEnabled = true
+		agentConfig.SubAgentMaxDepth = customAgent.Config.SubAgentMaxDepth
+		agentConfig.SubAgentMaxParallel = customAgent.Config.SubAgentMaxParallel
+		agentConfig.SubAgentTokenBudget = customAgent.Config.SubAgentTokenBudget
+		agentConfig.AllowedSubAgents = customAgent.Config.AllowedSubAgents
+	}
+
 	logger.Infof(ctx, "Custom agent config applied: MaxIterations=%d, Temperature=%.2f, AllowedTools=%v, WebSearchEnabled=%v",
 		agentConfig.MaxIterations, agentConfig.Temperature, agentConfig.AllowedTools, agentConfig.WebSearchEnabled)
 

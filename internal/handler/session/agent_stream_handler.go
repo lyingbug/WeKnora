@@ -66,6 +66,15 @@ func (h *AgentStreamHandler) Subscribe() {
 	h.eventBus.On(event.EventError, h.handleError)
 	h.eventBus.On(event.EventSessionTitle, h.handleSessionTitle)
 	h.eventBus.On(event.EventAgentComplete, h.handleComplete)
+
+	// Subscribe to sub-agent events (forwarded by ScopedEventBus)
+	h.eventBus.On(event.EventSubAgentStart, h.handleSubAgentStart)
+	h.eventBus.On(event.EventSubAgentThought, h.handleSubAgentThought)
+	h.eventBus.On(event.EventSubAgentToolCall, h.handleSubAgentToolCall)
+	h.eventBus.On(event.EventSubAgentToolResult, h.handleSubAgentToolResult)
+	h.eventBus.On(event.EventSubAgentAnswer, h.handleSubAgentAnswer)
+	h.eventBus.On(event.EventSubAgentComplete, h.handleSubAgentComplete)
+	h.eventBus.On(event.EventSubAgentError, h.handleSubAgentError)
 }
 
 // handleThought handles agent thought events
@@ -496,5 +505,201 @@ func (h *AgentStreamHandler) handleComplete(ctx context.Context, evt event.Event
 		logger.GetLogger(h.ctx).Errorf("Append complete event to stream failed: %v", err)
 	}
 
+	return nil
+}
+
+// === Sub-Agent Event Handlers ===
+
+// extractSubAgentMeta extracts common sub-agent metadata from event metadata
+func extractSubAgentMeta(evt event.Event) map[string]interface{} {
+	meta := make(map[string]interface{})
+	if evt.Metadata != nil {
+		for _, key := range []string{"sub_agent_depth", "sub_agent_id", "sub_agent_name", "sub_agent_trace_id"} {
+			if v, ok := evt.Metadata[key]; ok {
+				meta[key] = v
+			}
+		}
+	}
+	return meta
+}
+
+// handleSubAgentStart handles sub-agent start events
+func (h *AgentStreamHandler) handleSubAgentStart(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(event.SubAgentStartData)
+	if !ok {
+		return nil
+	}
+
+	metadata := extractSubAgentMeta(evt)
+	metadata["agent_id"] = data.AgentID
+	metadata["agent_name"] = data.AgentName
+	metadata["task"] = data.Task
+	metadata["depth"] = data.Depth
+	metadata["trace_id"] = data.TraceID
+
+	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
+		ID:        evt.ID,
+		Type:      types.ResponseTypeSubAgentStart,
+		Content:   fmt.Sprintf("Sub-agent %s started: %s", data.AgentName, data.Task),
+		Done:      false,
+		Timestamp: time.Now(),
+		Data:      metadata,
+	}); err != nil {
+		logger.GetLogger(h.ctx).Error("Append sub-agent start event to stream failed", "error", err)
+	}
+	return nil
+}
+
+// handleSubAgentThought handles sub-agent thought events
+func (h *AgentStreamHandler) handleSubAgentThought(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(event.AgentThoughtData)
+	if !ok {
+		return nil
+	}
+
+	metadata := extractSubAgentMeta(evt)
+	metadata["event_id"] = evt.ID
+
+	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
+		ID:        evt.ID,
+		Type:      types.ResponseTypeSubAgentThought,
+		Content:   data.Content,
+		Done:      data.Done,
+		Timestamp: time.Now(),
+		Data:      metadata,
+	}); err != nil {
+		logger.GetLogger(h.ctx).Error("Append sub-agent thought event to stream failed", "error", err)
+	}
+	return nil
+}
+
+// handleSubAgentToolCall handles sub-agent tool call events
+func (h *AgentStreamHandler) handleSubAgentToolCall(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(event.AgentToolCallData)
+	if !ok {
+		return nil
+	}
+
+	metadata := extractSubAgentMeta(evt)
+	metadata["tool_name"] = data.ToolName
+	metadata["tool_call_id"] = data.ToolCallID
+	metadata["arguments"] = data.Arguments
+
+	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
+		ID:        evt.ID,
+		Type:      types.ResponseTypeSubAgentToolCall,
+		Content:   fmt.Sprintf("Sub-agent calling tool: %s", data.ToolName),
+		Done:      false,
+		Timestamp: time.Now(),
+		Data:      metadata,
+	}); err != nil {
+		logger.GetLogger(h.ctx).Error("Append sub-agent tool call event to stream failed", "error", err)
+	}
+	return nil
+}
+
+// handleSubAgentToolResult handles sub-agent tool result events
+func (h *AgentStreamHandler) handleSubAgentToolResult(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(event.AgentToolResultData)
+	if !ok {
+		return nil
+	}
+
+	metadata := extractSubAgentMeta(evt)
+	metadata["tool_name"] = data.ToolName
+	metadata["tool_call_id"] = data.ToolCallID
+	metadata["success"] = data.Success
+	metadata["duration_ms"] = data.Duration
+
+	content := data.Output
+	if !data.Success && data.Error != "" {
+		content = data.Error
+	}
+
+	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
+		ID:        evt.ID,
+		Type:      types.ResponseTypeSubAgentToolResult,
+		Content:   content,
+		Done:      false,
+		Timestamp: time.Now(),
+		Data:      metadata,
+	}); err != nil {
+		logger.GetLogger(h.ctx).Error("Append sub-agent tool result event to stream failed", "error", err)
+	}
+	return nil
+}
+
+// handleSubAgentAnswer handles sub-agent final answer events
+func (h *AgentStreamHandler) handleSubAgentAnswer(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(event.AgentFinalAnswerData)
+	if !ok {
+		return nil
+	}
+
+	metadata := extractSubAgentMeta(evt)
+	metadata["event_id"] = evt.ID
+
+	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
+		ID:        evt.ID,
+		Type:      types.ResponseTypeSubAgentAnswer,
+		Content:   data.Content,
+		Done:      data.Done,
+		Timestamp: time.Now(),
+		Data:      metadata,
+	}); err != nil {
+		logger.GetLogger(h.ctx).Error("Append sub-agent answer event to stream failed", "error", err)
+	}
+	return nil
+}
+
+// handleSubAgentComplete handles sub-agent completion events
+func (h *AgentStreamHandler) handleSubAgentComplete(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(event.SubAgentCompleteData)
+	if !ok {
+		return nil
+	}
+
+	metadata := extractSubAgentMeta(evt)
+	metadata["agent_id"] = data.AgentID
+	metadata["agent_name"] = data.AgentName
+	metadata["duration_ms"] = data.DurationMs
+	metadata["steps_count"] = data.StepsCount
+	metadata["tokens_used"] = data.TokensUsed
+	metadata["trace_id"] = data.TraceID
+
+	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
+		ID:        evt.ID,
+		Type:      types.ResponseTypeSubAgentComplete,
+		Content:   fmt.Sprintf("Sub-agent %s completed", data.AgentName),
+		Done:      true,
+		Timestamp: time.Now(),
+		Data:      metadata,
+	}); err != nil {
+		logger.GetLogger(h.ctx).Error("Append sub-agent complete event to stream failed", "error", err)
+	}
+	return nil
+}
+
+// handleSubAgentError handles sub-agent error events
+func (h *AgentStreamHandler) handleSubAgentError(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(event.ErrorData)
+	if !ok {
+		return nil
+	}
+
+	metadata := extractSubAgentMeta(evt)
+	metadata["stage"] = data.Stage
+	metadata["error"] = data.Error
+
+	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
+		ID:        evt.ID,
+		Type:      types.ResponseTypeSubAgentError,
+		Content:   data.Error,
+		Done:      true,
+		Timestamp: time.Now(),
+		Data:      metadata,
+	}); err != nil {
+		logger.GetLogger(h.ctx).Error("Append sub-agent error event to stream failed", "error", err)
+	}
 	return nil
 }
