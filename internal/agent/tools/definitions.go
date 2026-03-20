@@ -22,6 +22,9 @@ const (
 	// Skills-related tools (only available when skills are enabled)
 	ToolExecuteSkillScript = "execute_skill_script"
 	ToolReadSkill          = "read_skill"
+	// Sub-agent tools (only available when sub-agent delegation is enabled)
+	ToolCallSubAgent = "call_sub_agent"
+	ToolFanOutAgents = "fan_out_agents"
 )
 
 // AvailableTool defines a simple tool metadata used by settings APIs.
@@ -48,6 +51,8 @@ func AvailableToolDefinitions() []AvailableTool {
 		{Name: ToolReadSkill, Label: "读取技能", Description: "按需读取技能内容以学习专业能力"},
 		{Name: ToolExecuteSkillScript, Label: "执行技能脚本", Description: "在沙箱环境中执行技能脚本"},
 		{Name: ToolFinalAnswer, Label: "提交最终回答", Description: "提交最终回答给用户"},
+		{Name: ToolCallSubAgent, Label: "调用子智能体", Description: "将子任务委派给专门的智能体处理，适用于需要特定专长的任务"},
+		{Name: ToolFanOutAgents, Label: "并行子智能体", Description: "并行调用多个智能体处理不同子任务，适用于多视角分析"},
 	}
 }
 

@@ -43,6 +43,7 @@ type AgentEngine struct {
 	systemPromptTemplate string                    // System prompt template (optional, uses default if empty)
 	skillsManager        *skills.Manager           // Skills manager for Progressive Disclosure (optional)
 	appConfig            *appconfig.Config          // Application config for prompt template resolution (optional)
+	subAgentInfos        []SubAgentInfo             // Available sub-agents for prompt injection (optional)
 }
 
 // listToolNames returns tool.function names for logging
@@ -121,6 +122,11 @@ func (e *AgentEngine) SetSkillsManager(manager *skills.Manager) {
 	e.skillsManager = manager
 }
 
+// SetSubAgentInfos sets the available sub-agent information for prompt injection
+func (e *AgentEngine) SetSubAgentInfos(infos []SubAgentInfo) {
+	e.subAgentInfos = infos
+}
+
 // GetSkillsManager returns the skills manager
 func (e *AgentEngine) GetSkillsManager() *skills.Manager {
 	return e.skillsManager
@@ -171,6 +177,7 @@ func (e *AgentEngine) Execute(
 				SkillsMetadata: skillsMetadata,
 				Language:       language,
 				Config:         e.appConfig,
+				SubAgentInfos:  e.subAgentInfos,
 			},
 			e.systemPromptTemplate,
 		)
@@ -180,8 +187,9 @@ func (e *AgentEngine) Execute(
 			e.config.WebSearchEnabled,
 			e.selectedDocs,
 			&BuildSystemPromptOptions{
-				Language: language,
-				Config:   e.appConfig,
+				Language:      language,
+				Config:        e.appConfig,
+				SubAgentInfos: e.subAgentInfos,
 			},
 			e.systemPromptTemplate,
 		)

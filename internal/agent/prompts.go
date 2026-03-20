@@ -298,6 +298,14 @@ type BuildSystemPromptOptions struct {
 	SkillsMetadata []*skills.SkillMetadata
 	Language       string         // User language name for {{language}} placeholder (e.g. "Chinese (Simplified)")
 	Config         *config.Config // Config for reading prompt templates; nil falls back to hardcoded defaults
+	SubAgentInfos  []SubAgentInfo // Available sub-agents for delegation
+}
+
+// SubAgentInfo holds metadata about an available sub-agent (for prompt injection)
+type SubAgentInfo struct {
+	ID          string
+	Name        string
+	Description string
 }
 
 // BuildSystemPrompt builds the progressive RAG system prompt
@@ -356,6 +364,11 @@ func BuildSystemPromptWithOptions(
 		basePrompt += formatSkillsMetadata(options.SkillsMetadata)
 	}
 
+	// Append sub-agent information if available
+	if options != nil && len(options.SubAgentInfos) > 0 {
+		basePrompt += formatSubAgentSection(options.SubAgentInfos)
+	}
+
 	return basePrompt
 }
 
@@ -381,4 +394,33 @@ func GetProgressiveRAGSystemPrompt(cfg *config.Config) string {
 		}
 	}
 	return ""
+}
+
+// formatSubAgentSection builds the sub-agent information section for the system prompt.
+// This tells the LLM which sub-agents are available for delegation via call_sub_agent / fan_out_agents tools.
+func formatSubAgentSection(agents []SubAgentInfo) string {
+	if len(agents) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n\n## Available Sub-Agents\n\n")
+	sb.WriteString("You can delegate tasks to the following specialized agents using the `call_sub_agent` or `fan_out_agents` tools.\n\n")
+
+	for _, a := range agents {
+		desc := a.Description
+		if desc == "" {
+			desc = "(no description)"
+		}
+		sb.WriteString(fmt.Sprintf("- **%s** (ID: `%s`): %s\n", a.Name, a.ID, desc))
+	}
+
+	sb.WriteString("\nGuidelines for sub-agent delegation:\n")
+	sb.WriteString("- Use `call_sub_agent` when a single sub-agent can handle a specific sub-task.\n")
+	sb.WriteString("- Use `fan_out_agents` when multiple sub-agents should work on different sub-tasks in parallel.\n")
+	sb.WriteString("- Always provide clear, self-contained task descriptions for sub-agents.\n")
+	sb.WriteString("- Include relevant context from the current conversation that the sub-agent needs.\n")
+	sb.WriteString("- Sub-agent results are tool outputs — synthesize them into your final answer.\n")
+
+	return sb.String()
 }
