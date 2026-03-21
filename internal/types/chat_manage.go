@@ -165,6 +165,8 @@ const (
 	CHAT_COMPLETION_STREAM EventType = "chat_completion_stream" // Stream chat completion
 	STREAM_FILTER          EventType = "stream_filter"          // Filter streaming output
 	FILTER_TOP_K           EventType = "filter_top_k"           // Keep only top K results
+	REWRITE_PARALLEL       EventType = "rewrite_parallel"       // Parallel: REWRITE_QUERY + IMAGE_ANALYSIS
+	IMAGE_ANALYSIS         EventType = "image_analysis"         // Standalone VLM image analysis
 	MEMORY_RETRIEVAL       EventType = "memory_retrieval"       // Retrieve memory context
 	MEMORY_STORAGE         EventType = "memory_storage"         // Store conversation to memory
 )
@@ -193,7 +195,7 @@ var Pipline = map[string][]EventType{
 		CHAT_COMPLETION,
 	},
 	"rag_stream": { // Streaming Retrieval Augmented Generation
-		REWRITE_QUERY,
+		REWRITE_PARALLEL,      // Parallel: REWRITE_QUERY + IMAGE_ANALYSIS
 		CHUNK_SEARCH_PARALLEL, // Parallel: CHUNK_SEARCH + ENTITY_SEARCH
 		CHUNK_RERANK,
 		CHUNK_MERGE,
