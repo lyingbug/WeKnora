@@ -26,10 +26,7 @@ conversation:
     repeat_penalty: 1.0
     temperature: 0.3
     max_completion_tokens: 2048
-    no_match_prefix: |-
-      <think>
-      </think>
-      NO_MATCH
+    no_match_prefix: "NO_MATCH"
     prompt_id: "default_kb"  # from prompt_templates/system_prompt.yaml
     context_template_id: "default_context"  # from prompt_templates/context_template.yaml
   extract_entities_prompt_id: "default_extract_entities"          # from prompt_templates/graph_extraction.yaml

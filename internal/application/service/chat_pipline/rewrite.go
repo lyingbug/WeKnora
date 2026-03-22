@@ -27,8 +27,8 @@ type PluginRewrite struct {
 	config         *config.Config            // System configuration
 }
 
-// reg is a regular expression used to match and remove content between <think></think> tags
-var reg = regexp.MustCompile(`(?s)<think>.*?</think>`)
+// regThinkRewrite is a regular expression used to match and remove content between <think></think> tags
+var regThinkRewrite = regexp.MustCompile(`(?s)<think>.*?</think>`)
 var rewriteImageSepPattern = regexp.MustCompile(`(?s)^(.*?)\s*\n?---\n(.*)$`)
 
 const (
@@ -260,7 +260,7 @@ func (p *PluginRewrite) loadHistory(ctx context.Context, chatManage *types.ChatM
 				h.Query += "\n\n[用户上传图片内容]\n" + desc
 			}
 		} else {
-			h.Answer = reg.ReplaceAllString(message.Content, "")
+			h.Answer = regThinkRewrite.ReplaceAllString(message.Content, "")
 			h.KnowledgeReferences = message.KnowledgeReferences
 		}
 		historyMap[message.RequestID] = h
