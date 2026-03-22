@@ -2,6 +2,7 @@ package chatpipline
 
 import (
 	"context"
+	"sync"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -73,6 +74,59 @@ func (e *EventManager) Trigger(ctx context.Context,
 ) *PluginError {
 	if handler, ok := e.handlers[eventType]; ok {
 		return handler(ctx, eventType, chatManage)
+	}
+	return nil
+}
+
+// TriggerStep executes a pipeline step. For single-event steps it delegates to Trigger.
+// For multi-event (parallel) steps, it clones ChatManage for each event, runs them
+// concurrently, and merges results back using the step's merge function.
+func (e *EventManager) TriggerStep(ctx context.Context,
+	step types.PipelineStep, chatManage *types.ChatManage,
+) *PluginError {
+	events := step.Events
+	if len(events) == 0 {
+		return nil
+	}
+
+	// Single event: delegate directly (no clone overhead)
+	if len(events) == 1 {
+		return e.Trigger(ctx, events[0], chatManage)
+	}
+
+	// Parallel execution: clone → setup → run → merge
+	clones := make([]*types.ChatManage, len(events))
+	for i := range events {
+		clones[i] = chatManage.Clone()
+	}
+
+	// Apply optional setup (e.g. strip images from rewrite clone)
+	if step.Setup != nil {
+		step.Setup(chatManage, clones)
+	}
+
+	// Run all events concurrently
+	errors := make([]*PluginError, len(events))
+	var wg sync.WaitGroup
+	for i, evt := range events {
+		wg.Add(1)
+		go func(idx int, event types.EventType, cm *types.ChatManage) {
+			defer wg.Done()
+			errors[idx] = e.Trigger(ctx, event, cm)
+		}(i, evt, clones[i])
+	}
+	wg.Wait()
+
+	// Apply merge to combine results from clones back to original
+	if step.Merge != nil {
+		step.Merge(chatManage, clones)
+	}
+
+	// Return first critical error (ignore ErrSearchNothing from individual branches)
+	for _, err := range errors {
+		if err != nil && err != ErrSearchNothing {
+			return err
+		}
 	}
 	return nil
 }

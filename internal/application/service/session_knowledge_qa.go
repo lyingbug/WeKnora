@@ -134,7 +134,7 @@ func (s *sessionService) KnowledgeQA(
 	// Determine pipeline based on knowledge bases availability and web search setting
 	// If no knowledge bases are selected AND web search is disabled, use pure chat pipeline
 	// Otherwise use rag_stream pipeline (which handles both KB search and web search)
-	var pipeline []types.EventType
+	var pipeline []types.PipelineStep
 	if len(knowledgeBaseIDs) == 0 && len(knowledgeIDs) == 0 && !req.WebSearchEnabled {
 		logger.Info(ctx, "No knowledge bases selected and web search disabled, using chat pipeline")
 		// For pure chat, UserContent is the Query (since INTO_CHAT_MESSAGE is skipped)
@@ -461,9 +461,10 @@ func (s *sessionService) buildSearchTargets(
 	return targets, nil
 }
 
-// KnowledgeQAByEvent processes knowledge QA through a series of events in the pipeline
+// KnowledgeQAByEvent processes knowledge QA through a series of pipeline steps.
+// Steps may be sequential (single event) or parallel (multiple events).
 func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
-	chatManage *types.ChatManage, eventList []types.EventType,
+	chatManage *types.ChatManage, pipeline []types.PipelineStep,
 ) error {
 	ctx, span := tracing.ContextWithSpan(ctx, "SessionService.KnowledgeQAByEvent")
 	defer span.End()
@@ -474,8 +475,8 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 
 	// Prepare method list for logging and tracing
 	methods := []string{}
-	for _, event := range eventList {
-		methods = append(methods, string(event))
+	for _, step := range pipeline {
+		methods = append(methods, step.String())
 	}
 
 	// Set up tracing attributes
@@ -486,17 +487,17 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 		attribute.String("method", strings.Join(methods, ",")),
 	)
 
-	// Process each event in sequence
-	for _, eventType := range eventList {
-		logger.Infof(ctx, "Starting to trigger event: %v", eventType)
-		err := s.eventManager.Trigger(ctx, eventType, chatManage)
+	// Process each step in sequence (parallel steps are handled internally by TriggerStep)
+	for _, step := range pipeline {
+		logger.Infof(ctx, "Starting to trigger step: %v", step.String())
+		err := s.eventManager.TriggerStep(ctx, step, chatManage)
 
 		// Handle case where search returns no results
 		if err == chatpipline.ErrSearchNothing {
 			logger.Warnf(
 				ctx,
-				"Event %v triggered, search result is empty, using fallback response, strategy: %v",
-				eventType,
+				"Step %v triggered, search result is empty, using fallback response, strategy: %v",
+				step.String(),
 				chatManage.FallbackStrategy,
 			)
 			s.handleFallbackResponse(ctx, chatManage)
@@ -505,17 +506,17 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 
 		// Handle other errors
 		if err != nil {
-			logger.Errorf(ctx, "Event triggering failed, event: %v, error type: %s, description: %s, error: %v",
-				eventType, err.ErrorType, err.Description, err.Err)
+			logger.Errorf(ctx, "Step triggering failed, step: %v, error type: %s, description: %s, error: %v",
+				step.String(), err.ErrorType, err.Description, err.Err)
 			span.RecordError(err.Err)
 			span.SetStatus(codes.Error, err.Description)
 			span.SetAttributes(attribute.String("error_type", err.ErrorType))
 			return err.Err
 		}
-		logger.Infof(ctx, "Event %v triggered successfully", eventType)
+		logger.Infof(ctx, "Step %v triggered successfully", step.String())
 	}
 
-	logger.Info(ctx, "All events triggered successfully")
+	logger.Info(ctx, "All steps triggered successfully")
 	return nil
 }
 
@@ -594,11 +595,11 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 	}
 
 	// Use specific event list, only including retrieval-related events, not LLM summarization
-	searchEvents := []types.EventType{
-		types.CHUNK_SEARCH, // Vector search
-		types.CHUNK_RERANK, // Rerank search results
-		types.CHUNK_MERGE,  // Merge search results
-		types.FILTER_TOP_K, // Filter top K results
+	searchSteps := []types.PipelineStep{
+		types.Step(types.CHUNK_SEARCH),  // Vector search
+		types.Step(types.CHUNK_RERANK),  // Rerank search results
+		types.Step(types.CHUNK_MERGE),   // Merge search results
+		types.Step(types.FILTER_TOP_K),  // Filter top K results
 	}
 
 	ctx, span := tracing.ContextWithSpan(ctx, "SessionService.SearchKnowledge")
@@ -606,8 +607,8 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 
 	// Prepare method list for logging and tracing
 	methods := []string{}
-	for _, event := range searchEvents {
-		methods = append(methods, string(event))
+	for _, step := range searchSteps {
+		methods = append(methods, step.String())
 	}
 
 	// Set up tracing attributes
@@ -619,27 +620,27 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 		attribute.String("method", strings.Join(methods, ",")),
 	)
 
-	// Process each search event in sequence
-	for _, event := range searchEvents {
-		logger.Infof(ctx, "Starting to trigger search event: %v", event)
-		err := s.eventManager.Trigger(ctx, event, chatManage)
+	// Process each search step in sequence
+	for _, step := range searchSteps {
+		logger.Infof(ctx, "Starting to trigger search step: %v", step.String())
+		err := s.eventManager.TriggerStep(ctx, step, chatManage)
 
 		// Handle case where search returns no results
 		if err == chatpipline.ErrSearchNothing {
-			logger.Warnf(ctx, "Event %v triggered, search result is empty", event)
+			logger.Warnf(ctx, "Step %v triggered, search result is empty", step.String())
 			return []*types.SearchResult{}, nil
 		}
 
 		// Handle other errors
 		if err != nil {
-			logger.Errorf(ctx, "Event triggering failed, event: %v, error type: %s, description: %s, error: %v",
-				event, err.ErrorType, err.Description, err.Err)
+			logger.Errorf(ctx, "Step triggering failed, step: %v, error type: %s, description: %s, error: %v",
+				step.String(), err.ErrorType, err.Description, err.Err)
 			span.RecordError(err.Err)
 			span.SetStatus(codes.Error, err.Description)
 			span.SetAttributes(attribute.String("error_type", err.ErrorType))
 			return nil, err.Err
 		}
-		logger.Infof(ctx, "Event %v triggered successfully", event)
+		logger.Infof(ctx, "Step %v triggered successfully", step.String())
 	}
 
 	logger.Infof(ctx, "Knowledge base search completed, found %d results", len(chatManage.MergeResult))
