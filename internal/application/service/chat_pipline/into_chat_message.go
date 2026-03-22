@@ -148,6 +148,19 @@ func (p *PluginIntoChatMessage) OnEvent(ctx context.Context,
 		userContent += "\n\n[用户上传图片内容]\n" + chatManage.ImageDescription
 	}
 
+	// When extended thinking is enabled, append instructions that guide the model
+	// to leverage its reasoning capabilities on the retrieved context. This helps
+	// the model evaluate relevance, cross-reference passages, and reason more
+	// carefully before answering.
+	if chatManage.SummaryConfig.Thinking != nil && *chatManage.SummaryConfig.Thinking {
+		userContent += "\n\n## Thinking Instructions\n" +
+			"You have extended thinking enabled. In your thinking process:\n" +
+			"- Evaluate the relevance and reliability of each retrieved passage\n" +
+			"- Cross-reference information across multiple passages when possible\n" +
+			"- Identify any contradictions or gaps in the retrieved materials\n" +
+			"- Reason step by step before formulating your final answer"
+	}
+
 	// Set formatted content back to chat management
 	chatManage.UserContent = userContent
 	pipelineInfo(ctx, "IntoChatMessage", "output", map[string]interface{}{
