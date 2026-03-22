@@ -53,6 +53,11 @@ func (p *PluginDataAnalysis) OnEvent(
 	chatManage *types.ChatManage,
 	next func() *PluginError,
 ) *PluginError {
+	// Skip when KB search was bypassed (intent classification)
+	if chatManage.SkipKBSearch {
+		return next()
+	}
+
 	// 1. Check if there are any CSV/Excel files in MergeResult
 	var dataFiles []*types.SearchResult
 	for _, result := range chatManage.MergeResult {

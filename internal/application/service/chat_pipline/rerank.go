@@ -37,6 +37,15 @@ func (p *PluginRerank) ActivationEvents() []types.EventType {
 func (p *PluginRerank) OnEvent(ctx context.Context,
 	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
+	// Skip when KB search was bypassed (intent classification)
+	if chatManage.SkipKBSearch {
+		pipelineInfo(ctx, "Rerank", "skip", map[string]interface{}{
+			"session_id": chatManage.SessionID,
+			"reason":     "skip_kb_search",
+		})
+		return next()
+	}
+
 	pipelineInfo(ctx, "Rerank", "input", map[string]interface{}{
 		"session_id":    chatManage.SessionID,
 		"candidate_cnt": len(chatManage.SearchResult),

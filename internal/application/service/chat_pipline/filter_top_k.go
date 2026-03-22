@@ -26,6 +26,15 @@ func (p *PluginFilterTopK) ActivationEvents() []types.EventType {
 func (p *PluginFilterTopK) OnEvent(ctx context.Context,
 	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
+	// Skip when KB search was bypassed (intent classification)
+	if chatManage.SkipKBSearch {
+		pipelineInfo(ctx, "FilterTopK", "skip", map[string]interface{}{
+			"session_id": chatManage.SessionID,
+			"reason":     "skip_kb_search",
+		})
+		return next()
+	}
+
 	pipelineInfo(ctx, "FilterTopK", "input", map[string]interface{}{
 		"session_id": chatManage.SessionID,
 		"top_k":      chatManage.RerankTopK,
