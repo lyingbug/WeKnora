@@ -48,15 +48,20 @@ func (c *QwenChat) customizeRequest(req *openai.ChatCompletionRequest, opts *Cha
 		return nil, false
 	}
 
-	// 非流式请求需要显式禁用 thinking
-	if !isStream {
-		qwenReq := QwenChatCompletionRequest{
-			ChatCompletionRequest: *req,
-		}
-		enableThinking := false
-		qwenReq.EnableThinking = &enableThinking
-		return qwenReq, true
+	qwenReq := QwenChatCompletionRequest{
+		ChatCompletionRequest: *req,
 	}
 
-	return nil, false
+	// 根据 opts.Thinking 配置显式设置 enable_thinking 参数
+	// 流式和非流式请求都需要正确传递该参数
+	if opts != nil && opts.Thinking != nil {
+		enableThinking := *opts.Thinking
+		qwenReq.EnableThinking = &enableThinking
+	} else {
+		// 未配置时默认禁用 thinking，避免 Qwen3 默认开启思考
+		enableThinking := false
+		qwenReq.EnableThinking = &enableThinking
+	}
+
+	return qwenReq, true
 }
