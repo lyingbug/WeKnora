@@ -58,6 +58,15 @@ func (p *PluginSearch) ActivationEvents() []types.EventType {
 func (p *PluginSearch) OnEvent(ctx context.Context,
 	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
+	// Intent-based skip: rewrite step determined KB retrieval is unnecessary
+	if chatManage.SkipKBSearch {
+		pipelineInfo(ctx, "Search", "skip", map[string]interface{}{
+			"session_id": chatManage.SessionID,
+			"reason":     "intent_no_search",
+		})
+		return next()
+	}
+
 	// Check if we have search targets or web search enabled
 	hasKBTargets := len(chatManage.SearchTargets) > 0 || len(chatManage.KnowledgeBaseIDs) > 0 || len(chatManage.KnowledgeIDs) > 0
 	if !hasKBTargets && !chatManage.WebSearchEnabled {

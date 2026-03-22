@@ -36,7 +36,7 @@ type SessionService interface {
 	// Events are emitted through eventBus (references, answer chunks, completion).
 	KnowledgeQA(ctx context.Context, req *types.QARequest, eventBus *event.EventBus) error
 	// KnowledgeQAByEvent performs knowledge-based question answering by event
-	KnowledgeQAByEvent(ctx context.Context, chatManage *types.ChatManage, eventList []types.EventType) error
+	KnowledgeQAByEvent(ctx context.Context, chatManage *types.ChatManage, pipeline []types.PipelineStep) error
 	// SearchKnowledge performs knowledge-based search, without summarization
 	// knowledgeBaseIDs: list of knowledge base IDs to search (supports multi-KB)
 	// knowledgeIDs: list of specific knowledge (file) IDs to search

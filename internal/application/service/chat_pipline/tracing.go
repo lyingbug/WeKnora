@@ -34,7 +34,8 @@ func (p *PluginTracing) ActivationEvents() []types.EventType {
 		types.CHAT_COMPLETION_STREAM,
 		types.FILTER_TOP_K,
 		types.REWRITE_QUERY,
-		types.CHUNK_SEARCH_PARALLEL,
+		types.ENTITY_SEARCH,
+		types.IMAGE_ANALYSIS,
 	}
 }
 
@@ -69,8 +70,10 @@ func (p *PluginTracing) OnEvent(ctx context.Context,
 		return p.FilterTopK(ctx, eventType, chatManage, next)
 	case types.REWRITE_QUERY:
 		return p.RewriteQuery(ctx, eventType, chatManage, next)
-	case types.CHUNK_SEARCH_PARALLEL:
-		return p.SearchParallel(ctx, eventType, chatManage, next)
+	case types.ENTITY_SEARCH:
+		return p.EntitySearch(ctx, eventType, chatManage, next)
+	case types.IMAGE_ANALYSIS:
+		return p.ImageAnalysis(ctx, eventType, chatManage, next)
 	}
 	return next()
 }
@@ -264,11 +267,11 @@ func (p *PluginTracing) RewriteQuery(ctx context.Context,
 	return err
 }
 
-// SearchParallel traces parallel search operations (chunk + entity)
-func (p *PluginTracing) SearchParallel(ctx context.Context,
+// EntitySearch traces entity search operations
+func (p *PluginTracing) EntitySearch(ctx context.Context,
 	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
-	_, span := tracing.ContextWithSpan(ctx, "PluginTracing.SearchParallel")
+	_, span := tracing.ContextWithSpan(ctx, "PluginTracing.EntitySearch")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("query", chatManage.Query),
@@ -278,6 +281,23 @@ func (p *PluginTracing) SearchParallel(ctx context.Context,
 	err := next()
 	span.SetAttributes(
 		attribute.Int("search_result_count", len(chatManage.SearchResult)),
+	)
+	return err
+}
+
+// ImageAnalysis traces image analysis operations
+func (p *PluginTracing) ImageAnalysis(ctx context.Context,
+	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
+) *PluginError {
+	_, span := tracing.ContextWithSpan(ctx, "PluginTracing.ImageAnalysis")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("session_id", chatManage.SessionID),
+		attribute.Int("image_count", len(chatManage.Images)),
+	)
+	err := next()
+	span.SetAttributes(
+		attribute.Int("description_length", len(chatManage.ImageDescription)),
 	)
 	return err
 }

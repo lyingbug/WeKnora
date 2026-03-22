@@ -155,7 +155,7 @@ const (
 	LOAD_HISTORY           EventType = "load_history"           // Load conversation history without rewriting
 	REWRITE_QUERY          EventType = "rewrite_query"          // Query rewriting for better retrieval
 	CHUNK_SEARCH           EventType = "chunk_search"           // Search for relevant chunks
-	CHUNK_SEARCH_PARALLEL  EventType = "chunk_search_parallel"  // Parallel search: chunks + entities
+	CHUNK_SEARCH_PARALLEL  EventType = "chunk_search_parallel"  // Parallel search: chunks + entities (legacy, kept for backward compat)
 	ENTITY_SEARCH          EventType = "entity_search"          // Search for relevant entities
 	CHUNK_RERANK           EventType = "chunk_rerank"           // Rerank search results
 	CHUNK_MERGE            EventType = "chunk_merge"            // Merge similar chunks
@@ -165,42 +165,172 @@ const (
 	CHAT_COMPLETION_STREAM EventType = "chat_completion_stream" // Stream chat completion
 	STREAM_FILTER          EventType = "stream_filter"          // Filter streaming output
 	FILTER_TOP_K           EventType = "filter_top_k"           // Keep only top K results
+	IMAGE_ANALYSIS         EventType = "image_analysis"         // Standalone VLM image analysis
 	MEMORY_RETRIEVAL       EventType = "memory_retrieval"       // Retrieve memory context
 	MEMORY_STORAGE         EventType = "memory_storage"         // Store conversation to memory
 )
 
-// Pipline defines the sequence of events for different chat modes
-var Pipline = map[string][]EventType{
+// PipelineStep represents a single step in a pipeline.
+// A step with one event runs sequentially; a step with multiple events runs them in parallel.
+type PipelineStep struct {
+	Events []EventType
+	Setup  func(original *ChatManage, clones []*ChatManage) // Optional: prepare clones before parallel execution
+	Merge  func(original *ChatManage, clones []*ChatManage) // Optional: merge results after parallel execution
+}
+
+// Step creates a sequential single-event pipeline step.
+func Step(e EventType) PipelineStep {
+	return PipelineStep{Events: []EventType{e}}
+}
+
+// Parallel creates a parallel multi-event pipeline step.
+// All events run concurrently, each on a clone of ChatManage.
+func Parallel(events ...EventType) PipelineStep {
+	return PipelineStep{Events: events}
+}
+
+// WithSetup attaches a setup function that prepares clones before parallel execution.
+func (s PipelineStep) WithSetup(fn func(*ChatManage, []*ChatManage)) PipelineStep {
+	s.Setup = fn
+	return s
+}
+
+// WithMerge attaches a merge function that combines results after parallel execution.
+func (s PipelineStep) WithMerge(fn func(*ChatManage, []*ChatManage)) PipelineStep {
+	s.Merge = fn
+	return s
+}
+
+// IsParallel returns true if this step runs multiple events concurrently.
+func (s PipelineStep) IsParallel() bool {
+	return len(s.Events) > 1
+}
+
+// String returns a human-readable representation for logging.
+func (s PipelineStep) String() string {
+	if len(s.Events) == 1 {
+		return string(s.Events[0])
+	}
+	names := make([]string, len(s.Events))
+	for i, e := range s.Events {
+		names[i] = string(e)
+	}
+	return "parallel(" + joinStrings(names, ",") + ")"
+}
+
+func joinStrings(ss []string, sep string) string {
+	result := ""
+	for i, s := range ss {
+		if i > 0 {
+			result += sep
+		}
+		result += s
+	}
+	return result
+}
+
+// --- Built-in merge/setup functions for common parallel patterns ---
+
+// SetupRewriteImageParallel prepares clones for parallel rewrite + image analysis.
+// Clone 0 (REWRITE_QUERY): strips images so it uses the fast chat model for text-only rewrite.
+// Clone 1 (IMAGE_ANALYSIS): keeps images for VLM analysis.
+func SetupRewriteImageParallel(original *ChatManage, clones []*ChatManage) {
+	if len(clones) >= 1 {
+		clones[0].Images = nil // Force text-only path for rewrite clone
+	}
+}
+
+// MergeRewriteImageResults merges results from parallel rewrite + image analysis.
+// Rewrite clone provides: RewriteQuery, SkipKBSearch, History, Entity, EntityKBIDs, EntityKnowledge
+// Image clone provides: ImageDescription
+func MergeRewriteImageResults(dst *ChatManage, srcs []*ChatManage) {
+	for _, src := range srcs {
+		if src.RewriteQuery != "" && src.RewriteQuery != dst.Query {
+			dst.RewriteQuery = src.RewriteQuery
+		}
+		if src.SkipKBSearch {
+			dst.SkipKBSearch = true
+		}
+		if len(src.History) > 0 {
+			dst.History = src.History
+		}
+		if len(src.Entity) > 0 {
+			dst.Entity = src.Entity
+		}
+		if len(src.EntityKBIDs) > 0 {
+			dst.EntityKBIDs = src.EntityKBIDs
+		}
+		if len(src.EntityKnowledge) > 0 {
+			dst.EntityKnowledge = src.EntityKnowledge
+		}
+		if src.ImageDescription != "" {
+			dst.ImageDescription = src.ImageDescription
+		}
+	}
+}
+
+// MergeSearchResults merges results from parallel chunk search + entity search.
+// Concatenates SearchResult slices, merges GraphResult, and deduplicates by ID.
+func MergeSearchResults(dst *ChatManage, srcs []*ChatManage) {
+	for _, src := range srcs {
+		dst.SearchResult = append(dst.SearchResult, src.SearchResult...)
+		if src.GraphResult != nil {
+			if dst.GraphResult == nil {
+				dst.GraphResult = src.GraphResult
+			} else {
+				dst.GraphResult.Node = append(dst.GraphResult.Node, src.GraphResult.Node...)
+				dst.GraphResult.Relation = append(dst.GraphResult.Relation, src.GraphResult.Relation...)
+			}
+		}
+	}
+	// Deduplicate SearchResult by ID
+	seen := make(map[string]bool)
+	unique := make([]*SearchResult, 0, len(dst.SearchResult))
+	for _, r := range dst.SearchResult {
+		if r != nil && !seen[r.ID] {
+			seen[r.ID] = true
+			unique = append(unique, r)
+		}
+	}
+	dst.SearchResult = unique
+}
+
+// Pipline defines the sequence of pipeline steps for different chat modes.
+// Steps with multiple events run in parallel; single-event steps run sequentially.
+var Pipline = map[string][]PipelineStep{
 	"chat": { // Simple chat without retrieval
-		CHAT_COMPLETION,
+		Step(CHAT_COMPLETION),
 	},
 	"chat_stream": { // Streaming chat without retrieval (no history)
-		CHAT_COMPLETION_STREAM,
-		STREAM_FILTER,
+		Step(CHAT_COMPLETION_STREAM),
+		Step(STREAM_FILTER),
 	},
 	"chat_history_stream": { // Streaming chat with conversation history
-		LOAD_HISTORY,
-		MEMORY_RETRIEVAL,
-		CHAT_COMPLETION_STREAM,
-		STREAM_FILTER,
-		MEMORY_STORAGE,
+		Step(LOAD_HISTORY),
+		Step(MEMORY_RETRIEVAL),
+		Step(CHAT_COMPLETION_STREAM),
+		Step(STREAM_FILTER),
+		Step(MEMORY_STORAGE),
 	},
 	"rag": { // Retrieval Augmented Generation
-		CHUNK_SEARCH,
-		CHUNK_RERANK,
-		CHUNK_MERGE,
-		INTO_CHAT_MESSAGE,
-		CHAT_COMPLETION,
+		Step(CHUNK_SEARCH),
+		Step(CHUNK_RERANK),
+		Step(CHUNK_MERGE),
+		Step(INTO_CHAT_MESSAGE),
+		Step(CHAT_COMPLETION),
 	},
 	"rag_stream": { // Streaming Retrieval Augmented Generation
-		REWRITE_QUERY,
-		CHUNK_SEARCH_PARALLEL, // Parallel: CHUNK_SEARCH + ENTITY_SEARCH
-		CHUNK_RERANK,
-		CHUNK_MERGE,
-		FILTER_TOP_K,
-		DATA_ANALYSIS,
-		INTO_CHAT_MESSAGE,
-		CHAT_COMPLETION_STREAM,
-		STREAM_FILTER,
+		Parallel(REWRITE_QUERY, IMAGE_ANALYSIS).
+			WithSetup(SetupRewriteImageParallel).
+			WithMerge(MergeRewriteImageResults),
+		Parallel(CHUNK_SEARCH, ENTITY_SEARCH).
+			WithMerge(MergeSearchResults),
+		Step(CHUNK_RERANK),
+		Step(CHUNK_MERGE),
+		Step(FILTER_TOP_K),
+		Step(DATA_ANALYSIS),
+		Step(INTO_CHAT_MESSAGE),
+		Step(CHAT_COMPLETION_STREAM),
+		Step(STREAM_FILTER),
 	},
 }
