@@ -501,6 +501,11 @@ func RegisterSkillRoutes(r *gin.RouterGroup, skillHandler *handler.SkillHandler)
 	{
 		// List all preloaded skills
 		skills.GET("", skillHandler.ListSkills)
+		// CRUD for database-backed skills
+		skills.POST("", skillHandler.CreateSkill)
+		skills.GET("/:id", skillHandler.GetSkill)
+		skills.PUT("/:id", skillHandler.UpdateSkill)
+		skills.DELETE("/:id", skillHandler.DeleteSkill)
 	}
 }
 

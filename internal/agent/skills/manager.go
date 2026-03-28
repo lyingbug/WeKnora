@@ -8,11 +8,22 @@ import (
 	"github.com/Tencent/WeKnora/internal/sandbox"
 )
 
+// DBSkillSource provides database-backed skill loading.
+// Implementations fetch skills from a persistent store so that the Manager
+// can merge them with filesystem-discovered skills.
+type DBSkillSource interface {
+	// ListActiveSkills returns metadata for all active skills belonging to a tenant
+	ListActiveSkills(ctx context.Context, tenantID uint64) ([]*SkillMetadata, error)
+	// LoadSkillByName loads a full skill (with instructions) by name for a tenant
+	LoadSkillByName(ctx context.Context, tenantID uint64, name string) (*Skill, error)
+}
+
 // Manager manages skills lifecycle including discovery, loading, and script execution
 // It coordinates between the Loader (filesystem operations) and Sandbox (script execution)
 type Manager struct {
 	loader     *Loader
 	sandboxMgr sandbox.Manager
+	dbSource   DBSkillSource
 
 	// Configuration
 	skillDirs     []string
@@ -21,7 +32,9 @@ type Manager struct {
 
 	// Cache
 	metadataCache []*SkillMetadata
-	mu            sync.RWMutex
+	// tenantMetadataCache stores per-tenant merged metadata (filesystem + DB)
+	tenantMetadataCache map[uint64][]*SkillMetadata
+	mu                  sync.RWMutex
 }
 
 // ManagerConfig holds configuration for the skill manager
@@ -40,12 +53,22 @@ func NewManager(config *ManagerConfig, sandboxMgr sandbox.Manager) *Manager {
 	}
 
 	return &Manager{
-		loader:        NewLoader(config.SkillDirs),
-		sandboxMgr:    sandboxMgr,
-		skillDirs:     config.SkillDirs,
-		allowedSkills: config.AllowedSkills,
-		enabled:       config.Enabled,
+		loader:              NewLoader(config.SkillDirs),
+		sandboxMgr:          sandboxMgr,
+		skillDirs:           config.SkillDirs,
+		allowedSkills:       config.AllowedSkills,
+		enabled:             config.Enabled,
+		tenantMetadataCache: make(map[uint64][]*SkillMetadata),
 	}
+}
+
+// SetDBSource sets an optional database-backed skill source.
+// When set, InitializeForTenant and ReloadForTenant will merge DB skills with filesystem skills.
+// DB skills override filesystem skills with the same name.
+func (m *Manager) SetDBSource(source DBSkillSource) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dbSource = source
 }
 
 // IsEnabled returns whether skills are enabled
@@ -75,6 +98,112 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	m.mu.Unlock()
 
 	return nil
+}
+
+// InitializeForTenant discovers filesystem skills and merges them with database
+// skills for the given tenant. DB skills override filesystem skills with the same name.
+func (m *Manager) InitializeForTenant(ctx context.Context, tenantID uint64) error {
+	if !m.enabled {
+		return nil
+	}
+
+	// Start from filesystem skills
+	m.mu.RLock()
+	fsMetadata := make([]*SkillMetadata, len(m.metadataCache))
+	copy(fsMetadata, m.metadataCache)
+	m.mu.RUnlock()
+
+	merged := m.mergeWithDBSkills(ctx, tenantID, fsMetadata)
+
+	m.mu.Lock()
+	m.tenantMetadataCache[tenantID] = merged
+	m.mu.Unlock()
+
+	return nil
+}
+
+// mergeWithDBSkills merges filesystem metadata with database skills for a tenant.
+// DB skills override filesystem skills with the same name.
+func (m *Manager) mergeWithDBSkills(ctx context.Context, tenantID uint64, fsMetadata []*SkillMetadata) []*SkillMetadata {
+	if m.dbSource == nil {
+		return fsMetadata
+	}
+
+	dbMetadata, err := m.dbSource.ListActiveSkills(ctx, tenantID)
+	if err != nil {
+		// If DB is unavailable, fall back to filesystem-only
+		return fsMetadata
+	}
+
+	// Build a set of DB skill names for override detection
+	dbNames := make(map[string]bool, len(dbMetadata))
+	for _, meta := range dbMetadata {
+		dbNames[meta.Name] = true
+	}
+
+	// Keep filesystem skills that are not overridden by DB skills
+	var merged []*SkillMetadata
+	for _, meta := range fsMetadata {
+		if !dbNames[meta.Name] {
+			merged = append(merged, meta)
+		}
+	}
+
+	// Append all DB skills
+	merged = append(merged, dbMetadata...)
+
+	return merged
+}
+
+// ReloadForTenant refreshes the skill cache for a specific tenant by
+// rediscovering filesystem skills and re-fetching database skills.
+// This enables hot reload after CRUD operations on skills.
+func (m *Manager) ReloadForTenant(ctx context.Context, tenantID uint64) error {
+	if !m.enabled {
+		return nil
+	}
+
+	// Reload filesystem skills first
+	fsMetadata, err := m.loader.Reload()
+	if err != nil {
+		return fmt.Errorf("failed to reload filesystem skills: %w", err)
+	}
+
+	if len(m.allowedSkills) > 0 {
+		fsMetadata = m.filterAllowedSkills(fsMetadata)
+	}
+
+	// Merge with DB skills
+	merged := m.mergeWithDBSkills(ctx, tenantID, fsMetadata)
+
+	m.mu.Lock()
+	m.metadataCache = fsMetadata
+	m.tenantMetadataCache[tenantID] = merged
+	m.mu.Unlock()
+
+	return nil
+}
+
+// GetAllMetadataForTenant returns metadata for all skills (filesystem + DB) for a tenant.
+// Falls back to filesystem-only metadata if no tenant-specific cache exists.
+func (m *Manager) GetAllMetadataForTenant(tenantID uint64) []*SkillMetadata {
+	if !m.enabled {
+		return nil
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if tenantMeta, ok := m.tenantMetadataCache[tenantID]; ok {
+		result := make([]*SkillMetadata, len(tenantMeta))
+		copy(result, tenantMeta)
+		return result
+	}
+
+	// Fall back to filesystem-only metadata
+	result := make([]*SkillMetadata, len(m.metadataCache))
+	copy(result, m.metadataCache)
+	return result
 }
 
 // filterAllowedSkills filters metadata to only include allowed skills
