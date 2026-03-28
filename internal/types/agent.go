@@ -54,6 +54,15 @@ type AgentConfig struct {
 	// The agent compresses older messages to stay within this limit,
 	// preserving tool_call/tool_result pairs.
 	MaxContextTokens int `json:"max_context_tokens,omitempty"`
+
+	// ParallelToolCalls enables parallel execution of independent tool calls
+	// within a single LLM response. When false (default), tools execute sequentially.
+	ParallelToolCalls bool `json:"parallel_tool_calls,omitempty"`
+
+	// PromptTier controls prompt complexity based on model capability.
+	// "standard" (default): full progressive RAG prompt with all phases and rules.
+	// "lite": simplified 3-phase prompt suitable for smaller models (7B-14B).
+	PromptTier string `json:"prompt_tier,omitempty"`
 }
 
 // SessionAgentConfig represents session-level agent configuration
@@ -201,11 +210,13 @@ func (s *AgentStep) GetObservations() []string {
 
 // AgentState tracks the execution state of an agent across iterations
 type AgentState struct {
-	CurrentRound  int             `json:"current_round"`  // Current round number
-	RoundSteps    []AgentStep     `json:"round_steps"`    // All steps taken so far in the current round
-	IsComplete    bool            `json:"is_complete"`    // Whether agent has finished
-	FinalAnswer   string          `json:"final_answer"`   // The final answer to the query
-	KnowledgeRefs []*SearchResult `json:"knowledge_refs"` // Collected knowledge references
+	CurrentRound        int             `json:"current_round"`                    // Current round number
+	RoundSteps          []AgentStep     `json:"round_steps"`                     // All steps taken so far in the current round
+	IsComplete          bool            `json:"is_complete"`                     // Whether agent has finished
+	FinalAnswer         string          `json:"final_answer"`                    // The final answer to the query
+	KnowledgeRefs       []*SearchResult `json:"knowledge_refs"`                  // Collected knowledge references
+	WaitingForUserInput bool            `json:"waiting_for_user_input,omitempty"` // Whether the agent is paused waiting for user input
+	PendingQuestion     string          `json:"pending_question,omitempty"`       // The question posed to the user when waiting for input
 }
 
 // FunctionDefinition represents a function definition for LLM function calling

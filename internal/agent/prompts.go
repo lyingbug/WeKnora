@@ -298,6 +298,7 @@ type BuildSystemPromptOptions struct {
 	SkillsMetadata []*skills.SkillMetadata
 	Language       string         // User language name for {{language}} placeholder (e.g. "Chinese (Simplified)")
 	Config         *config.Config // Config for reading prompt templates; nil falls back to hardcoded defaults
+	PromptTier     string         // Prompt tier: "standard" (default) or "lite" (simplified for smaller models)
 }
 
 // BuildSystemPrompt builds the progressive RAG system prompt
@@ -333,10 +334,18 @@ func BuildSystemPromptWithOptions(
 		template = GetPureAgentSystemPrompt(cfg)
 	} else {
 		var cfg *config.Config
+		var promptTier string
 		if options != nil {
 			cfg = options.Config
+			promptTier = options.PromptTier
 		}
-		template = GetProgressiveRAGSystemPrompt(cfg)
+		if promptTier == "lite" {
+			template = GetRAGLiteSystemPrompt(cfg)
+		}
+		// Fall back to standard RAG prompt if lite template is not available or tier is not "lite"
+		if template == "" {
+			template = GetProgressiveRAGSystemPrompt(cfg)
+		}
 	}
 
 	currentTime := time.Now().Format(time.RFC3339)
@@ -377,6 +386,20 @@ func GetPureAgentSystemPrompt(cfg *config.Config) string {
 func GetProgressiveRAGSystemPrompt(cfg *config.Config) string {
 	if cfg != nil && cfg.PromptTemplates != nil {
 		if t := config.DefaultTemplateByMode(cfg.PromptTemplates.AgentSystemPrompt, "rag"); t != nil && t.Content != "" {
+			return t.Content
+		}
+	}
+	return ""
+}
+
+// GetRAGLiteSystemPrompt returns the simplified RAG Lite system prompt from config templates.
+// The template must be defined in config/prompt_templates/agent_system_prompt.yaml
+// with mode "rag_lite". This is a reduced-complexity prompt designed for smaller models (7B-14B)
+// that cannot reliably follow the full progressive RAG prompt.
+// Returns empty string if config is nil or template not found.
+func GetRAGLiteSystemPrompt(cfg *config.Config) string {
+	if cfg != nil && cfg.PromptTemplates != nil {
+		if t := config.DefaultTemplateByMode(cfg.PromptTemplates.AgentSystemPrompt, "rag_lite"); t != nil && t.Content != "" {
 			return t.Content
 		}
 	}
