@@ -54,6 +54,10 @@ type AgentConfig struct {
 	// The agent compresses older messages to stay within this limit,
 	// preserving tool_call/tool_result pairs.
 	MaxContextTokens int `json:"max_context_tokens,omitempty"`
+
+	// ParallelToolCalls enables parallel execution of independent tool calls
+	// within a single LLM response. When false (default), tools execute sequentially.
+	ParallelToolCalls bool `json:"parallel_tool_calls,omitempty"`
 }
 
 // SessionAgentConfig represents session-level agent configuration
