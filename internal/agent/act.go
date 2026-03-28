@@ -212,6 +212,7 @@ func (e *AgentEngine) executeToolCalls(
 				Duration:   duration,
 				Iteration:  iteration,
 				Data:       result.Data, // Pass structured data for frontend rendering
+				Artifacts:  result.Artifacts, // Pass artifacts from tool execution
 			},
 		})
 

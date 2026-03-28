@@ -113,6 +113,11 @@ type ExecuteConfig struct {
 
 	// ScriptContent is the script content for validation (optional, will be read from file if not provided)
 	ScriptContent string
+
+	// OutputDir is a directory where the script can write output files (artifacts).
+	// If set, the sandbox makes this directory available to the script and collects
+	// produced files after execution. The directory is exposed as OUTPUT_DIR env var.
+	OutputDir string
 }
 
 // ExecuteResult contains the result of script execution

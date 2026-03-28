@@ -157,13 +157,23 @@ type Cleanable interface {
 	Cleanup(ctx context.Context)
 }
 
+// Artifact represents a file produced by a tool (especially skill scripts).
+type Artifact struct {
+	Name     string `json:"name"`               // Display filename
+	Path     string `json:"path,omitempty"`      // Internal storage path
+	URL      string `json:"url,omitempty"`       // Download URL (filled by handler)
+	MimeType string `json:"mime_type,omitempty"` // MIME type
+	Size     int64  `json:"size,omitempty"`      // File size in bytes
+}
+
 // ToolResult represents the result of a tool execution
 type ToolResult struct {
-	Success bool                   `json:"success"`          // Whether the tool executed successfully
-	Output  string                 `json:"output"`           // Human-readable output
-	Data    map[string]interface{} `json:"data,omitempty"`   // Structured data for programmatic use
-	Error   string                 `json:"error,omitempty"`  // Error message if execution failed
-	Images  []string               `json:"images,omitempty"` // Base64 data URIs from tool (e.g. MCP image content)
+	Success   bool                   `json:"success"`             // Whether the tool executed successfully
+	Output    string                 `json:"output"`              // Human-readable output
+	Data      map[string]interface{} `json:"data,omitempty"`      // Structured data for programmatic use
+	Error     string                 `json:"error,omitempty"`     // Error message if execution failed
+	Images    []string               `json:"images,omitempty"`    // Base64 data URIs from tool (e.g. MCP image content)
+	Artifacts []Artifact             `json:"artifacts,omitempty"` // Files produced by tool execution
 }
 
 // ToolCall represents a single tool invocation within an agent step

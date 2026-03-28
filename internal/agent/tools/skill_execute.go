@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
@@ -102,7 +103,10 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 	logger.Infof(ctx, "[Tool][ExecuteSkillScript] Executing script: %s/%s with args: %v, input length: %d",
 		input.SkillName, input.ScriptPath, input.Args, len(input.Input))
 
-	result, err := t.skillManager.ExecuteScript(ctx, input.SkillName, input.ScriptPath, input.Args, input.Input)
+	result, outputDir, err := t.skillManager.ExecuteScript(ctx, input.SkillName, input.ScriptPath, input.Args, input.Input)
+	if outputDir != "" {
+		defer os.RemoveAll(outputDir) // Clean up the temporary output directory
+	}
 	if err != nil {
 		logger.Errorf(ctx, "[Tool][ExecuteSkillScript] Script execution failed: %v", err)
 		return &types.ToolResult{
@@ -166,12 +170,27 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 		"killed":      result.Killed,
 	}
 
+	// Collect artifacts from the sandbox output directory
+	var artifacts []types.Artifact
+	if outputDir != "" {
+		collected, collectErr := CollectArtifacts(outputDir)
+		if collectErr != nil {
+			logger.Warnf(ctx, "[Tool][ExecuteSkillScript] Failed to collect artifacts: %v", collectErr)
+		} else if len(collected) > 0 {
+			artifacts = collected
+			summary := FormatArtifactSummary(artifacts)
+			builder.WriteString("\n" + summary + "\n")
+			logger.Infof(ctx, "[Tool][ExecuteSkillScript] Collected %d artifact(s): %s", len(artifacts), summary)
+		}
+	}
+
 	logger.Infof(ctx, "[Tool][ExecuteSkillScript] Script completed with exit code: %d", result.ExitCode)
 
 	return &types.ToolResult{
-		Success: success,
-		Output:  builder.String(),
-		Data:    resultData,
+		Success:   success,
+		Output:    builder.String(),
+		Data:      resultData,
+		Artifacts: artifacts,
 		Error: func() string {
 			if !success {
 				if result.Error != "" {

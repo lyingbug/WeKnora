@@ -86,7 +86,7 @@ func (s *LocalSandbox) Execute(ctx context.Context, config *ExecuteConfig) (*Exe
 	}
 
 	// Setup minimal environment
-	cmd.Env = s.buildEnvironment(config.Env)
+	cmd.Env = s.buildEnvironment(config.Env, config.OutputDir)
 
 	// Setup process group for cleanup
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -213,13 +213,18 @@ func (s *LocalSandbox) isAllowedCommand(cmd string) bool {
 }
 
 // buildEnvironment creates a safe environment for script execution
-func (s *LocalSandbox) buildEnvironment(extra map[string]string) []string {
+func (s *LocalSandbox) buildEnvironment(extra map[string]string, outputDir string) []string {
 	// Start with minimal environment
 	env := []string{
 		"PATH=/usr/local/bin:/usr/bin:/bin",
 		"HOME=/tmp",
 		"LANG=en_US.UTF-8",
 		"LC_ALL=en_US.UTF-8",
+	}
+
+	// Expose the output directory so scripts can write artifacts there
+	if outputDir != "" {
+		env = append(env, fmt.Sprintf("OUTPUT_DIR=%s", outputDir))
 	}
 
 	// Dangerous environment variables to exclude
