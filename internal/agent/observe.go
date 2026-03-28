@@ -270,6 +270,36 @@ func (e *AgentEngine) appendToolResults(
 	return messages
 }
 
+// deepReadReminderMessage is the message injected when the agent tries to finalize
+// without performing a deep read after a knowledge search.
+const deepReadReminderMessage = "You performed a knowledge search but did not call list_knowledge_chunks to read the full content. " +
+	"Please call list_knowledge_chunks with the chunk IDs from your search results before providing your final answer."
+
+// updateDeepReadState inspects the tool calls in a step and updates the deep read
+// tracking flags on AgentState. This should be called after each round of tool execution.
+func updateDeepReadState(state *types.AgentState, step types.AgentStep) {
+	for _, tc := range step.ToolCalls {
+		switch tc.Name {
+		case agenttools.ToolKnowledgeSearch, agenttools.ToolGrepChunks:
+			state.SearchPerformed = true
+		case agenttools.ToolListKnowledgeChunks:
+			if state.SearchPerformed {
+				state.DeepReadPerformed = true
+			}
+		}
+	}
+}
+
+// checkDeepReadCompliance returns true if the agent is allowed to finish.
+// It returns false (with a reminder message to append) when a knowledge search
+// was performed but list_knowledge_chunks was never called.
+func checkDeepReadCompliance(state *types.AgentState) (ok bool, reminder string) {
+	if state.SearchPerformed && !state.DeepReadPerformed {
+		return false, deepReadReminderMessage
+	}
+	return true, ""
+}
+
 // countTotalToolCalls counts total tool calls across all steps
 func countTotalToolCalls(steps []types.AgentStep) int {
 	total := 0

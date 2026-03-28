@@ -359,6 +359,20 @@ func (e *AgentEngine) executeLoop(
 				state.RoundSteps = append(state.RoundSteps, verdict.step)
 				break
 			}
+
+			// Deep Read enforcement: if the agent wants to finish but performed a
+			// knowledge search without calling list_knowledge_chunks, inject a
+			// reminder and continue the loop instead of accepting the answer.
+			if ok, reminder := checkDeepReadCompliance(state); !ok {
+				logger.Warnf(ctx, "[Agent][Round-%d] Deep read not performed after search — injecting reminder",
+					state.CurrentRound+1)
+				messages = append(messages, chat.Message{
+					Role:    "user",
+					Content: reminder,
+				})
+				continue
+			}
+
 			state.FinalAnswer = verdict.finalAnswer
 			state.IsComplete = true
 			state.RoundSteps = append(state.RoundSteps, verdict.step)
@@ -367,6 +381,9 @@ func (e *AgentEngine) executeLoop(
 
 		// 3. Act: Execute tool calls
 		e.executeToolCalls(ctx, response, &step, state.CurrentRound, sessionID)
+
+		// Update deep read tracking state based on tools called this round
+		updateDeepReadState(state, step)
 
 		// 4. Observe: Add tool results to messages and write to context
 		state.RoundSteps = append(state.RoundSteps, step)
