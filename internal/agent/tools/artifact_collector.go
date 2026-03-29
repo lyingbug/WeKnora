@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,6 +98,15 @@ func CollectArtifacts(outputDir string) ([]types.Artifact, error) {
 			return nil
 		}
 
+		fullPath := path
+
+		// Validate file content matches expected type
+		valid, _ := validateFileContent(fullPath, mimeType)
+		if !valid {
+			// Content does not match extension — skip this file
+			return nil
+		}
+
 		totalSize += size
 
 		artifacts = append(artifacts, types.Artifact{
@@ -129,6 +139,61 @@ func FormatArtifactSummary(artifacts []types.Artifact) string {
 		parts = append(parts, fmt.Sprintf("%s (%s)", a.Name, humanSize(a.Size)))
 	}
 	return fmt.Sprintf("[Artifacts produced: %s]", strings.Join(parts, ", "))
+}
+
+// validateFileContent checks if the file's actual content matches the expected MIME type
+func validateFileContent(path string, expectedMime string) (bool, string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, ""
+	}
+	defer f.Close()
+
+	buf := make([]byte, 512)
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return false, ""
+	}
+	detectedType := http.DetectContentType(buf[:n])
+
+	return isCompatibleMime(expectedMime, detectedType), detectedType
+}
+
+// isCompatibleMime checks if detected content type is compatible with expected MIME type
+func isCompatibleMime(expected, detected string) bool {
+	// Normalize: remove charset suffix
+	detected = strings.Split(detected, ";")[0]
+	detected = strings.TrimSpace(detected)
+
+	// Exact match
+	if detected == expected {
+		return true
+	}
+
+	// Text-based formats: DetectContentType often returns "text/plain" for csv, json, md, etc.
+	textExpected := map[string]bool{
+		"text/csv": true, "text/plain": true, "text/html": true,
+		"text/markdown": true, "application/json": true,
+	}
+	if textExpected[expected] && (strings.HasPrefix(detected, "text/") || detected == "application/json") {
+		return true
+	}
+
+	// Image types should match at category level
+	if strings.HasPrefix(expected, "image/") && strings.HasPrefix(detected, "image/") {
+		return true
+	}
+
+	// application/octet-stream is a generic fallback - allow for known binary types
+	if detected == "application/octet-stream" {
+		knownBinary := map[string]bool{
+			"application/pdf": true,
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true,
+		}
+		return knownBinary[expected]
+	}
+
+	return false
 }
 
 // mimeFromExt returns a MIME type for the given file extension (including the dot).

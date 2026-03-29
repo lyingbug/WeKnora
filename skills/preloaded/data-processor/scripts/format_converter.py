@@ -18,6 +18,7 @@ import json
 import argparse
 import csv
 import io
+import os
 
 
 def json_to_csv(data: list) -> str:
@@ -200,6 +201,13 @@ def main():
     except Exception as e:
         print(json.dumps({"error": f"转换失败: {str(e)}"}))
         return
+
+    # Write output file to OUTPUT_DIR if set (for artifact collection)
+    output_dir = os.environ.get('OUTPUT_DIR')
+    if output_dir and os.path.isdir(output_dir):
+        output_file = os.path.join(output_dir, f'converted_output.{args.to_format}')
+        with open(output_file, 'w') as f:
+            f.write(output)
 
 
 if __name__ == "__main__":
