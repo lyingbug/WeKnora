@@ -1,18 +1,19 @@
 package embedding
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/models/httputil"
+	"github.com/Tencent/WeKnora/internal/models/provider"
 )
 
-// OpenAIEmbedder implements text vectorization functionality using OpenAI API
+// OpenAIEmbedder implements text vectorization using OpenAI-compatible APIs.
+// When an adapter rule is provided, it delegates request building and/or response
+// parsing to provider-specific hooks.
 type OpenAIEmbedder struct {
 	apiKey               string
 	baseURL              string
@@ -20,13 +21,12 @@ type OpenAIEmbedder struct {
 	truncatePromptTokens int
 	dimensions           int
 	modelID              string
-	httpClient           *http.Client
-	timeout              time.Duration
-	maxRetries           int
+	client               *http.Client
+	rule                 *provider.EmbeddingAdaptRule
 	EmbedderPooler
 }
 
-// OpenAIEmbedRequest represents an OpenAI embedding request
+// OpenAIEmbedRequest represents a standard OpenAI embedding request.
 type OpenAIEmbedRequest struct {
 	Model                string   `json:"model"`
 	Input                []string `json:"input"`
@@ -34,7 +34,7 @@ type OpenAIEmbedRequest struct {
 	TruncatePromptTokens int      `json:"truncate_prompt_tokens,omitempty"`
 }
 
-// OpenAIEmbedResponse represents an OpenAI embedding response
+// OpenAIEmbedResponse represents a standard OpenAI embedding response.
 type OpenAIEmbedResponse struct {
 	Data []struct {
 		Embedding []float32 `json:"embedding"`
@@ -42,176 +42,105 @@ type OpenAIEmbedResponse struct {
 	} `json:"data"`
 }
 
-// NewOpenAIEmbedder creates a new OpenAI embedder
-func NewOpenAIEmbedder(apiKey, baseURL, modelName string,
-	truncatePromptTokens int, dimensions int, modelID string, pooler EmbedderPooler,
-) (*OpenAIEmbedder, error) {
+// NewOpenAIEmbedder creates a new OpenAI-compatible embedder with optional adapter rule.
+func NewOpenAIEmbedder(config Config, rule *provider.EmbeddingAdaptRule, pooler EmbedderPooler) (*OpenAIEmbedder, error) {
+	baseURL := config.BaseURL
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
 
-	if modelName == "" {
+	if config.ModelName == "" {
 		return nil, fmt.Errorf("model name is required")
 	}
 
-	if truncatePromptTokens == 0 {
-		truncatePromptTokens = 511
-	}
-
-	timeout := 60 * time.Second
-
-	// Create HTTP client
-	client := &http.Client{
-		Timeout: timeout,
+	truncateTokens := config.TruncatePromptTokens
+	if truncateTokens == 0 {
+		truncateTokens = 511
 	}
 
 	return &OpenAIEmbedder{
-		apiKey:               apiKey,
+		apiKey:               config.APIKey,
 		baseURL:              baseURL,
-		modelName:            modelName,
-		httpClient:           client,
-		truncatePromptTokens: truncatePromptTokens,
+		modelName:            config.ModelName,
+		truncatePromptTokens: truncateTokens,
+		dimensions:           config.Dimensions,
+		modelID:              config.ModelID,
+		client:               httputil.TimedClient(httputil.DefaultTimeout),
+		rule:                 rule,
 		EmbedderPooler:       pooler,
-		dimensions:           dimensions,
-		modelID:              modelID,
-		timeout:              timeout,
-		maxRetries:           3, // Maximum retry count
 	}, nil
 }
 
-// Embed converts text to vector
+// Embed converts a single text to a vector.
 func (e *OpenAIEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
-	for range 3 {
-		embeddings, err := e.BatchEmbed(ctx, []string{text})
-		if err != nil {
-			return nil, err
-		}
-		if len(embeddings) > 0 {
-			return embeddings[0], nil
-		}
-	}
-	return nil, fmt.Errorf("no embedding returned")
+	return embedSingle(ctx, text, e.BatchEmbed)
 }
 
-func (e *OpenAIEmbedder) doRequestWithRetry(ctx context.Context, jsonData []byte) (*http.Response, error) {
-	var resp *http.Response
-	var err error
-	url := e.baseURL + "/embeddings"
-
-	for i := 0; i <= e.maxRetries; i++ {
-		if i > 0 {
-			backoffTime := time.Duration(1<<uint(i-1)) * time.Second
-			if backoffTime > 10*time.Second {
-				backoffTime = 10 * time.Second
-			}
-			logger.GetLogger(ctx).
-				Infof("OpenAIEmbedder retrying request (%d/%d), waiting %v", i, e.maxRetries, backoffTime)
-
-			select {
-			case <-time.After(backoffTime):
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-		}
-
-		// Rebuild request each time to ensure Body is valid
-		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonData))
-		if err != nil {
-			logger.GetLogger(ctx).Errorf("OpenAIEmbedder failed to create request: %v", err)
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+e.apiKey)
-
-		resp, err = e.httpClient.Do(req)
-		if err == nil {
-			return resp, nil
-		}
-
-		logger.GetLogger(ctx).Errorf("OpenAIEmbedder request failed (attempt %d/%d): %v", i+1, e.maxRetries+1, err)
-	}
-
-	return nil, err
-}
-
+// BatchEmbed converts multiple texts to vectors in batch.
 func (e *OpenAIEmbedder) BatchEmbed(ctx context.Context, texts []string) ([][]float32, error) {
-	// Create request body
-	reqBody := OpenAIEmbedRequest{
-		Model:                e.modelName,
-		Input:                texts,
-		EncodingFormat:       "float",
-		TruncatePromptTokens: e.truncatePromptTokens,
+	// Build request body
+	var body any
+	if e.rule != nil && e.rule.BuildRequest != nil {
+		var err error
+		body, err = e.rule.BuildRequest(ctx, e.modelName, texts, e.dimensions, e.truncatePromptTokens)
+		if err != nil {
+			return nil, fmt.Errorf("build request: %w", err)
+		}
+	} else {
+		body = &OpenAIEmbedRequest{
+			Model:                e.modelName,
+			Input:                texts,
+			EncodingFormat:       "float",
+			TruncatePromptTokens: e.truncatePromptTokens,
+		}
 	}
 
-	jsonData, err := json.Marshal(reqBody)
-	if err != nil {
-		logger.GetLogger(ctx).Errorf("OpenAIEmbedder EmbedBatch marshal request error: %v", err)
-		return nil, fmt.Errorf("marshal request: %w", err)
+	// Determine endpoint URL
+	endpointPath := "/embeddings"
+	if e.rule != nil && e.rule.EndpointPath != "" {
+		endpointPath = e.rule.EndpointPath
+	}
+	url := e.baseURL + endpointPath
+
+	// Collect extra headers from the adapter rule
+	var extraHeaders map[string]string
+	if e.rule != nil {
+		extraHeaders = e.rule.ExtraHeaders
 	}
 
-	// Log request details for debugging
-	logger.GetLogger(ctx).Debugf("OpenAIEmbedder BatchEmbed: model=%s, input_count=%d, truncate_tokens=%d",
-		e.modelName, len(texts), e.truncatePromptTokens)
+	logger.Debugf(ctx, "OpenAIEmbedder BatchEmbed: model=%s, url=%s, input_count=%d",
+		e.modelName, url, len(texts))
 
-	// Check for invalid input lengths and log details
-	hasInvalidLength := false
+	// Log input validation warnings
 	for i, text := range texts {
 		textLen := len(text)
-		textPreview := text
-		if len(textPreview) > 200 {
-			textPreview = textPreview[:200] + "..."
-		}
-
-		// Log warning if length is outside valid range [1, 8192]
 		if textLen == 0 || textLen > 8192 {
-			hasInvalidLength = true
-			logger.GetLogger(ctx).Errorf("OpenAIEmbedder BatchEmbed input[%d]: INVALID length=%d (must be [1, 8192]), preview=%s",
-				i, textLen, textPreview)
-		} else {
-			logger.GetLogger(ctx).Debugf("OpenAIEmbedder BatchEmbed input[%d]: length=%d, preview=%s",
-				i, textLen, textPreview)
+			preview := text
+			if len(preview) > 200 {
+				preview = preview[:200] + "..."
+			}
+			logger.Errorf(ctx, "OpenAIEmbedder BatchEmbed input[%d]: INVALID length=%d (must be [1, 8192]), preview=%s",
+				i, textLen, preview)
 		}
 	}
 
-	if hasInvalidLength {
-		logger.GetLogger(ctx).Errorf("OpenAIEmbedder BatchEmbed: Found invalid input lengths, this will likely cause API error")
-	}
-
-	// Send request (passing jsonData instead of constructing http.Request)
-	resp, err := e.doRequestWithRetry(ctx, jsonData)
+	// Send request with retry
+	respBody, err := httputil.PostJSONWithRetry(ctx, e.client, url, e.apiKey, body, extraHeaders, httputil.DefaultMaxRetries)
 	if err != nil {
-		logger.GetLogger(ctx).Errorf("OpenAIEmbedder EmbedBatch send request error: %v", err)
-		return nil, fmt.Errorf("send request: %w", err)
-	}
-	if resp.Body != nil {
-		defer resp.Body.Close()
-	}
-
-	// Read response
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.GetLogger(ctx).Errorf("OpenAIEmbedder EmbedBatch read response error: %v", err)
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		// Log detailed error response from OpenAI API
-		bodyStr := string(body)
-		if len(bodyStr) > 1000 {
-			bodyStr = bodyStr[:1000] + "... (truncated)"
-		}
-		logger.GetLogger(ctx).Errorf("OpenAIEmbedder EmbedBatch API error: Http Status %s, Response Body: %s", resp.Status, bodyStr)
-		return nil, fmt.Errorf("EmbedBatch API error: Http Status %s, Response: %s", resp.Status, bodyStr)
+		return nil, fmt.Errorf("embedding API request: %w", err)
 	}
 
 	// Parse response
+	if e.rule != nil && e.rule.ParseResponse != nil {
+		return e.rule.ParseResponse(respBody)
+	}
+
+	// Default: standard OpenAI response format
 	var response OpenAIEmbedResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		logger.GetLogger(ctx).Errorf("OpenAIEmbedder EmbedBatch unmarshal response error: %v", err)
+	if err := json.Unmarshal(respBody, &response); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	// Extract embedding vectors
 	embeddings := make([][]float32, 0, len(response.Data))
 	for _, data := range response.Data {
 		embeddings = append(embeddings, data.Embedding)
@@ -220,17 +149,17 @@ func (e *OpenAIEmbedder) BatchEmbed(ctx context.Context, texts []string) ([][]fl
 	return embeddings, nil
 }
 
-// GetModelName returns the model name
+// GetModelName returns the model name.
 func (e *OpenAIEmbedder) GetModelName() string {
 	return e.modelName
 }
 
-// GetDimensions returns the vector dimensions
+// GetDimensions returns the vector dimensions.
 func (e *OpenAIEmbedder) GetDimensions() int {
 	return e.dimensions
 }
 
-// GetModelID returns the model ID
+// GetModelID returns the model ID.
 func (e *OpenAIEmbedder) GetModelID() string {
 	return e.modelID
 }

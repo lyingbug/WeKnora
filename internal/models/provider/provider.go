@@ -57,7 +57,30 @@ const (
 	ProviderNvidia ProviderName = "nvidia"
 	// Novita AI
 	ProviderNovita ProviderName = "novita"
+	// Ollama (本地模型)
+	ProviderOllama ProviderName = "ollama"
 )
+
+// Common validation errors
+var (
+	ErrModelNameRequired = fmt.Errorf("model name is required")
+	ErrAPIKeyRequired    = fmt.Errorf("API key is required")
+	ErrBaseURLRequired   = fmt.Errorf("base URL is required")
+)
+
+// validateRequired checks common required fields on a provider config.
+func validateRequired(config *Config, needBaseURL, needAPIKey, needModelName bool) error {
+	if needBaseURL && config.BaseURL == "" {
+		return ErrBaseURLRequired
+	}
+	if needAPIKey && config.APIKey == "" {
+		return ErrAPIKeyRequired
+	}
+	if needModelName && config.ModelName == "" {
+		return ErrModelNameRequired
+	}
+	return nil
+}
 
 // AllProviders 返回所有注册的提供者名称
 func AllProviders() []ProviderName {
@@ -84,7 +107,34 @@ func AllProviders() []ProviderName {
 		ProviderGPUStack,
 		ProviderNvidia,
 		ProviderNovita,
+		ProviderOllama,
 	}
+}
+
+// DetectProvider identifies the provider by matching the baseURL against registered URLPatterns.
+// Falls back to Generic if no URLPatterns match.
+func DetectProvider(baseURL string) ProviderName {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	for _, name := range AllProviders() {
+		if p, ok := registry[name]; ok {
+			for _, pattern := range p.Info().URLPatterns {
+				if strings.Contains(baseURL, pattern) {
+					return name
+				}
+			}
+		}
+	}
+	return ProviderGeneric
+}
+
+// ModelEntry describes a single model offered by a provider.
+type ModelEntry struct {
+	ID          string          `json:"id"`
+	DisplayName string          `json:"display_name"`
+	ModelType   types.ModelType `json:"model_type"`
+	Description string          `json:"description"`
+	Tags        []string        `json:"tags,omitempty"`
 }
 
 // ProviderInfo 包含提供者的元数据
@@ -92,10 +142,13 @@ type ProviderInfo struct {
 	Name         ProviderName               // 提供者标识
 	DisplayName  string                     // 可读名称
 	Description  string                     // 提供者描述
+	DocURL       string                     // 官方 API 文档地址
 	DefaultURLs  map[types.ModelType]string // 按模型类型区分的默认 BaseURL
 	ModelTypes   []types.ModelType          // 支持的模型类型
 	RequiresAuth bool                       // 是否需要 API key
 	ExtraFields  []ExtraFieldConfig         // 额外配置字段
+	Models       []ModelEntry               // Structured model catalog
+	URLPatterns  []string                   // URL detection patterns (data-driven)
 }
 
 // GetDefaultURL 获取指定模型类型的默认 URL
@@ -134,13 +187,24 @@ type Config struct {
 	Extra     map[string]any `json:"extra,omitempty"`
 }
 
+// Provider is the interface that every model provider must implement.
 type Provider interface {
 	// Info 返回服务商的元数据
 	Info() ProviderInfo
 
 	// ValidateConfig 验证服务商的配置
 	ValidateConfig(config *Config) error
+
+	// Adapter returns provider-specific adapter rules for non-OpenAI-compatible behavior.
+	// Returns nil for providers that are fully OpenAI-compatible (the default via BaseProvider).
+	Adapter() *ProviderAdapter
 }
+
+// BaseProvider provides a default nil Adapter() implementation.
+// Embed this in providers that are fully OpenAI-compatible and need no adapter rules.
+type BaseProvider struct{}
+
+func (BaseProvider) Adapter() *ProviderAdapter { return nil }
 
 // registry 存储所有注册的提供者
 var (
@@ -208,74 +272,45 @@ func ListByModelType(modelType types.ModelType) []ProviderInfo {
 	return result
 }
 
-// DetectProvider 通过 BaseURL 检测服务商
-func DetectProvider(baseURL string) ProviderName {
-	switch {
-	case containsAny(baseURL, "dashscope.aliyuncs.com"):
-		return ProviderAliyun
-	case containsAny(baseURL, "open.bigmodel.cn", "zhipu"):
-		return ProviderZhipu
-	case containsAny(baseURL, "openrouter.ai"):
-		return ProviderOpenRouter
-	case containsAny(baseURL, "siliconflow.cn"):
-		return ProviderSiliconFlow
-	case containsAny(baseURL, "api.jina.ai"):
-		return ProviderJina
-	case containsAny(baseURL, "api.openai.com"):
-		return ProviderOpenAI
-	case containsAny(baseURL, "api.deepseek.com"):
-		return ProviderDeepSeek
-	case containsAny(baseURL, "generativelanguage.googleapis.com"):
-		return ProviderGemini
-	case containsAny(baseURL, "volces.com", "volcengine"):
-		return ProviderVolcengine
-	case containsAny(baseURL, "hunyuan.cloud.tencent.com"):
-		return ProviderHunyuan
-	case containsAny(baseURL, "minimax.io", "minimaxi.com"):
-		return ProviderMiniMax
-	case containsAny(baseURL, "xiaomimimo.com"):
-		return ProviderMimo
-	case containsAny(baseURL, "gpustack"):
-		return ProviderGPUStack
-	case containsAny(baseURL, "modelscope.cn"):
-		return ProviderModelScope
-	case containsAny(baseURL, "qiniuapi.com", "qiniu"):
-		return ProviderQiniu
-	case containsAny(baseURL, "moonshot.ai"):
-		return ProviderMoonshot
-	case containsAny(baseURL, "qianfan.baidubce.com", "baidubce.com"):
-		return ProviderQianfan
-	case containsAny(baseURL, "longcat.chat"):
-		return ProviderLongCat
-	case containsAny(baseURL, "lkeap.cloud.tencent.com", "api.lkeap"):
-		return ProviderLKEAP
-	case containsAny(baseURL, "nvidia.com"):
-		return ProviderNvidia
-	case containsAny(baseURL, "api.novita.ai", "novita.ai"):
-		return ProviderNovita
-	default:
-		return ProviderGeneric
+// ResolveProvider returns the explicitly-specified provider, or auto-detects from the baseURL.
+func ResolveProvider(explicit string, baseURL string) ProviderName {
+	if explicit != "" {
+		return ProviderName(explicit)
 	}
+	return DetectProvider(baseURL)
 }
 
-func containsAny(s string, substrs ...string) bool {
-	for _, sub := range substrs {
-		if strings.Contains(s, sub) {
-			return true
-		}
+// ResolveProviderWithSource resolves the provider, taking the model source into account.
+// If source is "local", the provider is always Ollama (backward compatibility).
+func ResolveProviderWithSource(explicit string, baseURL string, source string) ProviderName {
+	if source == string(types.ModelSourceLocal) {
+		return ProviderOllama
 	}
-	return false
+	return ResolveProvider(explicit, baseURL)
 }
 
+// IsOllama returns true if the provider is Ollama (local models).
+func IsOllama(name ProviderName) bool {
+	return name == ProviderOllama
+}
+
+// GetAdapter returns the ProviderAdapter for the named provider, or nil
+// if the provider is not found or has no adapter rules.
+func GetAdapter(name ProviderName) *ProviderAdapter {
+	p, ok := Get(name)
+	if !ok {
+		return nil
+	}
+	return p.Adapter()
+}
+
+// NewConfigFromModel creates a Config from a types.Model.
 func NewConfigFromModel(model *types.Model) (*Config, error) {
 	if model == nil {
 		return nil, fmt.Errorf("model is nil")
 	}
 
-	providerName := ProviderName(model.Parameters.Provider)
-	if providerName == "" {
-		providerName = DetectProvider(model.Parameters.BaseURL)
-	}
+	providerName := ResolveProvider(model.Parameters.Provider, model.Parameters.BaseURL)
 
 	return &Config{
 		Provider:  providerName,

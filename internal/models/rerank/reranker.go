@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/Tencent/WeKnora/internal/models/provider"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -84,26 +83,4 @@ type RerankerConfig struct {
 	Source    types.ModelSource
 	ModelID   string
 	Provider  string // Provider identifier: openai, aliyun, zhipu, siliconflow, jina, generic
-}
-
-// NewReranker creates a reranker based on the configuration
-func NewReranker(config *RerankerConfig) (Reranker, error) {
-	// Use provider field if set, otherwise detect from URL using provider registry
-	providerName := provider.ProviderName(config.Provider)
-	if providerName == "" {
-		providerName = provider.DetectProvider(config.BaseURL)
-	}
-
-	switch providerName {
-	case provider.ProviderAliyun:
-		return NewAliyunReranker(config)
-	case provider.ProviderZhipu:
-		return NewZhipuReranker(config)
-	case provider.ProviderJina:
-		return NewJinaReranker(config)
-	case provider.ProviderNvidia:
-		return NewNvidiaReranker(config)
-	default:
-		return NewOpenAIReranker(config)
-	}
 }

@@ -15,7 +15,7 @@ import (
 func newTestRemoteChat() *RemoteAPIChat {
 	chat, _ := NewRemoteAPIChat(&ChatConfig{
 		Source:    types.ModelSourceRemote,
-		BaseURL:   "https://api.example.com/v1",
+		BaseURL:   "https://api.openai.com/v1",
 		ModelName: "test-model",
 		APIKey:    "test-key",
 		ModelID:   "test-model",

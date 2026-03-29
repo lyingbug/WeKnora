@@ -3,10 +3,7 @@ package embedding
 import (
 	"context"
 	"fmt"
-	"strings"
 
-	"github.com/Tencent/WeKnora/internal/models/provider"
-	"github.com/Tencent/WeKnora/internal/models/utils/ollama"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -37,6 +34,20 @@ type EmbedderPooler interface {
 // EmbedderType represents the embedder type
 type EmbedderType string
 
+// embedSingle calls batchFn with a single text, retrying up to 3 times if the result is empty.
+func embedSingle(ctx context.Context, text string, batchFn func(context.Context, []string) ([][]float32, error)) ([]float32, error) {
+	for range 3 {
+		embeddings, err := batchFn(ctx, []string{text})
+		if err != nil {
+			return nil, err
+		}
+		if len(embeddings) > 0 {
+			return embeddings[0], nil
+		}
+	}
+	return nil, fmt.Errorf("no embedding returned")
+}
+
 // Config represents the embedder configuration
 type Config struct {
 	Source               types.ModelSource `json:"source"`
@@ -47,105 +58,4 @@ type Config struct {
 	Dimensions           int               `json:"dimensions"`
 	ModelID              string            `json:"model_id"`
 	Provider             string            `json:"provider"`
-}
-
-// NewEmbedder creates an embedder based on the configuration
-func NewEmbedder(config Config, pooler EmbedderPooler, ollamaService *ollama.OllamaService) (Embedder, error) {
-	var embedder Embedder
-	var err error
-	switch strings.ToLower(string(config.Source)) {
-	case string(types.ModelSourceLocal):
-		embedder, err = NewOllamaEmbedder(config.BaseURL,
-			config.ModelName, config.TruncatePromptTokens, config.Dimensions, config.ModelID, pooler, ollamaService)
-		return embedder, err
-	case string(types.ModelSourceRemote):
-		// Detect or use configured provider for routing
-		providerName := provider.ProviderName(config.Provider)
-		if providerName == "" {
-			providerName = provider.DetectProvider(config.BaseURL)
-		}
-
-		// Route to provider-specific embedders
-		switch providerName {
-		case provider.ProviderAliyun:
-			// 检查是否是多模态嵌入模型
-			// 多模态模型: tongyi-embedding-vision-*, multimodal-embedding-*
-			// tex-only模型: text-embedding-v1/v2/v3/v4 应该使用 OpenAI 兼容接口，否则响应格式不匹配、embedding 返回空数组
-			isMultimodalModel := strings.Contains(strings.ToLower(config.ModelName), "vision") ||
-				strings.Contains(strings.ToLower(config.ModelName), "multimodal")
-
-			if isMultimodalModel {
-				// 多模态模型需要使用DashScope专用 API 端点
-				// 如果用户填写了 OpenAI 兼容模式的 URL，自动修正为多模态 API 的baseURL
-				baseURL := config.BaseURL
-				if baseURL == "" {
-					baseURL = "https://dashscope.aliyuncs.com"
-				} else if strings.Contains(baseURL, "/compatible-mode/") {
-					// 移除 compatible-mode 路径，AliyunEmbedder 会自动添加多模态端点
-					baseURL = strings.Replace(baseURL, "/compatible-mode/v1", "", 1)
-					baseURL = strings.Replace(baseURL, "/compatible-mode", "", 1)
-				}
-				embedder, err = NewAliyunEmbedder(config.APIKey,
-					baseURL,
-					config.ModelName,
-					config.TruncatePromptTokens,
-					config.Dimensions,
-					config.ModelID,
-					pooler)
-			} else {
-				baseURL := config.BaseURL
-				if baseURL == "" || !strings.Contains(baseURL, "/compatible-mode/") {
-					baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-				}
-				embedder, err = NewOpenAIEmbedder(config.APIKey,
-					baseURL,
-					config.ModelName,
-					config.TruncatePromptTokens,
-					config.Dimensions,
-					config.ModelID,
-					pooler)
-			}
-			return embedder, err
-		case provider.ProviderVolcengine:
-			// Volcengine Ark uses multimodal embedding API
-			embedder, err = NewVolcengineEmbedder(config.APIKey,
-				config.BaseURL,
-				config.ModelName,
-				config.TruncatePromptTokens,
-				config.Dimensions,
-				config.ModelID,
-				pooler)
-			return embedder, err
-		case provider.ProviderJina:
-			// Jina AI uses different API format (truncate instead of truncate_prompt_tokens)
-			embedder, err = NewJinaEmbedder(config.APIKey,
-				config.BaseURL,
-				config.ModelName,
-				config.TruncatePromptTokens,
-				config.Dimensions,
-				config.ModelID,
-				pooler)
-			return embedder, err
-		case provider.ProviderNvidia:
-			embedder, err = NewNvidiaEmbedder(config.APIKey,
-				config.BaseURL,
-				config.ModelName,
-				config.Dimensions,
-				config.ModelID,
-				pooler)
-			return embedder, err
-		default:
-			// Use OpenAI-compatible embedder for other providers
-			embedder, err = NewOpenAIEmbedder(config.APIKey,
-				config.BaseURL,
-				config.ModelName,
-				config.TruncatePromptTokens,
-				config.Dimensions,
-				config.ModelID,
-				pooler)
-			return embedder, err
-		}
-	default:
-		return nil, fmt.Errorf("unsupported embedder source: %s", config.Source)
-	}
 }

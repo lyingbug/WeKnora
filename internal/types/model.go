@@ -35,20 +35,30 @@ type ModelSource string
 const (
 	ModelSourceLocal       ModelSource = "local"       // Local model
 	ModelSourceRemote      ModelSource = "remote"      // Remote model
-	ModelSourceAliyun      ModelSource = "aliyun"      // Aliyun DashScope model
-	ModelSourceZhipu       ModelSource = "zhipu"       // Zhipu model
-	ModelSourceVolcengine  ModelSource = "volcengine"  // Volcengine model
-	ModelSourceDeepseek    ModelSource = "deepseek"    // Deepseek model
-	ModelSourceHunyuan     ModelSource = "hunyuan"     // Hunyuan model
-	ModelSourceMinimax     ModelSource = "minimax"     // Minimax mode
-	ModelSourceOpenAI      ModelSource = "openai"      // OpenAI model
-	ModelSourceGemini      ModelSource = "gemini"      // Gemini model
-	ModelSourceMimo        ModelSource = "mimo"        // Mimo model
-	ModelSourceSiliconFlow ModelSource = "siliconflow" // SiliconFlow model
-	ModelSourceJina        ModelSource = "jina"        // Jina AI model
-	ModelSourceOpenRouter  ModelSource = "openrouter"  // OpenRouter model
-	ModelSourceNovita     ModelSource = "novita"     // Novita AI model
+	ModelSourceAliyun      ModelSource = "aliyun"      // Deprecated: use ModelSourceRemote + Provider="aliyun"
+	ModelSourceZhipu       ModelSource = "zhipu"       // Deprecated: use ModelSourceRemote + Provider="zhipu"
+	ModelSourceVolcengine  ModelSource = "volcengine"  // Deprecated: use ModelSourceRemote + Provider="volcengine"
+	ModelSourceDeepseek    ModelSource = "deepseek"    // Deprecated: use ModelSourceRemote + Provider="deepseek"
+	ModelSourceHunyuan     ModelSource = "hunyuan"     // Deprecated: use ModelSourceRemote + Provider="hunyuan"
+	ModelSourceMinimax     ModelSource = "minimax"     // Deprecated: use ModelSourceRemote + Provider="minimax"
+	ModelSourceOpenAI      ModelSource = "openai"      // Deprecated: use ModelSourceRemote + Provider="openai"
+	ModelSourceGemini      ModelSource = "gemini"      // Deprecated: use ModelSourceRemote + Provider="gemini"
+	ModelSourceMimo        ModelSource = "mimo"        // Deprecated: use ModelSourceRemote + Provider="mimo"
+	ModelSourceSiliconFlow ModelSource = "siliconflow" // Deprecated: use ModelSourceRemote + Provider="siliconflow"
+	ModelSourceJina        ModelSource = "jina"        // Deprecated: use ModelSourceRemote + Provider="jina"
+	ModelSourceOpenRouter  ModelSource = "openrouter"  // Deprecated: use ModelSourceRemote + Provider="openrouter"
+	ModelSourceNovita     ModelSource = "novita"     // Deprecated: use ModelSourceRemote + Provider="novita"
 )
+
+// NormalizeSource maps legacy provider-specific source values to local/remote.
+// All non-local values are treated as remote. The provider identity should be
+// carried by the Provider field, not the Source field.
+func NormalizeSource(s ModelSource) ModelSource {
+	if s == ModelSourceLocal {
+		return ModelSourceLocal
+	}
+	return ModelSourceRemote
+}
 
 // EmbeddingParameters represents the embedding parameters for a model
 type EmbeddingParameters struct {

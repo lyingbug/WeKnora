@@ -64,7 +64,8 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/mcp"
 	"github.com/Tencent/WeKnora/internal/models/embedding"
-	"github.com/Tencent/WeKnora/internal/models/utils/ollama"
+	"github.com/Tencent/WeKnora/internal/models/provider"
+	"github.com/Tencent/WeKnora/internal/ollama"
 	"github.com/Tencent/WeKnora/internal/router"
 	"github.com/Tencent/WeKnora/internal/stream"
 	"github.com/Tencent/WeKnora/internal/tracing"
@@ -113,6 +114,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 
 	// External service clients
 	logger.Debugf(ctx, "[Container] Registering external service clients...")
+	provider.RegisterAll()
 	must(container.Provide(initDocReaderClient))
 	must(container.Provide(docparser.NewImageResolver))
 	must(container.Provide(initOllamaService))
