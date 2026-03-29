@@ -3,6 +3,7 @@ package skills
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/Tencent/WeKnora/internal/sandbox"
@@ -171,47 +172,58 @@ func (m *Manager) ListSkillFiles(ctx context.Context, skillName string) ([]strin
 	return m.loader.ListSkillFiles(skillName)
 }
 
-// ExecuteScript executes a script from a skill in the sandbox
-func (m *Manager) ExecuteScript(ctx context.Context, skillName, scriptPath string, args []string, stdin string) (*sandbox.ExecuteResult, error) {
+// ExecuteScript executes a script from a skill in the sandbox.
+// It returns the execution result and the path to the output directory where
+// the script may have written artifact files. The caller is responsible for
+// cleaning up the output directory after collecting artifacts.
+func (m *Manager) ExecuteScript(ctx context.Context, skillName, scriptPath string, args []string, stdin string) (*sandbox.ExecuteResult, string, error) {
 	if !m.enabled {
-		return nil, fmt.Errorf("skills are not enabled")
+		return nil, "", fmt.Errorf("skills are not enabled")
 	}
 
 	if !m.isSkillAllowed(skillName) {
-		return nil, fmt.Errorf("skill not allowed: %s", skillName)
+		return nil, "", fmt.Errorf("skill not allowed: %s", skillName)
 	}
 
 	// Verify sandbox manager is available
 	if m.sandboxMgr == nil {
-		return nil, fmt.Errorf("sandbox is not configured")
+		return nil, "", fmt.Errorf("sandbox is not configured")
 	}
 
 	// Get the skill base path
 	basePath, err := m.loader.GetSkillBasePath(skillName)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	// Load the script file to verify it exists and is a script
 	file, err := m.loader.LoadSkillFile(skillName, scriptPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load script: %w", err)
+		return nil, "", fmt.Errorf("failed to load script: %w", err)
 	}
 
 	if !file.IsScript {
-		return nil, fmt.Errorf("file is not an executable script: %s", scriptPath)
+		return nil, "", fmt.Errorf("file is not an executable script: %s", scriptPath)
+	}
+
+	// Create a temporary output directory for artifact collection
+	outputDir, err := os.MkdirTemp("", "skill-output-*")
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create output directory: %w", err)
 	}
 
 	// Prepare execution config
 	config := &sandbox.ExecuteConfig{
-		Script:  file.Path,
-		Args:    args,
-		WorkDir: basePath,
-		Stdin:   stdin,
+		Script:    file.Path,
+		Args:      args,
+		WorkDir:   basePath,
+		Stdin:     stdin,
+		OutputDir: outputDir,
 	}
 
 	// Execute in sandbox
-	return m.sandboxMgr.Execute(ctx, config)
+	result, execErr := m.sandboxMgr.Execute(ctx, config)
+	return result, outputDir, execErr
 }
 
 // GetSkillInfo returns detailed information about a skill

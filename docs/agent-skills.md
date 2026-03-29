@@ -192,6 +192,47 @@ Skills 功能通过两个工具与 Agent 交互：
 - Ruby (`.rb`)
 - Go (`.go`)
 
+### Artifact Output Convention
+
+Scripts executed via `execute_skill_script` can produce downloadable file artifacts by writing files to the directory specified by the `OUTPUT_DIR` environment variable. This variable is automatically set by the sandbox to a temporary directory before script execution.
+
+**How it works**:
+1. The script reads `OUTPUT_DIR` from the environment
+2. The script writes output files to that directory
+3. After execution, the system automatically collects files from `OUTPUT_DIR`
+4. Collected files are returned to the user as downloadable artifacts
+
+**Supported file types**:
+| Extension | MIME Type |
+|-----------|-----------|
+| `.pdf` | `application/pdf` |
+| `.csv` | `text/csv` |
+| `.xlsx` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` |
+| `.json` | `application/json` |
+| `.png` | `image/png` |
+| `.jpg` / `.jpeg` | `image/jpeg` |
+| `.svg` | `image/svg+xml` |
+| `.txt` | `text/plain` |
+| `.html` / `.htm` | `text/html` |
+| `.md` | `text/markdown` |
+
+**Size limits**:
+- Maximum 20MB per individual file
+- Maximum 50MB total across all artifacts
+- Maximum 10 files per execution
+
+**Example** (Python):
+```python
+import os
+
+output_dir = os.environ.get('OUTPUT_DIR', '/tmp')
+output_path = os.path.join(output_dir, 'report.csv')
+with open(output_path, 'w') as f:
+    f.write(csv_content)
+```
+
+Files that do not match a supported MIME type, exceed the size limits, or fail content validation are silently skipped.
+
 ## 预加载技能（Preloaded Skills）
 
 系统内置了以下 5 个预加载技能，用于增强知识库问答和文档处理能力：

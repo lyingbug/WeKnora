@@ -156,6 +156,12 @@ func (s *DockerSandbox) buildDockerArgs(config *ExecuteConfig) []string {
 		args = append(args, "-e", fmt.Sprintf("%s=%s", key, value))
 	}
 
+	// Mount output directory for artifact collection
+	if config.OutputDir != "" {
+		args = append(args, "-v", fmt.Sprintf("%s:/output", config.OutputDir))
+		args = append(args, "-e", "OUTPUT_DIR=/output")
+	}
+
 	// Image
 	args = append(args, s.config.DockerImage)
 

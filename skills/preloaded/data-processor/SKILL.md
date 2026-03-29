@@ -173,3 +173,17 @@ echo "2024年销售额为100万元，同比增长15%" | python scripts/extract_i
 - 执行超时默认为 60 秒
 - 输入数据大小有限制，大文件请分批处理
 - 脚本输出为 JSON 格式，便于后续处理
+
+## Producing File Artifacts
+
+Scripts can produce downloadable files by writing them to the directory specified by the `OUTPUT_DIR` environment variable:
+
+```python
+import os
+output_dir = os.environ.get('OUTPUT_DIR', '/tmp')
+output_path = os.path.join(output_dir, 'result.csv')
+with open(output_path, 'w') as f:
+    f.write(csv_content)
+```
+
+Supported file types: PDF, CSV, XLSX, JSON, PNG, JPG, SVG, TXT, HTML, Markdown
