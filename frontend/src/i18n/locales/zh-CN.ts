@@ -1425,6 +1425,8 @@ export default {
     goVersionDescription: "后端使用的 Go 语言版本",
     dbVersionLabel: "数据库版本",
     dbVersionDescription: "当前数据库迁移版本号",
+    dbMigrationErrorLabel: "数据库迁移失败",
+    migrationFailed: "迁移失败",
     keywordIndexEngineLabel: "关键词索引引擎",
     keywordIndexEngineDescription: "当前使用的关键词索引引擎",
     vectorStoreEngineLabel: "向量存储引擎",

@@ -68,13 +68,27 @@
       </div>
 
       <!-- DB Version -->
-      <div v-if="systemInfo?.db_version" class="setting-row">
+      <div v-if="systemInfo?.db_version || systemInfo?.db_migration_error" class="setting-row">
         <div class="setting-info">
           <label>{{ $t('system.dbVersionLabel') }}</label>
           <p class="desc">{{ $t('system.dbVersionDescription') }}</p>
         </div>
         <div class="setting-control">
-          <span class="info-value">{{ systemInfo.db_version }}</span>
+          <span v-if="systemInfo?.db_version" class="info-value">{{ systemInfo.db_version }}</span>
+          <t-tag v-if="systemInfo?.db_migration_error" theme="danger" variant="light" size="small" style="margin-left: 8px;">
+            {{ $t('system.migrationFailed') }}
+          </t-tag>
+        </div>
+      </div>
+
+      <!-- DB Migration Error -->
+      <div v-if="systemInfo?.db_migration_error" class="setting-row">
+        <div class="setting-info" style="max-width: 100%;">
+          <t-alert theme="error" :message="$t('system.dbMigrationErrorLabel')">
+            <template #description>
+              <pre class="migration-error-detail">{{ systemInfo.db_migration_error }}</pre>
+            </template>
+          </t-alert>
         </div>
       </div>
 
@@ -248,5 +262,19 @@ onMounted(() => {
       margin-left: 6px;
     }
   }
+}
+
+.migration-error-detail {
+  margin: 8px 0 0;
+  padding: 12px;
+  background: var(--td-bg-color-container);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--td-text-color-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
 }
 </style>

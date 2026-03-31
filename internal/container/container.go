@@ -454,6 +454,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 				context.Background(),
 				"Continuing with application startup. Please run migrations manually if needed.",
 			)
+			database.SetMigrationError(err)
 		}
 
 		// Post-migration: resolve __pending_env__ storage provider markers for historical KBs.

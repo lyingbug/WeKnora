@@ -19,12 +19,31 @@ var (
 	currentMigrationDirty   bool
 	migrationVersionOnce    sync.Once
 	migrationVersionSet     bool
+
+	migrationError   string
+	migrationErrorMu sync.RWMutex
 )
 
 // CachedMigrationVersion returns the migration version captured at startup.
 // Returns (version, dirty, ok). ok is false if the version was never captured.
 func CachedMigrationVersion() (uint, bool, bool) {
 	return currentMigrationVersion, currentMigrationDirty, migrationVersionSet
+}
+
+// CachedMigrationError returns the migration error captured at startup, if any.
+func CachedMigrationError() string {
+	migrationErrorMu.RLock()
+	defer migrationErrorMu.RUnlock()
+	return migrationError
+}
+
+// SetMigrationError records a migration error so it can be surfaced via the API.
+func SetMigrationError(err error) {
+	migrationErrorMu.Lock()
+	defer migrationErrorMu.Unlock()
+	if err != nil {
+		migrationError = err.Error()
+	}
 }
 
 func setMigrationVersion(version uint, dirty bool) {

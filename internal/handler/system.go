@@ -51,6 +51,7 @@ type GetSystemInfoResponse struct {
 	GraphDatabaseEngine string `json:"graph_database_engine,omitempty"`
 	MinioEnabled        bool   `json:"minio_enabled,omitempty"`
 	DBVersion           string `json:"db_version,omitempty"`
+	DBMigrationError    string `json:"db_migration_error,omitempty"`
 }
 
 // 编译时注入的版本信息
@@ -93,6 +94,8 @@ func (h *SystemHandler) GetSystemInfo(c *gin.Context) {
 		}
 	}
 
+	dbMigrationError := database.CachedMigrationError()
+
 	response := GetSystemInfoResponse{
 		Version:             Version,
 		Edition:             Edition,
@@ -104,6 +107,7 @@ func (h *SystemHandler) GetSystemInfo(c *gin.Context) {
 		GraphDatabaseEngine: graphDatabaseEngine,
 		MinioEnabled:        minioEnabled,
 		DBVersion:           dbVersion,
+		DBMigrationError:    dbMigrationError,
 	}
 
 	logger.Info(ctx, "System info retrieved successfully")

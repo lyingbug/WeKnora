@@ -11,6 +11,7 @@ export interface SystemInfo {
   graph_database_engine?: string
   minio_enabled?: boolean
   db_version?: string
+  db_migration_error?: string
 }
 
 export interface ToolDefinition {

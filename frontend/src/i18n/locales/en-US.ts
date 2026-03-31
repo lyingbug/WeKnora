@@ -1973,6 +1973,8 @@ export default {
     goVersionDescription: 'Go language version used by the backend',
     dbVersionLabel: 'Database Version',
     dbVersionDescription: 'Current database migration version',
+    dbMigrationErrorLabel: 'Database migration failed',
+    migrationFailed: 'Migration Failed',
     keywordIndexEngineLabel: 'Keyword Index Engine',
     keywordIndexEngineDescription: 'Currently used keyword index engine',
     vectorStoreEngineLabel: 'Vector Store Engine',

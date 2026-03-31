@@ -1266,6 +1266,8 @@ export default {
     goVersionDescription: 'Версия языка Go, используемая backend',
     dbVersionLabel: 'Версия базы данных',
     dbVersionDescription: 'Текущая версия миграции базы данных',
+    dbMigrationErrorLabel: 'Ошибка миграции базы данных',
+    migrationFailed: 'Ошибка миграции',
     keywordIndexEngineLabel: 'Движок индексации ключевых слов',
     keywordIndexEngineDescription: 'Используемый в настоящее время движок индексации ключевых слов',
     vectorStoreEngineLabel: 'Движок векторного хранилища',
