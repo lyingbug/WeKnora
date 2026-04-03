@@ -62,6 +62,7 @@ type RouterParams struct {
 	OrganizationHandler   *handler.OrganizationHandler
 	IMHandler             *handler.IMHandler
 	DataSourceHandler     *handler.DataSourceHandler
+	ASRStreamHandler      *handler.ASRStreamHandler
 }
 
 // NewRouter 创建新的路由
@@ -144,6 +145,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterOrganizationRoutes(v1, params.OrganizationHandler)
 		RegisterIMChannelRoutes(v1, params.IMHandler)
 		RegisterDataSourceRoutes(v1, params.DataSourceHandler)
+		RegisterASRStreamRoutes(v1, params.ASRStreamHandler)
 	}
 
 	return r
@@ -796,4 +798,9 @@ func RegisterDataSourceRoutes(r *gin.RouterGroup, handler *handler.DataSourceHan
 		ds.GET("/:id/logs", handler.GetSyncLogs)
 		ds.GET("/logs/:log_id", handler.GetSyncLog)
 	}
+}
+
+// RegisterASRStreamRoutes registers the WebSocket endpoint for real-time streaming ASR.
+func RegisterASRStreamRoutes(r *gin.RouterGroup, handler *handler.ASRStreamHandler) {
+	r.GET("/knowledge-bases/:id/asr/stream", handler.HandleASRStream)
 }

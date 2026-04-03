@@ -393,11 +393,20 @@ type ASRConfig struct {
 	Enabled  bool   `yaml:"enabled"  json:"enabled"`
 	ModelID  string `yaml:"model_id" json:"model_id"`
 	Language string `yaml:"language" json:"language"` // optional: language hint for transcription
+	// Streaming ASR fields
+	StreamEnabled  bool   `yaml:"stream_enabled"  json:"stream_enabled"`            // enable real-time streaming ASR
+	StreamProvider string `yaml:"stream_provider" json:"stream_provider,omitempty"` // "openai_realtime" | "faster_whisper"
+	StreamURL      string `yaml:"stream_url"      json:"stream_url,omitempty"`      // WebSocket URL for faster-whisper service
 }
 
 // IsASREnabled checks if ASR is enabled with a valid model
 func (c ASRConfig) IsASREnabled() bool {
 	return c.Enabled && c.ModelID != ""
+}
+
+// IsStreamASREnabled checks if streaming ASR is enabled with a valid provider
+func (c ASRConfig) IsStreamASREnabled() bool {
+	return c.StreamEnabled && c.StreamProvider != ""
 }
 
 // Value implements the driver.Valuer interface, used to convert ASRConfig to database value

@@ -11,6 +11,7 @@ import { useUIStore } from '@/stores/ui';
 import { useOrganizationStore } from '@/stores/organization';
 import { useAuthStore } from '@/stores/auth';
 import KnowledgeBaseEditorModal from './KnowledgeBaseEditorModal.vue';
+import AudioRecorder from '@/components/AudioRecorder.vue';
 const usemenuStore = useMenuStore();
 const uiStore = useUIStore();
 const orgStore = useOrganizationStore();
@@ -28,6 +29,7 @@ import {
   createKnowledgeFromURL,
   listKnowledgeBases,
   reparseKnowledge,
+  createManualKnowledge,
 } from "@/api/knowledge-base/index";
 import FAQEntryManager from './components/FAQEntryManager.vue';
 import { listMoveTargets, moveKnowledge, getKnowledgeMoveProgress } from '@/api/knowledge-base';
@@ -41,6 +43,7 @@ const kbInfo = ref<any>(null);
 const uploadInputRef = ref<HTMLInputElement | null>(null);
 const folderUploadInputRef = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
+const audioRecorderVisible = ref(false);
 const kbLoading = ref(false);
 const isFAQ = computed(() => (kbInfo.value?.type || '') === 'faq');
 const missingStorageEngine = computed(() => {
@@ -942,12 +945,19 @@ const documentTitle = computed(() => {
 });
 
 // 文档操作下拉菜单选项
-const documentActionOptions = computed(() => [
-  { content: t('upload.uploadDocument'), value: 'upload', prefixIcon: () => h(TIcon, { name: 'upload', size: '16px' }) },
-  { content: t('upload.uploadFolder'), value: 'uploadFolder', prefixIcon: () => h(TIcon, { name: 'folder-add', size: '16px' }) },
-  { content: t('knowledgeBase.importURL'), value: 'importURL', prefixIcon: () => h(TIcon, { name: 'link', size: '16px' }) },
-  { content: t('upload.onlineEdit'), value: 'manualCreate', prefixIcon: () => h(TIcon, { name: 'edit', size: '16px' }) },
-]);
+const documentActionOptions = computed(() => {
+  const options = [
+    { content: t('upload.uploadDocument'), value: 'upload', prefixIcon: () => h(TIcon, { name: 'upload', size: '16px' }) },
+    { content: t('upload.uploadFolder'), value: 'uploadFolder', prefixIcon: () => h(TIcon, { name: 'folder-add', size: '16px' }) },
+    { content: t('knowledgeBase.importURL'), value: 'importURL', prefixIcon: () => h(TIcon, { name: 'link', size: '16px' }) },
+    { content: t('upload.onlineEdit'), value: 'manualCreate', prefixIcon: () => h(TIcon, { name: 'edit', size: '16px' }) },
+  ];
+  // Show voice recording option when streaming ASR is enabled
+  if (kbInfo.value?.asr_config?.stream_enabled) {
+    options.push({ content: t('audioRecorder.title'), value: 'voiceRecord', prefixIcon: () => h(TIcon, { name: 'sound', size: '16px' }) });
+  }
+  return options;
+});
 
 // 处理文档操作下拉菜单选择
 const handleDocumentActionSelect = (data: { value: string }) => {
@@ -963,6 +973,9 @@ const handleDocumentActionSelect = (data: { value: string }) => {
       break;
     case 'manualCreate':
       handleManualCreate();
+      break;
+    case 'voiceRecord':
+      handleVoiceRecord();
       break;
   }
 };
@@ -996,6 +1009,30 @@ const handleDocumentUploadClick = () => {
 const handleFolderUploadClick = () => {
   if (!ensureDocumentKbReady()) return;
   folderUploadInputRef.value?.click();
+};
+
+const handleVoiceRecord = () => {
+  if (!ensureDocumentKbReady()) return;
+  audioRecorderVisible.value = true;
+};
+
+const handleAudioRecorderSave = async (text: string) => {
+  if (!text.trim()) return;
+  try {
+    const now = new Date();
+    const title = `${t('audioRecorder.title')} ${now.toLocaleString()}`;
+    const tagId = uiStore.selectedTagId === '__untagged__' ? undefined : uiStore.selectedTagId;
+    await createManualKnowledge(kbId.value, {
+      title,
+      content: text,
+      status: 'publish',
+      tag_id: tagId,
+    });
+    MessagePlugin.success(t('audioRecorder.saveSuccess'));
+    window.dispatchEvent(new CustomEvent('knowledgeFileUploaded', { detail: { kbId: kbId.value } }));
+  } catch (err: any) {
+    MessagePlugin.error(err?.message || t('audioRecorder.saveFailed'));
+  }
 };
 
 const resetUploadInput = () => {
@@ -2047,13 +2084,21 @@ async function createNewSession(value: string): Promise<void> {
   </template>
 
   <!-- 知识库编辑器（创建/编辑统一组件） -->
-  <KnowledgeBaseEditorModal 
+  <KnowledgeBaseEditorModal
     :visible="uiStore.showKBEditorModal"
     :mode="uiStore.kbEditorMode"
     :kb-id="uiStore.currentKBId || undefined"
     :initial-type="uiStore.kbEditorType"
     @update:visible="(val) => val ? null : uiStore.closeKBEditor()"
     @success="handleKBEditorSuccess"
+  />
+
+  <!-- 语音录入对话框 -->
+  <AudioRecorder
+    :kb-id="kbId"
+    :visible="audioRecorderVisible"
+    @update:visible="(val) => audioRecorderVisible = val"
+    @save="handleAudioRecorderSave"
   />
 </template>
 <style>

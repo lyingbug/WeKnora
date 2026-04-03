@@ -23,6 +23,7 @@ type OpenAIASR struct {
 	modelID   string
 	client    *openai.Client
 	baseURL   string
+	apiKey    string
 	language  string
 }
 
@@ -39,6 +40,7 @@ func NewOpenAIASR(config *Config) (*OpenAIASR, error) {
 		modelID:   config.ModelID,
 		client:    openai.NewClientWithConfig(apiCfg),
 		baseURL:   config.BaseURL,
+		apiKey:    config.APIKey,
 		language:  config.Language,
 	}, nil
 }
@@ -80,6 +82,8 @@ func (s *OpenAIASR) Transcribe(ctx context.Context, audioBytes []byte, fileName 
 
 func (s *OpenAIASR) GetModelName() string { return s.modelName }
 func (s *OpenAIASR) GetModelID() string   { return s.modelID }
+func (s *OpenAIASR) GetAPIKey() string    { return s.apiKey }
+func (s *OpenAIASR) GetBaseURL() string   { return s.baseURL }
 
 // DetectAudioFormat returns a file extension hint for the given audio bytes.
 func DetectAudioFormat(data []byte, fileName string) string {
