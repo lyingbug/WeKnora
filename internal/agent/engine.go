@@ -368,6 +368,35 @@ func (e *AgentEngine) executeLoop(
 		// 3. Act: Execute tool calls
 		e.executeToolCalls(ctx, response, &step, state.CurrentRound, sessionID)
 
+		// 3.5. Check if any tool result signals that user input is required
+		if question, options, reason, needInput := checkRequiresUserInput(step.ToolCalls); needInput {
+			logger.Infof(ctx, "[Agent][Round-%d] Tool requested user input, pausing execution: %s",
+				state.CurrentRound+1, question)
+			state.RoundSteps = append(state.RoundSteps, step)
+			state.WaitingForUserInput = true
+			state.PendingQuestion = question
+
+			// Append tool results to context so they are persisted in conversation history
+			messages = e.appendToolResults(ctx, messages, step)
+
+			// Emit ask_user event so frontend receives the question via SSE
+			e.eventBus.Emit(ctx, event.Event{
+				ID:        generateEventID("ask-user"),
+				Type:      event.EventAgentAskUser,
+				SessionID: sessionID,
+				Data: event.AgentAskUserData{
+					Question: question,
+					Options:  options,
+					Reason:   reason,
+				},
+			})
+
+			// Break the loop — Execute() returns, goroutine ends cleanly.
+			// The user's answer will arrive as a new message in the normal chat endpoint,
+			// starting a fresh agent execution with the full conversation history from DB.
+			break
+		}
+
 		// 4. Observe: Add tool results to messages and write to context
 		state.RoundSteps = append(state.RoundSteps, step)
 		messages = e.appendToolResults(ctx, messages, step)
@@ -383,7 +412,8 @@ func (e *AgentEngine) executeLoop(
 	}
 
 	// If loop finished without final answer, generate one
-	if !state.IsComplete {
+	// (but not if we're waiting for user input — that's an intentional pause)
+	if !state.IsComplete && !state.WaitingForUserInput {
 		e.handleMaxIterations(ctx, query, state, sessionID)
 	}
 
@@ -448,4 +478,36 @@ func decodeDataURIBytes(dataURI string) ([]byte, error) {
 		decoded, err = base64.RawStdEncoding.DecodeString(raw)
 	}
 	return decoded, err
+}
+
+// checkRequiresUserInput inspects the tool calls from a step and returns the
+// question, options, reason, and a boolean flag if any tool result signals that
+// user input is required (i.e., the ask_user tool was invoked successfully).
+func checkRequiresUserInput(toolCalls []types.ToolCall) (question string, options []string, reason string, needInput bool) {
+	for _, tc := range toolCalls {
+		if tc.Result == nil || tc.Result.Data == nil {
+			continue
+		}
+		requiresInput, ok := tc.Result.Data["requires_user_input"]
+		if !ok {
+			continue
+		}
+		if flag, isBool := requiresInput.(bool); isBool && flag {
+			question, _ = tc.Result.Data["question"].(string)
+			reason, _ = tc.Result.Data["reason"].(string)
+			if rawOpts, ok := tc.Result.Data["options"]; ok {
+				if optSlice, ok := rawOpts.([]string); ok {
+					options = optSlice
+				} else if optIface, ok := rawOpts.([]interface{}); ok {
+					for _, o := range optIface {
+						if s, ok := o.(string); ok {
+							options = append(options, s)
+						}
+					}
+				}
+			}
+			return question, options, reason, true
+		}
+	}
+	return "", nil, "", false
 }
