@@ -1,0 +1,38 @@
+[
+  {
+    "service": "salesforce",
+    "skill": "salesforce",
+    "map": {
+      "SALESFORCE_ACCESS_TOKEN": "${access_token}",
+      "SALESFORCE_INSTANCE_URL": "${instance_url}"
+    },
+    "remove_keys": [
+      "SALESFORCE_DOMAIN",
+      "SALESFORCE_USERNAME",
+      "SALESFORCE_PASSWORD",
+      "SALESFORCE_SECURITY_TOKEN"
+    ],
+    "sync_skills": [
+      "weekly-report",
+      "visit-prep",
+      "sf-visit"
+    ]
+  },
+  {
+    "service": "github",
+    "skill": "github",
+    "map": {
+      "GH_TOKEN": "${access_token}"
+    },
+    "env_path": "scripts/.env",
+    "executables": ["scripts/gh"]
+  },
+  {
+    "service": "sap-api-hub",
+    "skill": "btp-sap-odata",
+    "map": {
+      "SAP_API_KEY": "${apiKey}",
+      "SAP_SANDBOX_URL": "https://sandbox.api.sap.com/s4hanacloud"
+    }
+  }
+]
