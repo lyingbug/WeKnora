@@ -60,7 +60,6 @@ from dotenv import set_key as dotenv_set_key
 from dotenv import unset_key as dotenv_unset_key
 from dotenv.main import StrPath
 
-STAGING = os.environ.get("CONNECTOR_STAGING_DIR", "./connectors")
 LIVE = os.environ.get("SKILLS_DIR", "./skills")
 ENV_MAP_FILE = os.environ.get("ENV_MAP_FILE", "./connectors/env_map.json")
 
@@ -324,6 +323,9 @@ _ACTIONS = {
 
 def run(action: str, services: dict) -> None:
     """Execute a connector action for the given services."""
+    global env_map
+    if not env_map:
+        env_map = _load_env_map()
     handler = _ACTIONS.get(action)
     if handler is None:
         print(f"ERR: unknown action '{action}'", file=sys.stderr)

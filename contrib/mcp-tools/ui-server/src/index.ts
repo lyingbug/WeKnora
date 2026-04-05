@@ -10,9 +10,6 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
-// const WEKNORA_BASE_URL = process.env.WEKNORA_BASE_URL?.replace(/\/+$/, "");
-// const WEKNORA_AGENT_TOKEN = process.env.WEKNORA_AGENT_TOKEN;
-
 function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
 }
@@ -25,97 +22,6 @@ const server = new McpServer({
   name: "ui",
   version: "1.0.0",
 });
-
-// server.registerTool(
-//   "send_inbox_message",
-//   {
-//     title: "Send Inbox Message",
-//     description:
-//       "Send a message to the user's inbox. Use this to notify the user about completed tasks, important events, errors that need attention, or any information worth surfacing. Messages appear in the user's Mule inbox. The 'content' field supports HTML for rich formatting.",
-//     inputSchema: {
-//       title: z
-//         .string()
-//         .max(200)
-//         .describe("Message title (max 200 chars). Short, descriptive headline."),
-//       summary: z
-//         .string()
-//         .max(500)
-//         .describe(
-//           "Message summary (max 500 chars). Brief description shown in inbox list view.",
-//         ),
-//       content: z
-//         .string()
-//         .optional()
-//         .describe(
-//           "Full message body. Supports HTML for rich formatting. Shown when user opens the message.",
-//         ),
-//       priority: z
-//         .enum(["low", "normal", "high", "urgent"])
-//         .default("normal")
-//         .describe(
-//           "Message priority. Use 'normal' for routine notifications, 'high' for important results, 'urgent' only for critical issues requiring immediate attention.",
-//         ),
-//       actions: z
-//         .array(
-//           z.object({
-//             title: z.string().describe("Display text for the action button"),
-//             schema: z
-//               .string()
-//               .describe("URI or path the action navigates to"),
-//             description: z.string().optional().describe("Tooltip or description"),
-//             order: z.number().int().optional().describe("Sort order"),
-//             icon: z.string().optional().describe("Icon identifier"),
-//           }),
-//         )
-//         .optional()
-//         .describe("Action buttons shown on the message (e.g. links to view results)"),
-//       metadata: z
-//         .record(z.string(), z.unknown())
-//         .optional()
-//         .describe("Arbitrary key-value metadata attached to the message"),
-//     },
-//   },
-//   async ({ title, summary, content, priority, actions, metadata }) => {
-//     if (!MULERUN_BASE_URL || !MULERUN_AGENT_TOKEN) {
-//       return err("MULERUN_BASE_URL and MULERUN_AGENT_TOKEN environment variables are required.");
-//     }
-//
-//     const body: Record<string, unknown> = {
-//       type: "agent",
-//       title,
-//       summary,
-//       priority,
-//       views: ["user"],
-//     };
-//     if (content) body.content = content;
-//     if (actions && actions.length > 0) body.actions = actions;
-//     if (metadata) body.metadata = metadata;
-//
-//     const url = `${MULERUN_BASE_URL}/api/inbox/v1/messages`;
-//
-//     try {
-//       const response = await fetch(url, {
-//         method: "POST",
-//         headers: {
-//           "Content-Type": "application/json",
-//           Cookie: `token=${MULERUN_AGENT_TOKEN}`,
-//           Authorization: `Bearer ${MULERUN_AGENT_TOKEN}`,
-//         },
-//         redirect: "follow",
-//         body: JSON.stringify(body),
-//       });
-//
-//       if (response.status === 201) {
-//         return ok(`Message sent to inbox: "${title}"`);
-//       }
-//
-//       const errorText = await response.text();
-//       return err(`Inbox API error (HTTP ${response.status}): ${errorText}`);
-//     } catch (e) {
-//       return err(`Inbox API request failed: ${e instanceof Error ? e.message : e}`);
-//     }
-//   },
-// );
 
 // ---------------------------------------------------------------------------
 // show_file + show_web_app — display content to the user
