@@ -95,13 +95,45 @@ python3 connector.py '{"action": "sync", "services": {"github": {"credentials": 
 | `SKILLS_DIR` | Skills installation directory | `./skills` |
 | `ENV_MAP_FILE` | Path to service definitions JSON | `./connectors/env_map.json` |
 
+### 3. Agent Skills Library (`skills/`)
+
+A comprehensive collection of 20 production-ready agent skills covering document processing, financial analysis, web automation, and more.
+
+| Skill | Description | Language |
+|-------|-------------|----------|
+| `btc-macro-analysis` | BTC macro-economic analysis with yield curves, real rates, and correlation stats | Python |
+| `docx` | Word document creation, editing, tracked changes, and OOXML manipulation | Python + JS |
+| `frontend-design` | Production-grade frontend UI design and code generation | - |
+| `github` | Authenticated GitHub CLI wrapper | Shell |
+| `html-report` | Single-file HTML data reports with ECharts, TailwindCSS, GSAP | - |
+| `macro-analyst` | Macro-economic and cross-asset analysis for crypto market context | - |
+| `market-intel` | On-chain and institutional market intelligence | - |
+| `mule-pages` | Static and dynamic page publishing | Python |
+| `mulerouter-skills` | Multimodal AI API integration (T2I, T2V, I2V, TTS, T2M) | Python |
+| `multi-search` | Fallback web search with multiple providers (Serper, Tavily, Exa) | Python |
+| `news-briefing` | Crypto and financial news aggregation and narrative synthesis | - |
+| `pdf` | PDF processing: read, merge, split, watermark, OCR, form filling | Python |
+| `playwright-cli` | Browser automation for testing, scraping, and data extraction | - |
+| `pptx` | PowerPoint creation, editing, and OOXML manipulation | Python + JS |
+| `sentiment-analyst` | Crypto market sentiment and derivatives positioning analysis | - |
+| `skill-creator` | Framework for creating new agent skills | Python |
+| `skill-finder` | Skill discovery and search system | Python |
+| `technical-analysis` | Crypto chart analysis with 20+ indicators (RSI, MACD, BOLL, etc.) | Python |
+| `template` | Session context persistence and template management | Python |
+| `xlsx` | Excel spreadsheet creation, editing, charting, and data cleaning | Python |
+
+Each skill follows a consistent structure:
+- `SKILL.md` — Skill definition, triggers, and usage instructions
+- `scripts/` — Executable scripts and utilities
+- `references/` — Reference documentation and templates
+
 ## Integration with WeKnora
 
 These tools complement WeKnora's existing MCP server (`mcp-server/`) and skills system (`skills/`):
 
 - **Template Server** can be used alongside WeKnora's document processing pipeline for template-based knowledge management
 - **UI Server** extends WeKnora's agent mode with file and web app rendering capabilities
-- **Service Connector** provides a reusable pattern for managing external service credentials in WeKnora's agent environment, similar to WeKnora's existing data source auto-sync feature
+- **Agent Skills Library** provides reusable skill patterns that can enhance WeKnora's agent system — particularly the document processing skills (docx, pdf, pptx, xlsx) which align with WeKnora's document understanding pipeline, and the financial analysis skills which demonstrate multi-source data integration patterns
 
 ## Tech Stack
 

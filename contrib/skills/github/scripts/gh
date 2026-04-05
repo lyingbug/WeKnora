@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Thin gh wrapper for the github skill.
+# Sources .env (which sets GH_TOKEN), then execs the real gh binary.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/.env"
+
+# Source the skill-scoped .env
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+
+[ -n "${GH_TOKEN:-}" ] || { echo "gh: GH_TOKEN not set in $ENV_FILE" >&2; exit 1; }
+
+# Find the real gh binary, skipping this wrapper
+SELF="$(realpath "${BASH_SOURCE[0]}")"
+GH_BIN=""
+while IFS= read -r -d: dir; do
+  candidate="$dir/gh"
+  if [ -x "$candidate" ] && [ "$(realpath "$candidate")" != "$SELF" ]; then
+    GH_BIN="$candidate"
+    break
+  fi
+done <<< "$PATH:"
+
+[ -n "$GH_BIN" ] || { echo "gh: real gh binary not found in PATH" >&2; exit 1; }
+
+exec "$GH_BIN" "$@"
