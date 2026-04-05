@@ -382,3 +382,67 @@ CREATE TABLE IF NOT EXISTS tenant_disabled_shared_agents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tenant_disabled_shared_agents_tenant_id ON tenant_disabled_shared_agents(tenant_id);
+
+-- Wiki Knowledge Layer (Karpathy's LLM Wiki pattern)
+CREATE TABLE IF NOT EXISTS wiki_pages (
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    knowledge_base_id VARCHAR(36) NOT NULL,
+    title VARCHAR(512) NOT NULL,
+    slug VARCHAR(512) NOT NULL,
+    page_type VARCHAR(32) NOT NULL DEFAULT 'concept',
+    content TEXT,
+    summary TEXT,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    tags TEXT,
+    out_links TEXT,
+    in_links TEXT,
+    source_knowledge_ids TEXT,
+    version INTEGER NOT NULL DEFAULT 1,
+    model_id VARCHAR(100),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_wiki_pages_tenant ON wiki_pages(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_wiki_pages_kb ON wiki_pages(knowledge_base_id);
+CREATE INDEX IF NOT EXISTS idx_wiki_pages_title ON wiki_pages(title);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_pages_slug ON wiki_pages(slug);
+CREATE INDEX IF NOT EXISTS idx_wiki_pages_type ON wiki_pages(page_type);
+CREATE INDEX IF NOT EXISTS idx_wiki_pages_deleted_at ON wiki_pages(deleted_at);
+
+CREATE TABLE IF NOT EXISTS wiki_schemas (
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    knowledge_base_id VARCHAR(36) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT 0,
+    schema_content TEXT,
+    wiki_model_id VARCHAR(100),
+    auto_ingest BOOLEAN NOT NULL DEFAULT 1,
+    auto_lint BOOLEAN NOT NULL DEFAULT 0,
+    lint_interval_hours INTEGER NOT NULL DEFAULT 24,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_wiki_schemas_tenant ON wiki_schemas(tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_schemas_kb ON wiki_schemas(knowledge_base_id);
+
+CREATE TABLE IF NOT EXISTS wiki_lint_issues (
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    knowledge_base_id VARCHAR(36) NOT NULL,
+    wiki_page_id VARCHAR(36),
+    issue_type VARCHAR(64) NOT NULL,
+    severity VARCHAR(32) NOT NULL DEFAULT 'info',
+    description TEXT,
+    suggested_fix TEXT,
+    resolved BOOLEAN NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_wiki_lint_tenant ON wiki_lint_issues(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_wiki_lint_kb ON wiki_lint_issues(knowledge_base_id);
+CREATE INDEX IF NOT EXISTS idx_wiki_lint_page ON wiki_lint_issues(wiki_page_id);

@@ -62,6 +62,7 @@ type RouterParams struct {
 	OrganizationHandler   *handler.OrganizationHandler
 	IMHandler             *handler.IMHandler
 	DataSourceHandler     *handler.DataSourceHandler
+	WikiHandler           *handler.WikiHandler
 }
 
 // NewRouter 创建新的路由
@@ -144,6 +145,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterOrganizationRoutes(v1, params.OrganizationHandler)
 		RegisterIMChannelRoutes(v1, params.IMHandler)
 		RegisterDataSourceRoutes(v1, params.DataSourceHandler)
+		RegisterWikiRoutes(v1, params.WikiHandler)
 	}
 
 	return r
@@ -795,5 +797,44 @@ func RegisterDataSourceRoutes(r *gin.RouterGroup, handler *handler.DataSourceHan
 		// Sync logs
 		ds.GET("/:id/logs", handler.GetSyncLogs)
 		ds.GET("/logs/:log_id", handler.GetSyncLog)
+	}
+}
+
+// RegisterWikiRoutes registers wiki knowledge layer routes.
+// Implements Karpathy's LLM Wiki pattern: Ingest, Query, Lint, and CRUD for wiki pages.
+func RegisterWikiRoutes(r *gin.RouterGroup, wikiHandler *handler.WikiHandler) {
+	// Wiki operations scoped to a knowledge base
+	kbWiki := r.Group("/knowledge-bases/:id/wiki")
+	{
+		// Schema management
+		kbWiki.GET("/schema", wikiHandler.GetSchema)
+		kbWiki.PUT("/schema", wikiHandler.UpdateSchema)
+
+		// Core wiki operations (Karpathy pattern)
+		kbWiki.POST("/ingest", wikiHandler.IngestKnowledge) // Process sources → wiki pages
+		kbWiki.POST("/query", wikiHandler.QueryWiki)        // Search the wiki
+		kbWiki.POST("/lint", wikiHandler.LintWiki)          // Health-check the wiki
+
+		// Wiki page listing & stats
+		kbWiki.GET("/pages", wikiHandler.ListPages)
+		kbWiki.GET("/pages/by-slug/:slug", wikiHandler.GetPageBySlug)
+		kbWiki.GET("/stats", wikiHandler.GetStats)
+
+		// Lint issues
+		kbWiki.GET("/lint/issues", wikiHandler.ListLintIssues)
+	}
+
+	// Wiki page CRUD (by page ID, not scoped to KB)
+	wikiPages := r.Group("/wiki/pages")
+	{
+		wikiPages.GET("/:page_id", wikiHandler.GetPage)
+		wikiPages.PUT("/:page_id", wikiHandler.UpdatePage)
+		wikiPages.DELETE("/:page_id", wikiHandler.DeletePage)
+	}
+
+	// Wiki lint issue resolution
+	wikiLint := r.Group("/wiki/lint/issues")
+	{
+		wikiLint.PUT("/:issue_id/resolve", wikiHandler.ResolveLintIssue)
 	}
 }
