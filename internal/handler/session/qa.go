@@ -616,8 +616,18 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 			// Agent mode: complete the assistant message in defer (normal mode does it via event handler)
 			if mode == qaModeAgent {
 				updateCtx := context.WithValue(streamCtx.asyncCtx, types.TenantIDContextKey, reqCtx.session.TenantID)
-				h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query)
-				logger.Infof(streamCtx.asyncCtx, "Agent QA service completed for session: %s", sessionID)
+				if streamCtx.assistantMessage.IsCompleted {
+					// Normal completion — mark as completed and index for search
+					h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query)
+				} else {
+					// Agent is paused waiting for user input — save message as NOT completed.
+					// The message sits in DB with IsCompleted=false. When the user sends their
+					// answer via the normal chat endpoint, a new agent execution will load the
+					// full conversation history (including the ask_user exchange) and continue.
+					streamCtx.assistantMessage.UpdatedAt = time.Now()
+					_ = h.messageService.UpdateMessage(updateCtx, streamCtx.assistantMessage)
+				}
+				logger.Infof(streamCtx.asyncCtx, "Agent QA service completed for session: %s (is_completed=%v)", sessionID, streamCtx.assistantMessage.IsCompleted)
 			}
 		}()
 
