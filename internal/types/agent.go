@@ -211,6 +211,12 @@ type AgentState struct {
 	IsComplete    bool            `json:"is_complete"`    // Whether agent has finished
 	FinalAnswer   string          `json:"final_answer"`   // The final answer to the query
 	KnowledgeRefs []*SearchResult `json:"knowledge_refs"` // Collected knowledge references
+
+	// Deep Read enforcement: track whether knowledge_search/grep_chunks was called
+	// and whether list_knowledge_chunks was subsequently called. These are runtime-only
+	// fields used to enforce the Progressive RAG "deep read" requirement at code level.
+	SearchPerformed   bool `json:"-"` // true if knowledge_search or grep_chunks was called
+	DeepReadPerformed bool `json:"-"` // true if list_knowledge_chunks was called after search
 }
 
 // FunctionDefinition represents a function definition for LLM function calling
