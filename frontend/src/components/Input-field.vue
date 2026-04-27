@@ -346,6 +346,13 @@ const props = defineProps({
   embeddedMode: {
     type: Boolean,
     default: false
+  },
+  /** 是否显示输入框左侧控件（智能体 / 模型 / 网页搜索 / 思考模式 / 附件等）。
+   *  默认随 embeddedMode 反转：嵌入模式默认隐藏，便于 wiki 等场景；
+   *  在笔记抽屉里需要保留全部控件时显式传 true 即可。 */
+  showInputControls: {
+    type: Boolean,
+    default: undefined
   }
 });
 
@@ -2024,7 +2031,7 @@ defineExpose({
         v-model="query" 
         :placeholder="inputPlaceholder" 
         name="description" 
-        :autosize="true" 
+        :autosize="embeddedMode ? { minRows: 4, maxRows: 8 } : true" 
         @keydown="onKeydown" 
         @input="onInput"
         @compositionstart="onCompositionStart"
@@ -2051,7 +2058,7 @@ defineExpose({
     <!-- 控制栏 -->
     <div class="control-bar">
       <!-- 左侧控制按钮 -->
-      <div class="control-left" v-if="!embeddedMode">
+      <div class="control-left" v-if="props.showInputControls ?? !embeddedMode">
         <!-- Agent 模式切换按钮 -->
         <div 
           ref="agentModeButtonRef"

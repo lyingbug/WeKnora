@@ -78,16 +78,18 @@
                 :sessionId="session_id"
                 :assistantMessageId="currentAssistantMessageId"
                 :embeddedMode="embeddedMode"
+                :showInputControls="showInputControls"
             ></InputField>
         </div>
     </div>
-    <KnowledgeBaseEditorModal 
-        :visible="uiStore.showKBEditorModal"
-        :mode="uiStore.kbEditorMode"
-        :kb-id="uiStore.currentKBId || undefined"
-        :initial-type="uiStore.kbEditorType"
-        @update:visible="(val) => val ? null : uiStore.closeKBEditor()"
-        @success="handleKBEditorSuccess"
+    <KnowledgeBaseEditorModal
+      :visible="uiStore.showKBEditorModal"
+      :mode="uiStore.kbEditorMode"
+      :kb-id="uiStore.currentKBId || undefined"
+      :initial-type="uiStore.kbEditorType"
+      :initial-name="uiStore.kbEditorInitialName"
+      @update:visible="(val) => val ? null : uiStore.closeKBEditor()"
+      @success="handleKBEditorSuccess"
     />
 </template>
 <script setup>
@@ -112,7 +114,9 @@ const props = defineProps({
   session_id: { type: String, default: '' },
   agentId: { type: String, default: '' },
   kbIds: { type: Array, default: () => [] },
-  embeddedMode: { type: Boolean, default: false }
+  embeddedMode: { type: Boolean, default: false },
+  /** 嵌入时是否仍显示输入框左侧控件（agent / 模型 / 思考模式 / 网页搜索 / 附件） */
+  showInputControls: { type: Boolean, default: undefined }
 });
 
 const usemenuStore = useMenuStore();

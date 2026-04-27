@@ -1,6 +1,6 @@
 <template>
     <div class="main" ref="dropzone">
-        <Menu></Menu>
+        <Menu v-if="!isNotesRoute"></Menu>
         <RouterView v-if="isRouterAlive" />
         <div class="upload-mask" v-show="ismask">
             <input type="file" style="display: none" ref="uploadInput" accept=".pdf,.docx,.doc,.pptx,.ppt,.txt,.md,.jpg,.jpeg,.png,.csv,.xls,.xlsx" />
@@ -12,7 +12,7 @@
 </template>
 <script setup lang="ts">
 import Menu from '@/components/menu.vue'
-import { ref, onMounted, onUnmounted, nextTick, provide } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick, provide, computed } from 'vue';
 import { useRoute } from 'vue-router'
 import useKnowledgeBase from '@/hooks/useKnowledgeBase'
 import UploadMask from '@/components/upload-mask.vue'
@@ -23,6 +23,8 @@ import { useI18n } from 'vue-i18n'
 
 let { requestMethod } = useKnowledgeBase()
 const route = useRoute();
+// 笔记模式下 NotesShell 自带统一侧栏，不再渲染主菜单
+const isNotesRoute = computed(() => route.path.startsWith('/platform/notes'))
 let ismask = ref(false)
 let uploadInput = ref();
 const { t } = useI18n();
@@ -72,6 +74,11 @@ const checkKnowledgeBaseInitialization = async (): Promise<boolean> => {
         const kbResponse = await getKnowledgeBaseById(currentKbId);
         const kb = kbResponse.data;
         
+        if (kb.type === 'notebook') {
+            MessagePlugin.warning("笔记本不支持文件上传，请使用在线编辑");
+            return false;
+        }
+
         if (!kb.summary_model_id) {
             MessagePlugin.warning(t('knowledgeBase.notInitialized'));
             return false;

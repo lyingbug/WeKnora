@@ -14,7 +14,7 @@
             <!-- 左侧导航 -->
             <div class="settings-sidebar">
               <div class="sidebar-header">
-                <h2 class="sidebar-title">{{ mode === 'create' ? $t('knowledgeEditor.titleCreate') : $t('knowledgeEditor.titleEdit') }}</h2>
+                <h2 class="sidebar-title">{{ mode === 'create' ? (isNotebook ? $t('notes.list.newNotebook') : $t('knowledgeEditor.titleCreate')) : $t('knowledgeEditor.titleEdit') }}</h2>
               </div>
               <div class="settings-nav">
                 <div 
@@ -38,17 +38,18 @@
                   <div v-if="formData" class="section-content">
                     <div class="section-header">
                       <h3 class="section-title">{{ $t('knowledgeEditor.basic.title') }}</h3>
-                      <p class="section-desc">{{ $t('knowledgeEditor.basic.description') }}</p>
+                      <p class="section-desc">{{ isNotebook ? $t('notes.list.notebookBasicDesc') : $t('knowledgeEditor.basic.description') }}</p>
                     </div>
                     <div class="section-body">
-                      <div class="form-item">
+                      <div v-if="!isTypeLocked" class="form-item">
                         <label class="form-label required">{{ $t('knowledgeEditor.basic.typeLabel') }}</label>
                         <t-radio-group
                           v-model="formData.type"
-                          :disabled="mode === 'edit'"
+                          :disabled="isTypeLocked"
                         >
                           <t-radio-button value="document">{{ $t('knowledgeEditor.basic.typeDocument') }}</t-radio-button>
                           <t-radio-button value="faq">{{ $t('knowledgeEditor.basic.typeFAQ') }}</t-radio-button>
+                          <t-radio-button v-if="formData.type === 'notebook'" value="notebook">{{ $t('knowledgeEditor.basic.typeNotebook') }}</t-radio-button>
                         </t-radio-group>
                         <p class="form-tip">{{ $t('knowledgeEditor.basic.typeDescription') }}</p>
                       </div>
@@ -116,18 +117,18 @@
                       </div>
 
                       <div class="form-item">
-                        <label class="form-label required">{{ $t('knowledgeEditor.basic.nameLabel') }}</label>
+                        <label class="form-label required">{{ isNotebook ? $t('notes.list.notebookNameLabel') : $t('knowledgeEditor.basic.nameLabel') }}</label>
                         <t-input 
                           v-model="formData.name" 
-                          :placeholder="$t('knowledgeEditor.basic.namePlaceholder')"
+                          :placeholder="isNotebook ? $t('notes.list.notebookNamePlaceholder') : $t('knowledgeEditor.basic.namePlaceholder')"
                           :maxlength="50"
                         />
                       </div>
                       <div class="form-item">
-                        <label class="form-label">{{ $t('knowledgeEditor.basic.descriptionLabel') }}</label>
+                        <label class="form-label">{{ isNotebook ? $t('notes.list.notebookDescLabel') : $t('knowledgeEditor.basic.descriptionLabel') }}</label>
                         <t-textarea
                           v-model="formData.description"
-                          :placeholder="$t('knowledgeEditor.basic.descriptionPlaceholder')"
+                          :placeholder="isNotebook ? $t('notes.list.notebookDescPlaceholder') : $t('knowledgeEditor.basic.descriptionPlaceholder')"
                           :maxlength="200"
                           :autosize="{ minRows: 3, maxRows: 6 }"
                         />
@@ -148,6 +149,7 @@
                     :wiki-enabled="formData.indexingStrategy?.wikiEnabled"
                     :rag-enabled="formData.indexingStrategy?.vectorEnabled || formData.indexingStrategy?.keywordEnabled"
                     :all-models="allModels"
+                    :is-notebook="isNotebook"
                     @update:config="handleModelConfigUpdate"
                   />
                 </div>
@@ -188,7 +190,7 @@
                 </div>
 
                 <!-- 解析引擎 -->
-                <div v-if="!isFAQ && formData" v-show="currentSection === 'parser'" class="section">
+                <div v-if="!isFAQ && !isNotebook && formData" v-show="currentSection === 'parser'" class="section">
                   <KBParserSettings
                     :parser-engine-rules="formData.chunkingConfig.parserEngineRules"
                     @update:parser-engine-rules="handleParserEngineRulesUpdate"
@@ -200,6 +202,7 @@
                   <KBStorageSettings
                     :storage-provider="formData.storageProvider"
                     :has-files="mode === 'edit' && hasFiles"
+                    :is-notebook="isNotebook"
                     @update:storage-provider="handleStorageProviderUpdate"
                   />
                 </div>
@@ -259,7 +262,7 @@
                 </div>
 
                 <!-- 音频处理（ASR）设置 -->
-                <div v-if="!isFAQ" v-show="currentSection === 'asr'" class="section">
+                <div v-if="!isFAQ && !isNotebook" v-show="currentSection === 'asr'" class="section">
                   <div v-if="formData" class="kb-multimodal-settings">
                     <div class="section-header">
                       <h2>{{ $t('knowledgeEditor.asr.title') }}</h2>
@@ -303,7 +306,7 @@
                 </div>
 
                 <!-- 知识图谱 -->
-                <div v-if="!isFAQ" v-show="currentSection === 'graph'" class="section">
+                <div v-if="!isFAQ && !isNotebook" v-show="currentSection === 'graph'" class="section">
                   <GraphSettings
                     v-if="formData"
                     :graph-extract="formData.nodeExtractConfig"
@@ -326,7 +329,7 @@
                 </div>
 
                 <!-- 数据源管理（仅编辑模式） -->
-                <div v-if="mode === 'edit' && kbId" v-show="currentSection === 'datasource'" class="section">
+                <div v-if="mode === 'edit' && kbId && !isNotebook" v-show="currentSection === 'datasource'" class="section">
                   <DataSourceSettings :kb-id="kbId" @count="dsCount = $event" />
                 </div>
 
@@ -342,7 +345,7 @@
                   {{ $t('common.cancel') }}
                 </t-button>
                 <t-button theme="primary" @click="handleSubmit" :loading="saving">
-                  {{ mode === 'create' ? $t('knowledgeEditor.buttons.create') : $t('knowledgeEditor.buttons.save') }}
+                  {{ mode === 'create' ? (isNotebook ? $t('notes.list.notebookCreate') : $t('knowledgeEditor.buttons.create')) : $t('knowledgeEditor.buttons.save') }}
                 </t-button>
               </div>
             </div>
@@ -359,6 +362,7 @@ import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import { createKnowledgeBase, getKnowledgeBaseById, listKnowledgeFiles, updateKnowledgeBase, rebuildKBIndex } from '@/api/knowledge-base'
 import { updateKBConfig, type KBModelConfigRequest } from '@/api/initialization'
 import { listModels } from '@/api/model'
+import { pickDefaultModels } from '@/api/notes'
 import { useUIStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import KBModelConfig from './settings/KBModelConfig.vue'
@@ -381,7 +385,8 @@ const props = defineProps<{
   visible: boolean
   mode: 'create' | 'edit'
   kbId?: string
-  initialType?: 'document' | 'faq'
+  initialType?: 'document' | 'faq' | 'notebook'
+  initialName?: string
 }>()
 
 // Emits
@@ -423,6 +428,13 @@ const navItems = computed(() => {
   ]
   if (formData.value?.type === 'faq') {
     items.push({ key: 'faq', icon: 'help-circle', label: t('knowledgeEditor.sidebar.faq') })
+  } else if (formData.value?.type === 'notebook') {
+    items.push(
+      { key: 'multimodal', icon: 'image', label: t('knowledgeEditor.sidebar.multimodal') },
+      { key: 'storage', icon: 'cloud', label: t('knowledgeEditor.sidebar.storage') },
+      { key: 'chunking', icon: 'file-copy', label: t('knowledgeEditor.sidebar.chunking') },
+      { key: 'advanced', icon: 'setting', label: t('knowledgeEditor.sidebar.advanced') }
+    )
   } else {
     items.push(
       { key: 'parser', icon: 'file-search', label: t('settings.parserEngine') },
@@ -450,6 +462,10 @@ const advancedSettingsRef = ref<InstanceType<typeof KBAdvancedSettings>>()
 // 表单数据
 const formData = ref<any>(null)
 const isFAQ = computed(() => formData.value?.type === 'faq')
+const isNotebook = computed(() => formData.value?.type === 'notebook')
+
+// 当有 initialType 时，说明是带有明确意图的创建（如从笔记模式唤起），此时锁定类型不可更改
+const isTypeLocked = computed(() => props.mode === 'edit' || !!props.initialType)
 
 watch(
   () => formData.value?.type,
@@ -469,18 +485,19 @@ watch(
 )
 
 // 初始化表单数据
-const initFormData = (type: 'document' | 'faq' = 'document') => {
+const initFormData = (type: 'document' | 'faq' | 'notebook' = 'document', name: string = '', allModelsList: any[] = []) => {
+  const { embed, summary } = pickDefaultModels(allModelsList)
   return {
     type,
-    name: '',
+    name,
     description: '',
     faqConfig: {
       indexMode: 'question_only',
       questionIndexMode: 'separate'
     },
     modelConfig: {
-      llmModelId: '',
-      embeddingModelId: '',
+      llmModelId: summary?.id || '',
+      embeddingModelId: embed?.id || '',
       wikiSynthesisModelId: '',
     },
     chunkingConfig: {
@@ -566,7 +583,7 @@ const loadKBData = async () => {
     hasFiles.value = (filesResult as any)?.total > 0
     
     // 设置表单数据
-    const kbType = (kb.type as 'document' | 'faq') || 'document'
+    const kbType = (kb.type as 'document' | 'faq' | 'notebook') || 'document'
     formData.value = {
       type: kbType,
       name: kb.name || '',
@@ -785,7 +802,7 @@ const validateForm = (): boolean => {
   }
 
   // 验证索引策略 — 文档类型至少需要开启一种
-  if (formData.value.type !== 'faq') {
+  if (formData.value.type !== 'faq' && formData.value.type !== 'notebook') {
     const s = formData.value.indexingStrategy
     if (s && !s.vectorEnabled && !s.keywordEnabled && !s.wikiEnabled && !s.graphEnabled) {
       MessagePlugin.warning(t('knowledgeEditor.indexing.atLeastOne'))
@@ -1130,7 +1147,7 @@ watch(() => props.visible, async (newVal) => {
       await loadKBData()
     } else {
       // 创建模式：初始化空表单
-      formData.value = initFormData(props.initialType || 'document')
+      formData.value = initFormData(props.initialType || 'document', props.initialName || '', allModels.value)
       hasFiles.value = false
     }
   } else {

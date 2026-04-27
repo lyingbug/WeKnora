@@ -231,6 +231,9 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	if kb.Type == types.KnowledgeBaseTypeFAQ {
 		return nil, werrors.NewBadRequestError("FAQ 知识库不支持文件上传，请使用 FAQ 导入功能")
 	}
+	if kb.Type == types.KnowledgeBaseTypeNotebook {
+		return nil, werrors.NewBadRequestError("笔记本不支持文件上传，请使用新建笔记功能")
+	}
 
 	if err := checkStorageEngineConfigured(ctx, kb); err != nil {
 		return nil, err
@@ -482,6 +485,19 @@ func (s *knowledgeService) CreateKnowledgeFromURL(ctx context.Context,
 ) (*types.Knowledge, error) {
 	logger.Info(ctx, "Start creating knowledge from URL")
 	logger.Infof(ctx, "Knowledge base ID: %s, URL: %s", kbID, rawURL)
+
+	// Get knowledge base configuration
+	logger.Info(ctx, "Getting knowledge base configuration")
+	kb, err := s.kbService.GetKnowledgeBaseByID(ctx, kbID)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to get knowledge base: %v", err)
+		return nil, err
+	}
+
+	// Notebook knowledge bases should not accept URL imports
+	if kb.Type == types.KnowledgeBaseTypeNotebook {
+		return nil, werrors.NewBadRequestError("笔记本不支持 URL 导入，请使用新建笔记功能")
+	}
 
 	// Route to file_url logic when the URL points to a downloadable file
 	if isFileURL(rawURL, fileName, fileType) {
@@ -9524,6 +9540,35 @@ func (s *knowledgeService) ProcessKnowledgeMove(ctx context.Context, t *asynq.Ta
 	return nil
 }
 
+// SyncMoveDraftKnowledges moves draft document knowledge in-process (no async task).
+func (s *knowledgeService) SyncMoveDraftKnowledges(
+	ctx context.Context,
+	knowledgeIDs []string,
+	sourceKB, targetKB *types.KnowledgeBase,
+) error {
+	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
+	for _, id := range knowledgeIDs {
+		knowledge, err := s.repo.GetKnowledgeByID(ctx, tenantID, id)
+		if err != nil {
+			return fmt.Errorf("knowledge %s: %w", id, err)
+		}
+		if knowledge.KnowledgeBaseID != sourceKB.ID {
+			return fmt.Errorf("knowledge %s does not belong to the source knowledge base", id)
+		}
+		if knowledge.ParseStatus != types.ManualKnowledgeStatusDraft {
+			return fmt.Errorf("knowledge %s is not in draft status", id)
+		}
+		knowledge.KnowledgeBaseID = targetKB.ID
+		knowledge.EmbeddingModelID = targetKB.EmbeddingModelID
+		knowledge.TagID = ""
+		knowledge.UpdatedAt = time.Now()
+		if err := s.repo.UpdateKnowledge(ctx, knowledge); err != nil {
+			return fmt.Errorf("update knowledge %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
 // moveOneKnowledge moves a single knowledge item from source KB to target KB.
 func (s *knowledgeService) moveOneKnowledge(
 	ctx context.Context,
@@ -9539,9 +9584,18 @@ func (s *knowledgeService) moveOneKnowledge(
 		return fmt.Errorf("failed to get knowledge %s: %w", knowledgeID, err)
 	}
 
-	// Only move completed items
-	if knowledge.ParseStatus != types.ParseStatusCompleted {
-		return fmt.Errorf("knowledge %s is not in completed status (current: %s)", knowledgeID, knowledge.ParseStatus)
+	// Only move completed or draft items
+	if knowledge.ParseStatus != types.ParseStatusCompleted && knowledge.ParseStatus != types.ManualKnowledgeStatusDraft {
+		return fmt.Errorf("knowledge %s is not in completed or draft status (current: %s)", knowledgeID, knowledge.ParseStatus)
+	}
+
+	// For draft items, just update the KB ID and return directly
+	if knowledge.ParseStatus == types.ManualKnowledgeStatusDraft {
+		knowledge.KnowledgeBaseID = targetKB.ID
+		knowledge.EmbeddingModelID = targetKB.EmbeddingModelID
+		knowledge.TagID = ""
+		knowledge.UpdatedAt = time.Now()
+		return s.repo.UpdateKnowledge(ctx, knowledge)
 	}
 
 	// Mark as processing during move
@@ -9773,7 +9827,7 @@ func (s *knowledgeService) SearchKnowledge(ctx context.Context, keyword string, 
 	ownKBs, err := s.kbService.ListKnowledgeBases(ctx)
 	if err == nil {
 		for _, kb := range ownKBs {
-			if kb != nil && kb.Type == types.KnowledgeBaseTypeDocument {
+			if kb != nil && (kb.Type == types.KnowledgeBaseTypeDocument || kb.Type == types.KnowledgeBaseTypeNotebook) {
 				scopes = append(scopes, types.KnowledgeSearchScope{TenantID: tenantID, KBID: kb.ID})
 			}
 		}
@@ -9785,7 +9839,7 @@ func (s *knowledgeService) SearchKnowledge(ctx context.Context, keyword string, 
 			sharedList, err := s.kbShareService.ListSharedKnowledgeBases(ctx, userID, tenantID)
 			if err == nil {
 				for _, info := range sharedList {
-					if info != nil && info.KnowledgeBase != nil && info.KnowledgeBase.Type == types.KnowledgeBaseTypeDocument {
+					if info != nil && info.KnowledgeBase != nil && (info.KnowledgeBase.Type == types.KnowledgeBaseTypeDocument || info.KnowledgeBase.Type == types.KnowledgeBaseTypeNotebook) {
 						scopes = append(scopes, types.KnowledgeSearchScope{
 							TenantID: info.SourceTenantID,
 							KBID:     info.KnowledgeBase.ID,

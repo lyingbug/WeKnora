@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import ManualKnowledgeEditor from '@/components/manual-knowledge-editor.vue'
 import { useAuthStore } from '@/stores/auth'
+import { notesModeDefaultRedirect } from '@/router/index'
 import { useSettingsStore } from '@/stores/settings'
 import { getCurrentUser } from '@/api/auth'
 
@@ -85,7 +86,7 @@ const persistOIDCLoginResponse = async (response: any) => {
   await syncOIDCUserContext()
 
   await nextTick()
-  router.replace('/platform/knowledge-bases')
+  router.replace(notesModeDefaultRedirect())
 }
 
 const handleGlobalOIDCCallback = async () => {

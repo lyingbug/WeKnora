@@ -1,12 +1,18 @@
 import { defineStore } from 'pinia'
 
+const NOTES_MODE_KEY = 'weknora_notes_mode_enabled'
+const NOTES_CHAT_OPEN_KEY = 'weknora_notes_chat_open'
+const NOTES_CHAT_SESSION_KEY = 'weknora_notes_chat_session'
+const NOTES_WIKI_OPEN_KEY = 'weknora_notes_wiki_open'
+
 export const useUIStore = defineStore('ui', {
   state: () => ({
     showSettingsModal: false,
     showKBEditorModal: false,
     kbEditorMode: 'create' as 'create' | 'edit',
     currentKBId: null as string | null,
-    kbEditorType: 'document' as 'document' | 'faq',
+    kbEditorType: 'document' as 'document' | 'faq' | 'notebook',
+    kbEditorInitialName: '' as string,
     // 当前选中的分类ID，用于文件上传时传递
     selectedTagId: '__untagged__' as string,
     kbEditorInitialSection: null as string | null,
@@ -20,7 +26,17 @@ export const useUIStore = defineStore('ui', {
     manualEditorInitialContent: '',
     manualEditorInitialStatus: 'draft' as 'draft' | 'publish',
     manualEditorOnSuccess: null as null | ((payload: { kbId: string; knowledgeId: string; status: 'draft' | 'publish' }) => void),
-    sidebarCollapsed: localStorage.getItem('sidebar_collapsed') === 'true'
+    sidebarCollapsed: localStorage.getItem('sidebar_collapsed') === 'true',
+    /** 设置中「笔记模式」：开启后侧栏精简、默认落地页为 /platform/notes */
+    notesModeEnabled: typeof localStorage !== 'undefined' && localStorage.getItem(NOTES_MODE_KEY) === 'true',
+    /** 笔记模式右侧对话面板是否展开 */
+    notesChatPanelOpen: typeof localStorage !== 'undefined' && localStorage.getItem(NOTES_CHAT_OPEN_KEY) === 'true',
+    /** 笔记模式对话面板复用的 session id */
+    notesChatSessionId: typeof localStorage !== 'undefined' ? localStorage.getItem(NOTES_CHAT_SESSION_KEY) || '' : '',
+    /** 当前编辑中的笔记所属知识库 ID（由 NotesEditor 维护，用于绑定 Chat KB 范围） */
+    notesCurrentKbId: '' as string,
+    /** 笔记模式 Wiki 面板是否展开 */
+    notesWikiPanelOpen: typeof localStorage !== 'undefined' && localStorage.getItem(NOTES_WIKI_OPEN_KEY) === 'true',
   }),
 
   actions: {
@@ -52,10 +68,11 @@ export const useUIStore = defineStore('ui', {
       this.openKBSettings(kbId, initialSection)
     },
 
-    openCreateKB(type: 'document' | 'faq' = 'document') {
+    openCreateKB(type: 'document' | 'faq' | 'notebook' = 'document', initialName?: string) {
       this.currentKBId = null
       this.kbEditorMode = 'create'
       this.kbEditorType = type
+      this.kbEditorInitialName = initialName || ''
       this.kbEditorInitialSection = null
       this.showKBEditorModal = true
     },
@@ -65,6 +82,7 @@ export const useUIStore = defineStore('ui', {
       this.currentKBId = null
       this.kbEditorInitialSection = null
       this.kbEditorType = 'document'
+      this.kbEditorInitialName = ''
     },
 
     openManualEditor(options: {
@@ -124,7 +142,49 @@ export const useUIStore = defineStore('ui', {
     expandSidebar() {
       this.sidebarCollapsed = false
       localStorage.setItem('sidebar_collapsed', 'false')
-    }
+    },
+
+    setNotesChatPanel(open: boolean) {
+      this.notesChatPanelOpen = open
+      if (typeof localStorage !== 'undefined') {
+        if (open) localStorage.setItem(NOTES_CHAT_OPEN_KEY, 'true')
+        else localStorage.removeItem(NOTES_CHAT_OPEN_KEY)
+      }
+    },
+
+    setNotesChatSessionId(id: string) {
+      this.notesChatSessionId = id || ''
+      if (typeof localStorage !== 'undefined') {
+        if (id) localStorage.setItem(NOTES_CHAT_SESSION_KEY, id)
+        else localStorage.removeItem(NOTES_CHAT_SESSION_KEY)
+      }
+    },
+
+    setNotesCurrentKbId(kbId: string) {
+      this.notesCurrentKbId = kbId || ''
+    },
+
+    setNotesWikiPanel(open: boolean) {
+      this.notesWikiPanelOpen = open
+      if (typeof localStorage !== 'undefined') {
+        if (open) localStorage.setItem(NOTES_WIKI_OPEN_KEY, 'true')
+        else localStorage.removeItem(NOTES_WIKI_OPEN_KEY)
+      }
+    },
+
+    setNotesMode(enabled: boolean) {
+      this.notesModeEnabled = enabled
+      if (typeof localStorage !== 'undefined') {
+        if (enabled) {
+          localStorage.setItem(NOTES_MODE_KEY, 'true')
+        } else {
+          localStorage.removeItem(NOTES_MODE_KEY)
+        }
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('weknora:notes-mode-changed', { detail: { enabled } }))
+      }
+    },
   }
 })
 

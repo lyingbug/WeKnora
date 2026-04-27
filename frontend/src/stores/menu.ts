@@ -2,6 +2,7 @@ import { reactive, ref, computed, watch } from 'vue'
 import { defineStore } from 'pinia'
 import i18n from '@/i18n'
 import { useAuthStore } from '@/stores/auth'
+import { useUIStore } from '@/stores/ui'
 
 type MenuChild = Record<string, any>
 
@@ -20,6 +21,7 @@ export const useMenuStore = defineStore('menuStore', () => {
   const menuArr = reactive<MenuItem[]>([
     { title: '', titleKey: 'menu.knowledgeBase', icon: 'zhishiku', path: 'knowledge-bases' },
     { title: '', titleKey: 'menu.knowledgeSearch', icon: 'search', path: 'knowledge-search' },
+    { title: '', titleKey: 'menu.notes', icon: 'edit', path: 'notes' },
     { title: '', titleKey: 'menu.agents', icon: 'agent', path: 'agents' },
     { title: '', titleKey: 'menu.organizations', icon: 'organization', path: 'organizations' },
     {
@@ -60,13 +62,24 @@ export const useMenuStore = defineStore('menuStore', () => {
   )
 
   const liteHiddenPaths = new Set(['logout', 'organizations'])
+  /** 笔记模式开启时侧栏仅保留这些 path */
+  const notesModeKeepPaths = new Set(['notes', 'knowledge-search', 'creatChat', 'settings', 'logout'])
 
   const visibleMenuArr = computed(() => {
     const authStore = useAuthStore()
+    const uiStore = useUIStore()
+    let list: MenuItem[] = menuArr
     if (authStore.isLiteMode) {
-      return menuArr.filter(item => !liteHiddenPaths.has(item.path))
+      list = list.filter(item => !liteHiddenPaths.has(item.path))
     }
-    return menuArr
+    // 笔记模式开启：侧栏精简为白名单项（含笔记）
+    if (uiStore.notesModeEnabled) {
+      list = list.filter(item => notesModeKeepPaths.has(item.path))
+    } else {
+      // 非笔记模式：左侧不展示「笔记」，改从头像菜单「进入笔记模式」进入
+      list = list.filter(item => item.path !== 'notes')
+    }
+    return list
   })
 
   const chatMenuIndex = menuArr.findIndex(item => item.path === 'creatChat')

@@ -176,7 +176,7 @@ func (s *knowledgeBaseService) ListKnowledgeBases(ctx context.Context) ([]*types
 
 		// Get knowledge count
 		switch kb.Type {
-		case types.KnowledgeBaseTypeDocument:
+		case types.KnowledgeBaseTypeDocument, types.KnowledgeBaseTypeNotebook:
 			knowledgeCount, err := s.kgRepo.CountKnowledgeByKnowledgeBaseID(ctx, tenantID, kb.ID)
 			if err != nil {
 				logger.Warnf(ctx, "Failed to get knowledge count for knowledge base %s: %v", kb.ID, err)
@@ -222,7 +222,7 @@ func (s *knowledgeBaseService) ListKnowledgeBasesByTenantID(ctx context.Context,
 	for _, kb := range kbs {
 		kb.EnsureDefaults()
 		switch kb.Type {
-		case types.KnowledgeBaseTypeDocument:
+		case types.KnowledgeBaseTypeDocument, types.KnowledgeBaseTypeNotebook:
 			if cnt, err := s.kgRepo.CountKnowledgeByKnowledgeBaseID(ctx, tenantID, kb.ID); err == nil {
 				kb.KnowledgeCount = cnt
 			}

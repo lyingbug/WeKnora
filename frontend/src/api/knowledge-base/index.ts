@@ -11,7 +11,7 @@ export function listKnowledgeBases(params?: { agent_id?: string }) {
 export function createKnowledgeBase(data: {
   name: string;
   description?: string;
-  type?: 'document' | 'faq';
+  type?: 'document' | 'faq' | 'notebook';
   chunking_config?: any;
   embedding_model_id?: string;
   summary_model_id?: string;
@@ -103,6 +103,31 @@ export function moveKnowledge(data: {
 // 获取知识移动进度
 export function getKnowledgeMoveProgress(taskId: string) {
   return get(`/api/v1/knowledge/move/progress/${taskId}`);
+}
+
+/**
+ * 轮询直到异步迁移任务结束。POST /knowledge/move 仅入队，库记录由 worker 更新；
+ * 若立即拉取详情会得到旧的 knowledge_base_id，需等 status=completed 后再同步 UI。
+ */
+export async function waitForKnowledgeMoveTask(
+  taskId: string,
+  options?: { intervalMs?: number; timeoutMs?: number }
+): Promise<'completed' | 'failed' | 'timeout'> {
+  const intervalMs = options?.intervalMs ?? 1000;
+  const timeoutMs = options?.timeoutMs ?? 120_000;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res: any = await getKnowledgeMoveProgress(taskId);
+      const status = res?.data?.status as string | undefined;
+      if (status === 'completed') return 'completed';
+      if (status === 'failed') return 'failed';
+    } catch {
+      /* 网络抖动，继续轮询 */
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return 'timeout';
 }
 
 export function togglePinKnowledgeBase(id: string) {

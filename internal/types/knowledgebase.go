@@ -15,6 +15,7 @@ const (
 	KnowledgeBaseTypeDocument = "document"
 	KnowledgeBaseTypeFAQ      = "faq"
 	KnowledgeBaseTypeWiki     = "wiki"
+	KnowledgeBaseTypeNotebook = "notebook"
 )
 
 // FAQIndexMode represents the FAQ index mode: only index questions or index questions and answers

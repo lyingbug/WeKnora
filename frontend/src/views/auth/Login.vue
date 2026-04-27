@@ -378,6 +378,7 @@ import 'swiper/css'
 import 'swiper/css/effect-fade'
 import 'swiper/css/pagination'
 import { login, register, getOIDCAuthorizationURL, getOIDCConfig, autoSetup } from '@/api/auth'
+import { notesModeDefaultRedirect } from '@/router/index'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 
@@ -569,7 +570,7 @@ const persistLoginResponse = async (response: any) => {
   }
 
   await nextTick()
-  router.replace('/platform/knowledge-bases')
+  router.replace(notesModeDefaultRedirect())
 }
 
 const getBackendOIDCRedirectURI = () => `${window.location.origin}/api/v1/auth/oidc/callback`
@@ -671,7 +672,7 @@ const handleRegister = async () => {
 // Check if already logged in; for lite edition, attempt transparent auto-setup
 onMounted(async () => {
   if (authStore.isLoggedIn) {
-    router.replace('/platform/knowledge-bases')
+    router.replace(notesModeDefaultRedirect())
     return
   }
 

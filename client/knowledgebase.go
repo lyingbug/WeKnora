@@ -14,23 +14,23 @@ import (
 
 // KnowledgeBase represents a knowledge base
 type KnowledgeBase struct {
-	ID                    string                `json:"id"`
-	Name                  string                `json:"name"` // Name must be unique within the same tenant
-	Type                  string                `json:"type"`
-	IsTemporary           bool                  `json:"is_temporary"`
-	Description           string                `json:"description"`
-	TenantID              uint64                `json:"tenant_id"`
-	ChunkingConfig        ChunkingConfig        `json:"chunking_config"`
-	ImageProcessingConfig ImageProcessingConfig `json:"image_processing_config"`
-	FAQConfig             *FAQConfig            `json:"faq_config"`
-	EmbeddingModelID      string                `json:"embedding_model_id"`
-	SummaryModelID        string                `json:"summary_model_id"`
+	ID                    string                 `json:"id"`
+	Name                  string                 `json:"name"` // Name must be unique within the same tenant
+	Type                  string                 `json:"type"`
+	IsTemporary           bool                   `json:"is_temporary"`
+	Description           string                 `json:"description"`
+	TenantID              uint64                 `json:"tenant_id"`
+	ChunkingConfig        ChunkingConfig         `json:"chunking_config"`
+	ImageProcessingConfig ImageProcessingConfig  `json:"image_processing_config"`
+	FAQConfig             *FAQConfig             `json:"faq_config"`
+	EmbeddingModelID      string                 `json:"embedding_model_id"`
+	SummaryModelID        string                 `json:"summary_model_id"`
 	VLMConfig             VLMConfig              `json:"vlm_config"`
 	StorageProviderConfig *StorageProviderConfig `json:"storage_provider_config"`
 	StorageConfig         StorageConfig          `json:"storage_config"`
 	ExtractConfig         *ExtractConfig         `json:"extract_config"`
-	CreatedAt             time.Time             `json:"created_at"`
-	UpdatedAt             time.Time             `json:"updated_at"`
+	CreatedAt             time.Time              `json:"created_at"`
+	UpdatedAt             time.Time              `json:"updated_at"`
 	// Computed fields (not stored in database)
 	KnowledgeCount  int64 `json:"knowledge_count"`
 	ChunkCount      int64 `json:"chunk_count"`
@@ -153,8 +153,8 @@ type SearchResult struct {
 	ImageInfo         string            `json:"image_info"`
 	Metadata          map[string]string `json:"metadata"`
 	KnowledgeFilename string            `json:"knowledge_filename"`
-	KnowledgeSource  string            `json:"knowledge_source"`
-	KnowledgeChannel string            `json:"knowledge_channel"`
+	KnowledgeSource   string            `json:"knowledge_source"`
+	KnowledgeChannel  string            `json:"knowledge_channel"`
 	// MatchedContent is the actual content that was matched in vector search
 	// For FAQ: this is the matched question text (standard or similar question)
 	MatchedContent string `json:"matched_content,omitempty"`
@@ -298,9 +298,9 @@ func (c *Client) ClearKnowledgeBaseContents(ctx context.Context, knowledgeBaseID
 	}
 
 	var response struct {
-		Success bool                                `json:"success"`
-		Message string                              `json:"message"`
-		Data    ClearKnowledgeBaseContentsResponse   `json:"data"`
+		Success bool                               `json:"success"`
+		Message string                             `json:"message"`
+		Data    ClearKnowledgeBaseContentsResponse `json:"data"`
 	}
 
 	if err := parseResponse(resp, &response); err != nil {

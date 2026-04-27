@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
-	filesvc "github.com/Tencent/WeKnora/internal/application/service/file"
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
+	filesvc "github.com/Tencent/WeKnora/internal/application/service/file"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -594,7 +594,13 @@ func (s *DataTableSummaryService) cleanupOnFailure(ctx context.Context, resource
 		if err := resources.retrieveEngine.DeleteBySourceIDList(
 			ctx, chunkIDs, resources.embeddingModel.GetDimensions(), types.KnowledgeBaseTypeDocument,
 		); err != nil {
-			logger.Errorf(ctx, "Failed to delete vector index: %v", err)
+			if err2 := resources.retrieveEngine.DeleteBySourceIDList(
+				ctx, chunkIDs, resources.embeddingModel.GetDimensions(), types.KnowledgeBaseTypeNotebook,
+			); err2 != nil {
+				logger.Errorf(ctx, "Failed to delete vector index: %v", err)
+			} else {
+				logger.Infof(ctx, "Deleted vector index for %d chunks", len(chunkIDs))
+			}
 		} else {
 			logger.Infof(ctx, "Deleted vector index for %d chunks", len(chunkIDs))
 		}

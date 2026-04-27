@@ -47,6 +47,17 @@
         </div>
       </div>
 
+      <!-- 笔记模式（Typora 风格） -->
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>{{ $t('settings.notesMode.title') }}</label>
+          <p class="desc">{{ $t('settings.notesMode.description') }}</p>
+        </div>
+        <div class="setting-control">
+          <t-switch :model-value="uiStore.notesModeEnabled" @change="handleNotesModeChange" />
+        </div>
+      </div>
+
       <!-- 记忆功能开关 -->
       <div class="setting-row">
         <div class="setting-info">
@@ -92,16 +103,21 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
+import { useUIStore } from '@/stores/ui'
 import { getSystemInfo } from '@/api/system'
 import { useTheme, type ThemeMode } from '@/composables/useTheme'
 
 const { t, locale } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const settingsStore = useSettingsStore()
 const authStore = useAuthStore()
+const uiStore = useUIStore()
 const { currentTheme, setTheme } = useTheme()
 
 // 本地状态
@@ -181,6 +197,23 @@ const handleMemoryChange = (val: boolean) => {
 const handleThemeChange = (val: ThemeMode) => {
   setTheme(val)
   MessagePlugin.success(t('common.success'))
+}
+
+function handleNotesModeChange(val: boolean) {
+  uiStore.setNotesMode(val)
+  uiStore.closeSettings()
+  if (val) {
+    // 开启：直接进笔记首页，让新布局立即生效
+    if (!route.path.startsWith('/platform/notes')) {
+      router.push('/platform/notes')
+    }
+  } else {
+    // 关闭：若当前还在 /platform/notes/*，跳到知识库列表恢复主菜单
+    if (route.path.startsWith('/platform/notes')) {
+      router.push('/platform/knowledge-bases')
+    }
+  }
+  MessagePlugin.success(val ? t('settings.notesMode.switchedOn') : t('settings.notesMode.switchedOff'))
 }
 </script>
 

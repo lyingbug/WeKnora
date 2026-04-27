@@ -266,7 +266,7 @@ func (s *knowledgeTagService) DeleteTag(ctx context.Context, id string, force bo
 
 	// Helper function to enqueue knowledge list delete task for document-type knowledge bases
 	enqueueKnowledgeDeleteTask := func() error {
-		if kb.Type != types.KnowledgeBaseTypeDocument {
+		if kb.Type != types.KnowledgeBaseTypeDocument && kb.Type != types.KnowledgeBaseTypeNotebook {
 			return nil
 		}
 		// Get all knowledge IDs under this tag
@@ -302,7 +302,7 @@ func (s *knowledgeTagService) DeleteTag(ctx context.Context, id string, force bo
 	// contentOnly mode: only delete content, keep the tag
 	if contentOnly {
 		// For document-type KB, delete knowledge files first (which will also delete chunks)
-		if kb.Type == types.KnowledgeBaseTypeDocument && kCount > 0 {
+		if (kb.Type == types.KnowledgeBaseTypeDocument || kb.Type == types.KnowledgeBaseTypeNotebook) && kCount > 0 {
 			if err := enqueueKnowledgeDeleteTask(); err != nil {
 				return err
 			}
@@ -322,7 +322,7 @@ func (s *knowledgeTagService) DeleteTag(ctx context.Context, id string, force bo
 	// When force=true, delete all content under this tag first
 	if force {
 		// For document-type KB, delete knowledge files first (which will also delete chunks)
-		if kb.Type == types.KnowledgeBaseTypeDocument && kCount > 0 {
+		if (kb.Type == types.KnowledgeBaseTypeDocument || kb.Type == types.KnowledgeBaseTypeNotebook) && kCount > 0 {
 			if err := enqueueKnowledgeDeleteTask(); err != nil {
 				return err
 			}

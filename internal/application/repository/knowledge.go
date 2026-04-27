@@ -366,7 +366,7 @@ func (r *knowledgeRepository) SearchKnowledge(
 		Select("knowledges.*, knowledge_bases.name as knowledge_base_name").
 		Joins("JOIN knowledge_bases ON knowledge_bases.id = knowledges.knowledge_base_id").
 		Where("knowledges.tenant_id = ?", tenantID).
-		Where("knowledge_bases.type = ?", types.KnowledgeBaseTypeDocument).
+		Where("knowledge_bases.type IN (?, ?)", types.KnowledgeBaseTypeDocument, types.KnowledgeBaseTypeNotebook).
 		Where("knowledges.deleted_at IS NULL")
 
 	// If keyword is provided, filter by file_name or title
@@ -486,7 +486,7 @@ func (r *knowledgeRepository) SearchKnowledgeInScopes(
 		Select("knowledges.*, knowledge_bases.name as knowledge_base_name").
 		Joins("JOIN knowledge_bases ON knowledge_bases.id = knowledges.knowledge_base_id AND knowledge_bases.tenant_id = knowledges.tenant_id").
 		Where(scopeCondition, args...).
-		Where("knowledge_bases.type = ?", types.KnowledgeBaseTypeDocument).
+		Where("knowledge_bases.type IN (?, ?)", types.KnowledgeBaseTypeDocument, types.KnowledgeBaseTypeNotebook).
 		Where("knowledges.deleted_at IS NULL")
 
 	if keyword != "" {

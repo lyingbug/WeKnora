@@ -445,8 +445,8 @@ func (c *Client) UpdateImageInfo(ctx context.Context,
 
 // CreateManualKnowledgeRequest contains the parameters for creating a manual Markdown knowledge entry.
 type CreateManualKnowledgeRequest struct {
-	Title      string `json:"title"`
-	Content    string `json:"content"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
 	TagID   string `json:"tag_id,omitempty"`
 	Channel string `json:"channel,omitempty"`
 }
@@ -546,6 +546,7 @@ type MoveKnowledgeResponse struct {
 	TargetKBID     string `json:"target_kb_id"`
 	KnowledgeCount int    `json:"knowledge_count"`
 	Message        string `json:"message"`
+	Synchronous    bool   `json:"synchronous"`
 }
 
 // MoveKnowledge moves knowledge items from one knowledge base to another (async task)
@@ -556,8 +557,8 @@ func (c *Client) MoveKnowledge(ctx context.Context, req *MoveKnowledgeRequest) (
 	}
 
 	var result struct {
-		Success bool                    `json:"success"`
-		Data    *MoveKnowledgeResponse  `json:"data"`
+		Success bool                   `json:"success"`
+		Data    *MoveKnowledgeResponse `json:"data"`
 	}
 	if err := parseResponse(resp, &result); err != nil {
 		return nil, err
@@ -585,8 +586,8 @@ func (c *Client) GetKnowledgeMoveProgress(ctx context.Context, taskID string) (*
 	}
 
 	var result struct {
-		Success bool                    `json:"success"`
-		Data    *KnowledgeMoveProgress  `json:"data"`
+		Success bool                   `json:"success"`
+		Data    *KnowledgeMoveProgress `json:"data"`
 	}
 	if err := parseResponse(resp, &result); err != nil {
 		return nil, err

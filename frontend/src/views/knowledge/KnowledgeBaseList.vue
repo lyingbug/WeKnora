@@ -105,6 +105,7 @@
             'uninitialized': !isInitialized(kb),
             'kb-type-document': (kb.type || 'document') === 'document',
             'kb-type-faq': kb.type === 'faq',
+            'kb-type-notebook': kb.type === 'notebook',
             'highlight-flash': highlightedKbId !== null && highlightedKbId === kb.id
           }"
           :ref="el => { if (highlightedKbId !== null && highlightedKbId === kb.id && el) highlightedCardRef = el as HTMLElement }"
@@ -156,9 +157,9 @@
           <div class="card-bottom">
             <div class="bottom-left">
               <div class="feature-badges">
-                <t-tooltip :content="kb.type === 'faq' ? $t('knowledgeEditor.basic.typeFAQ') : $t('knowledgeEditor.basic.typeDocument')" placement="top">
-                  <div class="feature-badge" :class="{ 'type-document': (kb.type || 'document') === 'document', 'type-faq': kb.type === 'faq' }">
-                    <t-icon :name="kb.type === 'faq' ? 'chat-bubble-help' : 'folder'" size="14px" />
+                <t-tooltip :content="kb.type === 'notebook' ? $t('knowledgeEditor.basic.typeNotebook') : (kb.type === 'faq' ? $t('knowledgeEditor.basic.typeFAQ') : $t('knowledgeEditor.basic.typeDocument'))" placement="top">
+                  <div class="feature-badge" :class="{ 'type-document': (kb.type || 'document') === 'document', 'type-faq': kb.type === 'faq', 'type-notebook': kb.type === 'notebook' }">
+                    <t-icon :name="kb.type === 'notebook' ? 'edit-1' : (kb.type === 'faq' ? 'chat-bubble-help' : 'folder')" size="14px" />
                     <span class="badge-count">{{ kb.type === 'faq' ? (kb.chunk_count || 0) : (kb.knowledge_count || 0) }}</span>
                     <t-icon v-if="kb.isProcessing" name="loading" size="12px" class="processing-icon" />
                   </div>
@@ -200,7 +201,8 @@
           class="kb-card shared-kb-card"
           :class="{
             'kb-type-document': (kb.type || 'document') === 'document',
-            'kb-type-faq': kb.type === 'faq'
+            'kb-type-faq': kb.type === 'faq',
+            'kb-type-notebook': kb.type === 'notebook'
           }"
           @click="handleSharedKbClickFromAll(kb)"
         >
@@ -225,9 +227,9 @@
           <div class="card-bottom">
             <div class="bottom-left">
               <div class="feature-badges">
-                <t-tooltip :content="kb.type === 'faq' ? $t('knowledgeEditor.basic.typeFAQ') : $t('knowledgeEditor.basic.typeDocument')" placement="top">
-                  <div class="feature-badge" :class="{ 'type-document': (kb.type || 'document') === 'document', 'type-faq': kb.type === 'faq' }">
-                    <t-icon :name="kb.type === 'faq' ? 'chat-bubble-help' : 'folder'" size="14px" />
+                <t-tooltip :content="kb.type === 'notebook' ? $t('knowledgeEditor.basic.typeNotebook') : (kb.type === 'faq' ? $t('knowledgeEditor.basic.typeFAQ') : $t('knowledgeEditor.basic.typeDocument'))" placement="top">
+                  <div class="feature-badge" :class="{ 'type-document': (kb.type || 'document') === 'document', 'type-faq': kb.type === 'faq', 'type-notebook': kb.type === 'notebook' }">
+                    <t-icon :name="kb.type === 'notebook' ? 'edit-1' : (kb.type === 'faq' ? 'chat-bubble-help' : 'folder')" size="14px" />
                     <span class="badge-count">{{ kb.type === 'faq' ? (kb.chunk_count || '-') : (kb.knowledge_count || '-') }}</span>
                   </div>
                 </t-tooltip>
@@ -329,13 +331,13 @@
         <div class="card-bottom">
           <div class="bottom-left">
             <div class="feature-badges">
-              <t-tooltip :content="kb.type === 'faq' ? $t('knowledgeEditor.basic.typeFAQ') : $t('knowledgeEditor.basic.typeDocument')" placement="top">
-                <div class="feature-badge" :class="{ 'type-document': (kb.type || 'document') === 'document', 'type-faq': kb.type === 'faq' }">
-                  <t-icon :name="kb.type === 'faq' ? 'chat-bubble-help' : 'folder'" size="14px" />
-                  <span class="badge-count">{{ kb.type === 'faq' ? (kb.chunk_count || 0) : (kb.knowledge_count || 0) }}</span>
-                  <t-icon v-if="kb.isProcessing" name="loading" size="12px" class="processing-icon" />
-                </div>
-              </t-tooltip>
+                <t-tooltip :content="kb.type === 'notebook' ? $t('knowledgeEditor.basic.typeNotebook') : (kb.type === 'faq' ? $t('knowledgeEditor.basic.typeFAQ') : $t('knowledgeEditor.basic.typeDocument'))" placement="top">
+                  <div class="feature-badge" :class="{ 'type-document': (kb.type || 'document') === 'document', 'type-faq': kb.type === 'faq', 'type-notebook': kb.type === 'notebook' }">
+                    <t-icon :name="kb.type === 'notebook' ? 'edit-1' : (kb.type === 'faq' ? 'chat-bubble-help' : 'folder')" size="14px" />
+                    <span class="badge-count">{{ kb.type === 'faq' ? (kb.chunk_count || 0) : (kb.knowledge_count || 0) }}</span>
+                    <t-icon v-if="kb.isProcessing" name="loading" size="12px" class="processing-icon" />
+                  </div>
+                </t-tooltip>
               <t-tooltip v-if="kb.extract_config?.enabled" :content="$t('knowledgeList.features.knowledgeGraph')" placement="top">
                 <div class="feature-badge kg">
                   <t-icon name="relation" size="14px" />
@@ -397,12 +399,12 @@
         <div class="card-bottom">
           <div class="bottom-left">
             <div class="feature-badges">
-              <t-tooltip :content="shared.knowledge_base.type === 'faq' ? $t('knowledgeEditor.basic.typeFAQ') : $t('knowledgeEditor.basic.typeDocument')" placement="top">
-                <div class="feature-badge" :class="{ 'type-document': (shared.knowledge_base.type || 'document') === 'document', 'type-faq': shared.knowledge_base.type === 'faq' }">
-                  <t-icon :name="shared.knowledge_base.type === 'faq' ? 'chat-bubble-help' : 'folder'" size="14px" />
-                  <span class="badge-count">{{ shared.knowledge_base.type === 'faq' ? (shared.knowledge_base.chunk_count || '-') : (shared.knowledge_base.knowledge_count || '-') }}</span>
-                </div>
-              </t-tooltip>
+                <t-tooltip :content="shared.knowledge_base.type === 'notebook' ? $t('knowledgeEditor.basic.typeNotebook') : (shared.knowledge_base.type === 'faq' ? $t('knowledgeEditor.basic.typeFAQ') : $t('knowledgeEditor.basic.typeDocument'))" placement="top">
+                  <div class="feature-badge" :class="{ 'type-document': (shared.knowledge_base.type || 'document') === 'document', 'type-faq': shared.knowledge_base.type === 'faq', 'type-notebook': shared.knowledge_base.type === 'notebook' }">
+                    <t-icon :name="shared.knowledge_base.type === 'notebook' ? 'edit-1' : (shared.knowledge_base.type === 'faq' ? 'chat-bubble-help' : 'folder')" size="14px" />
+                    <span class="badge-count">{{ shared.knowledge_base.type === 'faq' ? (shared.knowledge_base.chunk_count || '-') : (shared.knowledge_base.knowledge_count || '-') }}</span>
+                  </div>
+                </t-tooltip>
             </div>
           </div>
           <div class="bottom-right">
@@ -542,6 +544,7 @@
       :mode="uiStore.kbEditorMode"
       :kb-id="uiStore.currentKBId || undefined"
       :initial-type="uiStore.kbEditorType"
+      :initial-name="uiStore.kbEditorInitialName"
       @update:visible="(val) => val ? null : uiStore.closeKBEditor()"
       @success="handleKBEditorSuccess"
     />
@@ -647,7 +650,7 @@ interface KB {
   updated_at?: string;
   embedding_model_id?: string;
   summary_model_id?: string;
-  type?: 'document' | 'faq';
+  type?: 'document' | 'faq' | 'notebook';
   showMore?: boolean;
   vlm_config?: { enabled?: boolean; model_id?: string };
   extract_config?: { enabled?: boolean };
@@ -1939,6 +1942,27 @@ const handleUploadFinishedEvent = (event: Event) => {
 
     &:hover {
       background: rgba(0, 82, 217, 0.12);
+    }
+
+    .badge-count {
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .processing-icon {
+      animation: spin 1s linear infinite;
+    }
+  }
+
+  &.type-notebook {
+    background: rgba(255, 152, 0, 0.08);
+    color: var(--td-warning-color);
+    width: auto;
+    padding: 0 6px;
+    gap: 3px;
+
+    &:hover {
+      background: rgba(255, 152, 0, 0.12);
     }
 
     .badge-count {

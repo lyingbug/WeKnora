@@ -1471,7 +1471,7 @@ func (h *OrganizationHandler) listSpaceKnowledgeBasesInOrganization(ctx context.
 			directKbIDs[kbID] = true
 
 			switch kb.Type {
-			case types.KnowledgeBaseTypeDocument:
+			case types.KnowledgeBaseTypeDocument, types.KnowledgeBaseTypeNotebook:
 				if count, err := h.knowledgeRepo.CountKnowledgeByKnowledgeBaseID(ctx, sourceTenantID, kb.ID); err == nil {
 					kb.KnowledgeCount = count
 				}

@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteLocationNormalized } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useUIStore } from '@/stores/ui'
 import { autoSetup } from '@/api/auth'
 
 /** Lite /桌面 WebView 硬刷新时可能只打开 `/`，用 session 记住上次页面以便恢复 */
@@ -24,8 +25,15 @@ function isLiteSpaDefaultEntry(to: RouteLocationNormalized) {
     to.path === '/' ||
     to.path === '/platform' ||
     to.path === '/platform/knowledge-bases' ||
-    to.name === 'knowledgeBaseList'
+    to.name === 'knowledgeBaseList' ||
+    to.name === 'notesList'
   )
+}
+
+/** 登录后 / 根路径跳转：与「笔记模式」设置一致，供 Login、App(OIDC) 等使用 */
+export function notesModeDefaultRedirect() {
+  const ui = useUIStore()
+  return ui.notesModeEnabled ? '/platform/notes' : '/platform/knowledge-bases'
 }
 
 function isSafeLiteRestoreTarget(path: string) {
@@ -37,7 +45,7 @@ const router = createRouter({
   routes: [
     {
       path: "/",
-      redirect: "/platform/knowledge-bases",
+      redirect: () => notesModeDefaultRedirect(),
     },
     {
       path: "/login",
@@ -67,7 +75,7 @@ const router = createRouter({
     {
       path: "/platform",
       name: "Platform",
-      redirect: "/platform/knowledge-bases",
+      redirect: () => notesModeDefaultRedirect(),
       component: () => import("../views/platform/index.vue"),
       meta: { requiresInit: true, requiresAuth: true },
       children: [
@@ -98,6 +106,25 @@ const router = createRouter({
           name: "knowledgeSearch",
           component: () => import("../views/knowledge/KnowledgeSearch.vue"),
           meta: { requiresInit: true, requiresAuth: true }
+        },
+        {
+          path: "notes",
+          component: () => import("../views/notes/NotesShell.vue"),
+          meta: { requiresInit: true, requiresAuth: true },
+          children: [
+            {
+              path: "",
+              name: "notesList",
+              component: () => import("../views/notes/NotesWelcome.vue"),
+              meta: { requiresInit: true, requiresAuth: true }
+            },
+            {
+              path: ":id",
+              name: "notesEditor",
+              component: () => import("../views/notes/NotesEditor.vue"),
+              meta: { requiresInit: true, requiresAuth: true }
+            }
+          ]
         },
         {
           path: "agents",
@@ -187,7 +214,7 @@ router.beforeEach(async (to, from, next) => {
   if (to.meta.requiresAuth === false || to.meta.requiresInit === false) {
     // 如果已登录用户访问登录页面，重定向到知识库列表页面
     if (to.path === '/login' && authStore.isLoggedIn) {
-      next('/platform/knowledge-bases')
+      next(notesModeDefaultRedirect())
       return
     }
     next()

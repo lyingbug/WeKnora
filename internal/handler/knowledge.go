@@ -1406,7 +1406,7 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 			filter := tools.DeriveKBFilterFromTools(agent.Config.AllowedTools)
 			removed := 0
 			for _, kb := range kbs {
-				if kb == nil || kb.Type != types.KnowledgeBaseTypeDocument {
+				if kb == nil || (kb.Type != types.KnowledgeBaseTypeDocument && kb.Type != types.KnowledgeBaseTypeNotebook) {
 					continue
 				}
 				if !filter.IsEmpty() && !tools.KBSatisfiesToolRequirements(kb.Capabilities(), agent.Config.AllowedTools) {
@@ -1465,6 +1465,8 @@ type MoveKnowledgeResponse struct {
 	TargetKBID     string `json:"target_kb_id"`
 	KnowledgeCount int    `json:"knowledge_count"`
 	Message        string `json:"message"`
+	// Synchronous is true when the move completed in the request (e.g. draft-only batch), no task_id to poll.
+	Synchronous bool `json:"synchronous"`
 }
 
 // MoveKnowledge moves knowledge items from one knowledge base to another (async task).
@@ -1532,7 +1534,8 @@ func (h *KnowledgeHandler) MoveKnowledge(c *gin.Context) {
 		return
 	}
 
-	// Validate all knowledge IDs belong to source KB and are in completed status
+	// Validate all knowledge IDs belong to source KB and are in completed or draft status
+	allDraft := true
 	for _, kID := range req.KnowledgeIDs {
 		knowledge, err := h.kgService.GetKnowledgeByID(ctx, kID)
 		if err != nil {
@@ -1543,10 +1546,33 @@ func (h *KnowledgeHandler) MoveKnowledge(c *gin.Context) {
 			c.Error(errors.NewBadRequestError(fmt.Sprintf("Knowledge item %s does not belong to the source knowledge base", kID)))
 			return
 		}
-		if knowledge.ParseStatus != types.ParseStatusCompleted {
-			c.Error(errors.NewBadRequestError(fmt.Sprintf("Knowledge item %s is not in completed status (current: %s)", kID, knowledge.ParseStatus)))
+		if knowledge.ParseStatus != types.ParseStatusCompleted && knowledge.ParseStatus != types.ManualKnowledgeStatusDraft {
+			c.Error(errors.NewBadRequestError(fmt.Sprintf("Knowledge item %s is not in completed or draft status (current: %s)", kID, knowledge.ParseStatus)))
 			return
 		}
+		if knowledge.ParseStatus != types.ManualKnowledgeStatusDraft {
+			allDraft = false
+		}
+	}
+
+	// Draft-only: update DB in this request (no queue). UI can skip polling and full reload.
+	if allDraft {
+		if err := h.kgService.SyncMoveDraftKnowledges(ctx, req.KnowledgeIDs, sourceKB, targetKB); err != nil {
+			logger.Errorf(ctx, "MoveKnowledge: sync draft move failed: %v", err)
+			c.Error(errors.NewBadRequestError(err.Error()))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data": MoveKnowledgeResponse{
+				Synchronous:    true,
+				SourceKBID:     req.SourceKBID,
+				TargetKBID:     req.TargetKBID,
+				KnowledgeCount: len(req.KnowledgeIDs),
+				Message:        "Knowledge moved",
+			},
+		})
+		return
 	}
 
 	// Generate task ID

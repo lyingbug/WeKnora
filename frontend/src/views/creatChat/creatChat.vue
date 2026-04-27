@@ -44,11 +44,12 @@
     </div>
     
     <!-- 知识库编辑器（创建/编辑统一组件） -->
-    <KnowledgeBaseEditorModal 
+    <KnowledgeBaseEditorModal
       :visible="uiStore.showKBEditorModal"
       :mode="uiStore.kbEditorMode"
       :kb-id="uiStore.currentKBId || undefined"
       :initial-type="uiStore.kbEditorType"
+      :initial-name="uiStore.kbEditorInitialName"
       @update:visible="(val) => val ? null : uiStore.closeKBEditor()"
       @success="handleKBEditorSuccess"
     />

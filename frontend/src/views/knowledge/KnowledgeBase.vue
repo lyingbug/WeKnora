@@ -1089,12 +1089,19 @@ const documentTitle = computed(() => {
 });
 
 // 文档操作下拉菜单选项
-const documentActionOptions = computed(() => [
-  { content: t('upload.uploadDocument'), value: 'upload', prefixIcon: () => h(TIcon, { name: 'upload', size: '16px' }) },
-  { content: t('upload.uploadFolder'), value: 'uploadFolder', prefixIcon: () => h(TIcon, { name: 'folder-add', size: '16px' }) },
-  { content: t('knowledgeBase.importURL'), value: 'importURL', prefixIcon: () => h(TIcon, { name: 'link', size: '16px' }) },
-  { content: t('upload.onlineEdit'), value: 'manualCreate', prefixIcon: () => h(TIcon, { name: 'edit', size: '16px' }) },
-]);
+const documentActionOptions = computed(() => {
+  if (kbInfo.value?.type === 'notebook') {
+    return [
+      { content: t('upload.onlineEdit'), value: 'manualCreate', prefixIcon: () => h(TIcon, { name: 'edit', size: '16px' }) },
+    ];
+  }
+  return [
+    { content: t('upload.uploadDocument'), value: 'upload', prefixIcon: () => h(TIcon, { name: 'upload', size: '16px' }) },
+    { content: t('upload.uploadFolder'), value: 'uploadFolder', prefixIcon: () => h(TIcon, { name: 'folder-add', size: '16px' }) },
+    { content: t('knowledgeBase.importURL'), value: 'importURL', prefixIcon: () => h(TIcon, { name: 'link', size: '16px' }) },
+    { content: t('upload.onlineEdit'), value: 'manualCreate', prefixIcon: () => h(TIcon, { name: 'edit', size: '16px' }) },
+  ];
+});
 
 // 处理文档操作下拉菜单选择
 const handleDocumentActionSelect = (data: { value: string }) => {
@@ -1114,9 +1121,13 @@ const handleDocumentActionSelect = (data: { value: string }) => {
   }
 };
 
-const ensureDocumentKbReady = () => {
+const ensureDocumentKbReady = (allowNotebook = false) => {
   if (isFAQ.value) {
     MessagePlugin.warning(t('knowledgeBase.operationNotSupportedForType'));
+    return false;
+  }
+  if (!allowNotebook && kbInfo.value?.type === 'notebook') {
+    MessagePlugin.warning('笔记本不支持文件上传，请使用在线编辑');
     return false;
   }
   if (!kbId.value) {
@@ -1413,7 +1424,7 @@ const handleFolderUpload = async (event: Event) => {
 };
 
 const handleManualCreate = () => {
-  if (!ensureDocumentKbReady()) return;
+  if (!ensureDocumentKbReady(true)) return;
   uiStore.openManualEditor({
     mode: 'create',
     kbId: kbId.value,
@@ -2337,6 +2348,7 @@ async function createNewSession(value: string): Promise<void> {
     :mode="uiStore.kbEditorMode"
     :kb-id="uiStore.currentKBId || undefined"
     :initial-type="uiStore.kbEditorType"
+    :initial-name="uiStore.kbEditorInitialName"
     @update:visible="(val) => val ? null : uiStore.closeKBEditor()"
     @success="handleKBEditorSuccess"
   />

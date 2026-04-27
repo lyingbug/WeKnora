@@ -3,7 +3,7 @@
     <div class="section-header">
       <h2>{{ $t('kbSettings.storage.title') }}</h2>
       <p class="section-description">
-        {{ $t('kbSettings.storage.description') }}
+        {{ isNotebook ? $t('notes.list.notebookStorageGlobalDesc') : $t('kbSettings.storage.description') }}
       </p>
     </div>
 
@@ -16,7 +16,7 @@
       <div class="setting-row">
         <div class="setting-info">
           <label>{{ $t('kbSettings.storage.engineLabel') }}</label>
-          <p class="desc">{{ $t('kbSettings.storage.engineDesc') }}</p>
+          <p class="desc">{{ isNotebook ? $t('notes.list.notebookStorageDesc') : $t('kbSettings.storage.engineDesc') }}</p>
         </div>
         <div class="setting-control">
           <t-select
@@ -60,6 +60,7 @@ const { t } = useI18n()
 const props = defineProps<{
   storageProvider: string
   hasFiles?: boolean
+  isNotebook?: boolean
 }>()
 
 const emit = defineEmits<{

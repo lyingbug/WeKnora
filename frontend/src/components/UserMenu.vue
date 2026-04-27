@@ -1,12 +1,16 @@
 <template>
-  <div class="user-menu" :class="{ 'user-menu--collapsed': uiStore.sidebarCollapsed }" ref="menuRef">
-    <!-- 用户按钮 -->
+  <div
+    class="user-menu"
+    :class="{ 'user-menu--collapsed': uiStore.sidebarCollapsed && !isNotesVariant }"
+    ref="menuRef"
+  >
+    <!-- 用户按钮（笔记模式侧栏始终展开显示文案，不受主导航折叠态影响） -->
     <div class="user-button" @click="toggleMenu">
       <div class="user-avatar">
         <img v-if="userAvatar" :src="userAvatar" :alt="$t('common.avatar')" />
         <span v-else class="avatar-placeholder">{{ userInitial }}</span>
       </div>
-      <template v-if="!uiStore.sidebarCollapsed">
+      <template v-if="!uiStore.sidebarCollapsed || isNotesVariant">
         <div class="user-info">
           <div class="user-name">{{ userName }}</div>
           <div class="user-email">{{ userEmail }}</div>
@@ -18,6 +22,24 @@
     <!-- 下拉菜单 -->
     <Transition name="dropdown">
       <div v-if="menuVisible" class="user-dropdown" @click.stop>
+        <template v-if="isNotesVariant">
+          <div class="menu-item" @click="handleSettings">
+            <t-icon name="setting" class="menu-icon" />
+            <span>{{ $t('general.allSettings') }}</span>
+          </div>
+          <div class="menu-item" @click="handleExitNotesMode">
+            <t-icon name="chevron-left" class="menu-icon" />
+            <span>{{ $t('settings.notesMode.exitMode') }}</span>
+          </div>
+          <template v-if="!authStore.isLiteMode">
+            <div class="menu-divider"></div>
+            <div class="menu-item danger" @click="handleLogout">
+              <t-icon name="logout" class="menu-icon" />
+              <span>{{ $t('auth.logout') }}</span>
+            </div>
+          </template>
+        </template>
+        <template v-else>
         <div class="menu-item" @click="handleQuickNav('models')">
           <t-icon name="control-platform" class="menu-icon" />
           <span>{{ $t('settings.modelManagement') }}</span>
@@ -51,6 +73,10 @@
         <div class="menu-item" @click="handleSettings">
           <t-icon name="setting" class="menu-icon" />
           <span>{{ $t('general.allSettings') }}</span>
+        </div>
+        <div class="menu-item" @click="handleEnterNotesMode">
+          <t-icon name="edit-1" class="menu-icon" />
+          <span>{{ $t('settings.notesMode.navigateTitle') }}</span>
         </div>
         <div class="menu-divider"></div>
         <div class="menu-item" @click="openClawhubSkill">
@@ -103,6 +129,7 @@
             <span>{{ $t('auth.logout') }}</span>
           </div>
         </template>
+        </template>
       </div>
     </Transition>
   </div>
@@ -117,11 +144,21 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { getCurrentUser, logout as logoutApi } from '@/api/auth'
 import { useI18n } from 'vue-i18n'
 
+const props = withDefaults(
+  defineProps<{
+    /** 笔记模式侧栏：与主导航相同样式，菜单项为设置 / 退出笔记模式 / 登出 */
+    variant?: 'default' | 'notes'
+  }>(),
+  { variant: 'default' },
+)
+
 const { t } = useI18n()
 
 const router = useRouter()
 const uiStore = useUIStore()
 const authStore = useAuthStore()
+
+const isNotesVariant = computed(() => props.variant === 'notes')
 
 const menuRef = ref<HTMLElement>()
 const menuVisible = ref(false)
@@ -166,6 +203,22 @@ const handleSettings = () => {
   menuVisible.value = false
   uiStore.openSettings()
   router.push('/platform/settings')
+}
+
+const handleExitNotesMode = () => {
+  menuVisible.value = false
+  uiStore.setNotesMode(false)
+  router.push('/platform/knowledge-bases')
+}
+
+/** 与「常规设置」中打开笔记模式一致 */
+const handleEnterNotesMode = () => {
+  menuVisible.value = false
+  uiStore.setNotesMode(true)
+  if (!router.currentRoute.value.path.startsWith('/platform/notes')) {
+    router.push('/platform/notes')
+  }
+  MessagePlugin.success(t('settings.notesMode.switchedOn'))
 }
 
 const CHROME_EXTENSION_URL =

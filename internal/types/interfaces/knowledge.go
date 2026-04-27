@@ -160,6 +160,9 @@ type KnowledgeService interface {
 	GetKnowledgeMoveProgress(ctx context.Context, taskID string) (*types.KnowledgeMoveProgress, error)
 	// SaveKnowledgeMoveProgress saves the progress of a knowledge move task
 	SaveKnowledgeMoveProgress(ctx context.Context, progress *types.KnowledgeMoveProgress) error
+	// SyncMoveDraftKnowledges moves draft document knowledge to another KB in-process (no async task).
+	// All knowledgeIDs must be draft status and currently belong to sourceKB.
+	SyncMoveDraftKnowledges(ctx context.Context, knowledgeIDs []string, sourceKB, targetKB *types.KnowledgeBase) error
 	// GetFAQImportProgress retrieves the progress of an FAQ import task
 	GetFAQImportProgress(ctx context.Context, taskID string) (*types.FAQImportProgress, error)
 	// UpdateLastFAQImportResultDisplayStatus updates the display status of FAQ import result

@@ -42,25 +42,27 @@
         
         <!-- 上半部分：知识库和对话 -->
         <div class="menu_top">
-            <div class="menu_box" :class="{ 'has-submenu': item.children }" v-for="(item, index) in topMenuItems" :key="index">
+            <div class="menu_box" :class="{ 'has-submenu': item.children && showChatSubmenu }" v-for="(item, index) in topMenuItems" :key="index">
                 <t-tooltip :content="item.title" placement="right" :disabled="!uiStore.sidebarCollapsed">
                 <div @click="handleMenuClick(item.path)"
                     @mouseenter="mouseenteMenu(item.path)" @mouseleave="mouseleaveMenu(item.path)"
                      :class="['menu_item', item.childrenPath && item.childrenPath == currentpath ? 'menu_item_c_active' : isMenuItemActive(item.path) ? 'menu_item_active' : '']">
                     <div class="menu_item-box">
                         <div class="menu_icon">
-                            <img class="icon" :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'search' ? searchIcon : item.icon == 'agent' ? agentIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : prefixIcon)" alt="">
+                            <t-icon v-if="item.path === 'notes'" name="edit" class="icon menu-notes-icon" size="20px" />
+                            <img v-else class="icon" :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'search' ? searchIcon : item.icon == 'agent' ? agentIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : prefixIcon)" alt="">
                         </div>
                         <template v-if="!uiStore.sidebarCollapsed">
                             <span class="menu_title" :title="item.title">{{ item.title }}</span>
                             <span v-if="item.path === 'organizations' && orgStore.totalPendingJoinRequestCount > 0" class="menu-pending-badge" :title="t('organization.settings.pendingJoinRequestsBadge')">{{ orgStore.totalPendingJoinRequestCount }}</span>
                             <span v-if="item.path === 'creatChat' && batchMode" class="batch-cancel-hint" @click.stop="exitBatchMode">{{ t('batchManage.cancel') }}</span>
                             <t-icon v-else-if="item.path === 'creatChat'" name="add" class="menu-create-hint" />
+                            <t-icon v-else-if="item.path === 'notes'" name="add" class="menu-create-hint" @click.stop="goNewNote" />
                         </template>
                     </div>
                 </div>
                 </t-tooltip>
-                <div ref="submenuscrollContainer" @scroll="handleScroll" class="submenu" v-if="item.children && !uiStore.sidebarCollapsed">
+                <div ref="submenuscrollContainer" @scroll="handleScroll" class="submenu" v-if="item.children && !uiStore.sidebarCollapsed && showChatSubmenu">
                     <!-- 骨架屏占位 -->
                     <template v-if="loading && groupedSessions.length === 0">
                         <div v-for="n in 5" :key="'skel-'+n" class="submenu_item_p">
@@ -155,6 +157,10 @@ const orgStore = useOrganizationStore();
 const uiStore = useUIStore();
 const route = useRoute();
 const router = useRouter();
+
+const goNewNote = () => {
+    router.push('/platform/notes/new')
+}
 const currentpath = ref('');
 const currentPage = ref(1);
 const page_size = ref(30);
@@ -215,6 +221,16 @@ const isInCreatChat = computed<boolean>(() => {
 // 是否在对话详情页
 const isInChatDetail = computed<boolean>(() => route.name === 'chat');
 
+// 是否在聊天上下文：笔记模式默认折叠会话历史；当用户进入聊天/创建对话/批量管理时，仍展开 submenu
+const isInChatContext = computed<boolean>(
+    () => isInCreatChat.value || isInChatDetail.value || batchMode.value,
+);
+
+// 会话历史 submenu 是否需要渲染
+const showChatSubmenu = computed<boolean>(
+    () => !uiStore.notesModeEnabled || isInChatContext.value,
+);
+
 // 是否在智能体列表页面
 const isInAgentList = computed<boolean>(() => route.name === 'agentList');
 
@@ -232,6 +248,8 @@ const isMenuItemActive = (itemPath: string): boolean => {
                    currentRoute === 'knowledgeBaseSettings';
         case 'knowledge-search':
             return currentRoute === 'knowledgeSearch';
+        case 'notes':
+            return currentRoute === 'notesList' || currentRoute === 'notesEditor';
         case 'agents':
             return currentRoute === 'agentList';
         case 'organizations':
@@ -264,13 +282,13 @@ const getIconActiveState = (itemPath: string) => {
 // 分离上下两部分菜单（使用 visibleMenuArr 以便 lite 模式过滤 logout）
 const topMenuItems = computed<MenuItem[]>(() => {
     return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) => 
-        item.path === 'knowledge-bases' || item.path === 'knowledge-search' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat'
+        item.path === 'knowledge-bases' || item.path === 'knowledge-search' || item.path === 'notes' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat'
     );
 });
 
 const bottomMenuItems = computed<MenuItem[]>(() => {
     return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) => {
-        if (item.path === 'knowledge-bases' || item.path === 'knowledge-search' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat') {
+        if (item.path === 'knowledge-bases' || item.path === 'knowledge-search' || item.path === 'notes' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat') {
             return false;
         }
         return true;
@@ -674,6 +692,8 @@ const handleMenuClick = async (path: string) => {
         }
     } else if (path === 'knowledge-search') {
         router.push('/platform/knowledge-search')
+    } else if (path === 'notes') {
+        router.push('/platform/notes')
     } else if (path === 'agents') {
         router.push('/platform/agents')
     } else if (path === 'organizations') {
@@ -1006,6 +1026,14 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
             height: 20px;
             overflow: hidden;
         }
+
+        .menu-notes-icon {
+            flex-shrink: 0;
+        }
+    }
+
+    .menu_item_active .menu_icon .menu-notes-icon {
+        color: var(--td-brand-color);
     }
 
     .menu_title {
@@ -1319,6 +1347,15 @@ html[theme-mode="dark"] .aside_box .menu_item_c_active .menu_icon img.icon {
 // Active (green) icons should not be inverted
 html[theme-mode="dark"] .aside_box .menu_item_active .menu_icon img.icon {
     filter: none;
+    opacity: 1;
+}
+
+html[theme-mode="dark"] .aside_box .menu_icon .menu-notes-icon {
+    opacity: 0.55;
+}
+
+html[theme-mode="dark"] .aside_box .menu_item:hover .menu_icon .menu-notes-icon,
+html[theme-mode="dark"] .aside_box .menu_item_active .menu_icon .menu-notes-icon {
     opacity: 1;
 }
 

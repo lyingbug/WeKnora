@@ -2,7 +2,7 @@
   <div class="kb-model-config">
     <div class="section-header">
       <h2>{{ $t('knowledgeEditor.models.title') }}</h2>
-      <p class="section-description">{{ $t('knowledgeEditor.models.description') }}</p>
+      <p class="section-description">{{ isNotebook ? $t('notes.list.notebookModelsDesc') : $t('knowledgeEditor.models.description') }}</p>
     </div>
 
     <div class="settings-group">
@@ -92,6 +92,7 @@ interface Props {
   wikiEnabled?: boolean
   ragEnabled?: boolean
   allModels?: any[]
+  isNotebook?: boolean
 }
 
 const props = defineProps<Props>()

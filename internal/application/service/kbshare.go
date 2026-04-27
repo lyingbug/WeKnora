@@ -232,7 +232,7 @@ func (s *kbShareService) ListSharedKnowledgeBases(ctx context.Context, userID st
 		kb := share.KnowledgeBase
 		// Calculate knowledge/chunk count based on type
 		switch kb.Type {
-		case types.KnowledgeBaseTypeDocument:
+		case types.KnowledgeBaseTypeDocument, types.KnowledgeBaseTypeNotebook:
 			knowledgeCount, err := s.kgRepo.CountKnowledgeByKnowledgeBaseID(ctx, share.SourceTenantID, kb.ID)
 			if err != nil {
 				logger.Warnf(ctx, "Failed to get knowledge count for shared KB %s: %v", kb.ID, err)
@@ -317,7 +317,7 @@ func (s *kbShareService) ListSharedKnowledgeBasesInOrganization(ctx context.Cont
 
 		kb := share.KnowledgeBase
 		switch kb.Type {
-		case types.KnowledgeBaseTypeDocument:
+		case types.KnowledgeBaseTypeDocument, types.KnowledgeBaseTypeNotebook:
 			if count, err := s.kgRepo.CountKnowledgeByKnowledgeBaseID(ctx, share.SourceTenantID, kb.ID); err == nil {
 				kb.KnowledgeCount = count
 			}
