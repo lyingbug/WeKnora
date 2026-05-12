@@ -316,6 +316,24 @@
                       </div>
                     </div>
 
+                    <!-- 问题理解模型（独立模型，留空则复用主对话模型，仅普通模式可见） -->
+                    <div v-if="!isAgentMode" class="setting-row">
+                      <div class="setting-info">
+                        <label>{{ $t('agent.editor.queryUnderstandModel') }}</label>
+                        <p class="desc">{{ $t('agentEditor.desc.queryUnderstandModel') }}</p>
+                      </div>
+                      <div class="setting-control">
+                        <ModelSelector
+                          model-type="KnowledgeQA"
+                          :selected-model-id="formData.config.query_understand_model_id"
+                          :all-models="allModels"
+                          @update:selected-model-id="(val: string) => formData.config.query_understand_model_id = val"
+                          @add-model="handleAddModel('llm')"
+                          :placeholder="$t('agent.editor.queryUnderstandModelPlaceholder')"
+                        />
+                      </div>
+                    </div>
+
                     <!-- 温度 -->
                     <div class="setting-row">
                       <div class="setting-info">
@@ -486,37 +504,8 @@
                       </div>
                     </div>
 
-                    <!-- 问题改写（仅多轮对话开启且普通模式时显示） -->
-                    <div v-if="formData.config.multi_turn_enabled && !isAgentMode" class="setting-row">
-                      <div class="setting-info">
-                        <label>{{ $t('agent.editor.enableRewrite') }}</label>
-                        <p class="desc">{{ $t('agentEditor.desc.rewrite') }}</p>
-                      </div>
-                      <div class="setting-control">
-                        <t-switch v-model="formData.config.enable_rewrite" />
-                      </div>
-                    </div>
-
-                    <!-- 问题理解模型（独立模型，留空则复用主对话模型） -->
-                    <div v-if="formData.config.multi_turn_enabled && !isAgentMode && formData.config.enable_rewrite" class="setting-row">
-                      <div class="setting-info">
-                        <label>{{ $t('agent.editor.queryUnderstandModel') }}</label>
-                        <p class="desc">{{ $t('agentEditor.desc.queryUnderstandModel') }}</p>
-                      </div>
-                      <div class="setting-control">
-                        <ModelSelector
-                          model-type="KnowledgeQA"
-                          :selected-model-id="formData.config.query_understand_model_id"
-                          :all-models="allModels"
-                          @update:selected-model-id="(val: string) => formData.config.query_understand_model_id = val"
-                          @add-model="handleAddModel('llm')"
-                          :placeholder="$t('agent.editor.queryUnderstandModelPlaceholder')"
-                        />
-                      </div>
-                    </div>
-
                     <!-- 改写系统提示词 -->
-                    <div v-if="formData.config.multi_turn_enabled && !isAgentMode && formData.config.enable_rewrite" class="setting-row setting-row-vertical">
+                    <div v-if="formData.config.multi_turn_enabled && !isAgentMode" class="setting-row setting-row-vertical">
                       <div class="setting-info">
                         <label>{{ $t('agent.editor.rewritePromptSystem') }}</label>
                         <p class="desc">{{ $t('agentEditor.desc.rewriteSystemPrompt') }}</p>
@@ -580,7 +569,7 @@
                     </div>
 
                     <!-- 改写用户提示词 -->
-                    <div v-if="formData.config.multi_turn_enabled && !isAgentMode && formData.config.enable_rewrite" class="setting-row setting-row-vertical">
+                    <div v-if="formData.config.multi_turn_enabled && !isAgentMode" class="setting-row setting-row-vertical">
                       <div class="setting-info">
                         <label>{{ $t('agent.editor.rewritePromptUser') }}</label>
                         <p class="desc">{{ $t('agentEditor.desc.rewriteUserPrompt') }}</p>
@@ -3546,8 +3535,8 @@ const handleSave = async () => {
 
 
 
-  // 校验占位符（普通模式 + 开启多轮对话改写）
-  if (!isAgentMode.value && formData.value.config.multi_turn_enabled && formData.value.config.enable_rewrite) {
+  // 校验占位符（普通模式 + 开启多轮对话）
+  if (!isAgentMode.value && formData.value.config.multi_turn_enabled) {
     const rewritePrompt = formData.value.config.rewrite_prompt_user || '';
     // 只有用户自定义了改写提示词时才校验
     if (rewritePrompt.trim()) {
