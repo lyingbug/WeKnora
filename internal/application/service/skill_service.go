@@ -30,11 +30,8 @@ type skillService struct {
 }
 
 // NewSkillService creates a new skill service
-func NewSkillService() interfaces.SkillService {
-	// Determine the preloaded skills directory
-	preloadedDir := getPreloadedSkillsDir()
-
-	return NewSkillServiceWithRepository(nil, preloadedDir)
+func NewSkillService(repo interfaces.SkillRepository) interfaces.SkillService {
+	return NewSkillServiceWithRepository(repo, getPreloadedSkillsDir())
 }
 
 // NewSkillServiceWithRepository creates a skill service with registry persistence.
