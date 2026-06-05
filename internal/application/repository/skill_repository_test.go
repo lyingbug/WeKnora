@@ -65,7 +65,7 @@ func TestSkillRepository_UpsertSkill_IdempotentByNameVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 
-	got, err := repo.GetActiveSkillByName(ctx, "code-review")
+	got, err := repo.GetActiveSkillByNameVersion(ctx, "code-review", "1.0.0")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, first.ID, got.ID, "upsert should not replace the registry row identity")
@@ -76,6 +76,24 @@ func TestSkillRepository_UpsertSkill_IdempotentByNameVersion(t *testing.T) {
 	assert.JSONEq(t, `{"kind":"updated","permissions":["read"]}`, got.Manifest.ToString())
 	assert.False(t, got.IsBuiltin)
 	assert.True(t, got.UpdatedAt.Equal(updated.UpdatedAt))
+}
+
+func TestSkillRepository_GetActiveSkillByNameVersion_RequiresExactVersion(t *testing.T) {
+	db := setupSkillRepositoryTestDB(t)
+	repo := NewSkillRepository(db)
+	ctx := context.Background()
+
+	require.NoError(t, repo.UpsertSkill(ctx, testSkillEntry("code-review", "1.2.0", types.SkillStatusActive)))
+	require.NoError(t, repo.UpsertSkill(ctx, testSkillEntry("code-review", "1.10.0", types.SkillStatusActive)))
+	require.NoError(t, repo.UpsertSkill(ctx, testSkillEntry("code-review", "2.0.0", types.SkillStatusDisabled)))
+
+	got, err := repo.GetActiveSkillByNameVersion(ctx, "code-review", "1.10.0")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "1.10.0", got.Version)
+
+	_, err = repo.GetActiveSkillByNameVersion(ctx, "code-review", "2.0.0")
+	require.Error(t, err)
 }
 
 func TestSkillRepository_ListActiveSkills_FiltersAndOrders(t *testing.T) {

@@ -23,6 +23,6 @@ type SkillService interface {
 type SkillRepository interface {
 	UpsertSkill(ctx context.Context, skill *types.SkillRegistryEntry) error
 	ListActiveSkills(ctx context.Context) ([]*types.SkillRegistryEntry, error)
-	GetActiveSkillByName(ctx context.Context, name string) (*types.SkillRegistryEntry, error)
+	GetActiveSkillByNameVersion(ctx context.Context, name, version string) (*types.SkillRegistryEntry, error)
 	CountSkills(ctx context.Context) (int64, error)
 }

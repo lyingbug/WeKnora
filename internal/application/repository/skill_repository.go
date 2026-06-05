@@ -47,14 +47,14 @@ func (r *skillRepository) ListActiveSkills(ctx context.Context) ([]*types.SkillR
 	return skills, nil
 }
 
-func (r *skillRepository) GetActiveSkillByName(
+func (r *skillRepository) GetActiveSkillByNameVersion(
 	ctx context.Context,
 	name string,
+	version string,
 ) (*types.SkillRegistryEntry, error) {
 	var skill types.SkillRegistryEntry
 	err := r.db.WithContext(ctx).
-		Where("name = ? AND status = ?", name, types.SkillStatusActive).
-		Order("version DESC").
+		Where("name = ? AND version = ? AND status = ?", name, version, types.SkillStatusActive).
 		First(&skill).Error
 	if err != nil {
 		return nil, err
