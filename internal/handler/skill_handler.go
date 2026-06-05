@@ -29,8 +29,8 @@ type SkillInfoResponse struct {
 }
 
 // ListSkills godoc
-// @Summary      获取预装Skills列表
-// @Description  获取所有预装的Agent Skills元数据
+// @Summary      获取可用 Skills 列表
+// @Description  获取当前部署中可用的 Agent Skills 元数据。预装 Skills 会在启动时同步到注册表。
 // @Tags         Skills
 // @Accept       json
 // @Produce      json

@@ -194,6 +194,12 @@ Skills 功能通过两个工具与 Agent 交互：
 
 ## 预加载技能（Preloaded Skills）
 
+### Registry-backed preloaded Skills
+
+从 Skill Registry 重构的第一阶段开始，`skills/preloaded` 仍然是预装 Skill 的包来源，但应用启动时会把其 metadata 同步到数据库注册表。前端和 `/api/v1/skills` 从注册表读取可用 Skill 列表；`read_skill` 和 `execute_skill_script` 在该阶段仍沿用本地包文件读取和沙箱执行路径。
+
+这为后续租户级安装、Agent 级绑定、版本管理、权限审批和云端沙箱运行做准备，同时保持现有 Agent 配置兼容。
+
 系统内置了以下 5 个预加载技能，用于增强知识库问答和文档处理能力：
 
 ### 1. citation-generator - 引用生成器
