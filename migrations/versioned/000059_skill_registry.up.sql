@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS tenant_skill_installs (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_installs_tenant_skill ON tenant_skill_installs(tenant_id, skill_id);
 CREATE INDEX IF NOT EXISTS idx_tenant_skill_installs_tenant ON tenant_skill_installs(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_skill_installs_skill ON tenant_skill_installs(skill_id);
 
 CREATE TABLE IF NOT EXISTS agent_skill_bindings (
     id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS agent_skill_bindings (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_skill_bindings_tenant_agent_skill ON agent_skill_bindings(tenant_id, agent_id, skill_id);
 CREATE INDEX IF NOT EXISTS idx_agent_skill_bindings_tenant_agent ON agent_skill_bindings(tenant_id, agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_skill_bindings_skill ON agent_skill_bindings(skill_id);
 
 CREATE TABLE IF NOT EXISTS skill_execution_runs (
     id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4(),
