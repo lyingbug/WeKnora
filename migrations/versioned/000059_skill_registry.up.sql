@@ -25,8 +25,8 @@ CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status);
 CREATE INDEX IF NOT EXISTS idx_skills_is_builtin ON skills(is_builtin);
 
 CREATE TABLE IF NOT EXISTS tenant_skill_installs (
-    id VARCHAR(64) PRIMARY KEY,
-    tenant_id BIGINT NOT NULL,
+    id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id INTEGER NOT NULL,
     skill_id VARCHAR(64) NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT true,
     installed_by VARCHAR(64) NOT NULL DEFAULT '',
@@ -40,8 +40,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_installs_tenant_skill ON tena
 CREATE INDEX IF NOT EXISTS idx_tenant_skill_installs_tenant ON tenant_skill_installs(tenant_id);
 
 CREATE TABLE IF NOT EXISTS agent_skill_bindings (
-    id VARCHAR(64) PRIMARY KEY,
-    tenant_id BIGINT NOT NULL,
+    id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id INTEGER NOT NULL,
     agent_id VARCHAR(64) NOT NULL,
     skill_id VARCHAR(64) NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT true,
@@ -51,12 +51,12 @@ CREATE TABLE IF NOT EXISTS agent_skill_bindings (
     CONSTRAINT fk_agent_skill_bindings_skill FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_skill_bindings_agent_skill ON agent_skill_bindings(agent_id, skill_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_skill_bindings_tenant_agent_skill ON agent_skill_bindings(tenant_id, agent_id, skill_id);
 CREATE INDEX IF NOT EXISTS idx_agent_skill_bindings_tenant_agent ON agent_skill_bindings(tenant_id, agent_id);
 
 CREATE TABLE IF NOT EXISTS skill_execution_runs (
-    id VARCHAR(64) PRIMARY KEY,
-    tenant_id BIGINT NOT NULL DEFAULT 0,
+    id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id INTEGER NOT NULL DEFAULT 0,
     user_id VARCHAR(64) NOT NULL DEFAULT '',
     agent_id VARCHAR(64) NOT NULL DEFAULT '',
     session_id VARCHAR(64) NOT NULL DEFAULT '',
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS skill_execution_runs (
     error_summary TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT fk_skill_execution_runs_skill FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
+    CONSTRAINT fk_skill_execution_runs_skill FOREIGN KEY(skill_id) REFERENCES skills(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_skill_execution_runs_tenant_created ON skill_execution_runs(tenant_id, created_at);
