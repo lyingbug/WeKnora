@@ -17,7 +17,7 @@ type SkillRegistryEntry struct {
 	SourceType  string    `gorm:"column:source_type" json:"source_type"`
 	SourceURI   string    `gorm:"column:source_uri" json:"source_uri"`
 	Digest      string    `gorm:"column:digest" json:"digest"`
-	Manifest    JSON      `gorm:"column:manifest" json:"manifest"`
+	Manifest    JSON      `gorm:"column:manifest;type:jsonb;default:'{}'" json:"manifest"`
 	Status      string    `gorm:"column:status" json:"status"`
 	IsBuiltin   bool      `gorm:"column:is_builtin" json:"is_builtin"`
 	CreatedAt   time.Time `gorm:"column:created_at" json:"created_at"`
@@ -34,7 +34,7 @@ type TenantSkillInstall struct {
 	SkillID             string    `gorm:"column:skill_id" json:"skill_id"`
 	Enabled             bool      `gorm:"column:enabled" json:"enabled"`
 	InstalledBy         string    `gorm:"column:installed_by" json:"installed_by"`
-	ApprovedPermissions JSON      `gorm:"column:approved_permissions" json:"approved_permissions"`
+	ApprovedPermissions JSON      `gorm:"column:approved_permissions;type:jsonb;default:'{}'" json:"approved_permissions"`
 	CreatedAt           time.Time `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt           time.Time `gorm:"column:updated_at" json:"updated_at"`
 }
@@ -49,7 +49,7 @@ type AgentSkillBinding struct {
 	AgentID   string    `gorm:"column:agent_id" json:"agent_id"`
 	SkillID   string    `gorm:"column:skill_id" json:"skill_id"`
 	Enabled   bool      `gorm:"column:enabled" json:"enabled"`
-	Config    JSON      `gorm:"column:config" json:"config"`
+	Config    JSON      `gorm:"column:config;type:jsonb;default:'{}'" json:"config"`
 	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at" json:"updated_at"`
 }
@@ -70,7 +70,7 @@ type SkillExecutionRun struct {
 	ScriptPath    string    `gorm:"column:script_path" json:"script_path"`
 	Status        string    `gorm:"column:status" json:"status"`
 	DurationMS    int64     `gorm:"column:duration_ms" json:"duration_ms"`
-	ResourceUsage JSON      `gorm:"column:resource_usage" json:"resource_usage"`
+	ResourceUsage JSON      `gorm:"column:resource_usage;type:jsonb;default:'{}'" json:"resource_usage"`
 	ErrorSummary  string    `gorm:"column:error_summary" json:"error_summary"`
 	CreatedAt     time.Time `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt     time.Time `gorm:"column:updated_at" json:"updated_at"`

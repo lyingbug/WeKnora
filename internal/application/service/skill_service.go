@@ -111,6 +111,13 @@ func (s *skillService) ListPreloadedSkills(ctx context.Context) ([]*skills.Skill
 	return metadata, nil
 }
 
+// ImportPreloadedSkills is a no-op until the registry-backed implementation is
+// wired in. Keeping it here preserves compile-time interface compatibility
+// while the registry is introduced task by task.
+func (s *skillService) ImportPreloadedSkills(ctx context.Context) error {
+	return s.ensureInitialized(ctx)
+}
+
 // GetSkillByName retrieves a skill by its name
 func (s *skillService) GetSkillByName(ctx context.Context, name string) (*skills.Skill, error) {
 	if err := s.ensureInitialized(ctx); err != nil {
