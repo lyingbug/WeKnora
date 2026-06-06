@@ -21,6 +21,7 @@ var (
 	ErrCannotModifyBuiltin = errors.New("cannot modify built-in agent basic info")
 	ErrCannotDeleteBuiltin = errors.New("cannot delete built-in agent")
 	ErrAgentNameRequired   = errors.New("agent name is required")
+	ErrInvalidSkillMode    = errors.New("invalid skill selection mode")
 )
 
 // customAgentService implements the CustomAgentService interface
@@ -301,6 +302,118 @@ func (s *customAgentService) syncAgentSkillBindings(ctx context.Context, agent *
 		agent.Config.SkillsSelectionMode,
 		agent.Config.SelectedSkills,
 	)
+}
+
+func (s *customAgentService) GetAgentSkillConfig(ctx context.Context, agentID string) (*types.AgentSkillConfig, error) {
+	agent, err := s.GetAgentByID(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	return agentSkillConfig(agent), nil
+}
+
+func (s *customAgentService) UpdateAgentSkillConfig(
+	ctx context.Context,
+	agentID string,
+	mode string,
+	selectedSkills []string,
+) (*types.AgentSkillConfig, error) {
+	normalizedMode, normalizedSelected, err := normalizeAgentSkillConfig(mode, selectedSkills)
+	if err != nil {
+		return nil, err
+	}
+
+	tenantID, ok := types.TenantIDFromContext(ctx)
+	if !ok {
+		return nil, ErrInvalidTenantID
+	}
+
+	var agent *types.CustomAgent
+	if types.IsBuiltinAgentID(agentID) {
+		defaultAgent := types.GetBuiltinAgentWithContext(ctx, agentID, tenantID)
+		if defaultAgent == nil {
+			return nil, ErrAgentNotFound
+		}
+		agent = defaultAgent
+		if existing, err := s.repo.GetAgentByID(ctx, agentID, tenantID); err == nil {
+			agent = existing
+		} else if !errors.Is(err, repository.ErrCustomAgentNotFound) {
+			return nil, err
+		}
+	} else {
+		existing, err := s.repo.GetAgentByID(ctx, agentID, tenantID)
+		if err != nil {
+			if errors.Is(err, repository.ErrCustomAgentNotFound) {
+				return nil, ErrAgentNotFound
+			}
+			return nil, err
+		}
+		if existing.IsBuiltin {
+			return nil, ErrCannotModifyBuiltin
+		}
+		agent = existing
+	}
+
+	agent.Config.SkillsSelectionMode = normalizedMode
+	agent.Config.SelectedSkills = normalizedSelected
+	agent.TenantID = tenantID
+	agent.UpdatedAt = time.Now()
+	agent.EnsureDefaults()
+
+	if types.IsBuiltinAgentID(agentID) {
+		updated, err := s.updateBuiltinAgent(ctx, agent, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		return agentSkillConfig(updated), nil
+	}
+
+	if err := s.repo.UpdateAgent(ctx, agent); err != nil {
+		return nil, err
+	}
+	if err := s.syncAgentSkillBindings(ctx, agent); err != nil {
+		return nil, err
+	}
+
+	return agentSkillConfig(agent), nil
+}
+
+func normalizeAgentSkillConfig(mode string, selectedSkills []string) (string, []string, error) {
+	switch mode {
+	case "", "none":
+		return "none", nil, nil
+	case "all":
+		return "all", nil, nil
+	case "selected":
+		seen := make(map[string]struct{}, len(selectedSkills))
+		selected := make([]string, 0, len(selectedSkills))
+		for _, skill := range selectedSkills {
+			skill = strings.TrimSpace(skill)
+			if skill == "" {
+				continue
+			}
+			if _, ok := seen[skill]; ok {
+				continue
+			}
+			seen[skill] = struct{}{}
+			selected = append(selected, skill)
+		}
+		return "selected", selected, nil
+	default:
+		return "", nil, ErrInvalidSkillMode
+	}
+}
+
+func agentSkillConfig(agent *types.CustomAgent) *types.AgentSkillConfig {
+	mode := agent.Config.SkillsSelectionMode
+	if mode == "" {
+		mode = "none"
+	}
+	return &types.AgentSkillConfig{
+		AgentID:        agent.ID,
+		Mode:           mode,
+		SelectedSkills: append([]string(nil), agent.Config.SelectedSkills...),
+	}
 }
 
 // updateBuiltinAgent updates a built-in agent's configuration (but not basic info)

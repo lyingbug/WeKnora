@@ -48,6 +48,12 @@ type CustomAgentService interface {
 	//   - Possible errors such as not existing, insufficient permissions, cannot modify built-in, etc.
 	UpdateAgent(ctx context.Context, agent *types.CustomAgent) (*types.CustomAgent, error)
 
+	// GetAgentSkillConfig returns the Agent's Skill selection config.
+	GetAgentSkillConfig(ctx context.Context, agentID string) (*types.AgentSkillConfig, error)
+
+	// UpdateAgentSkillConfig updates Skill selection config and syncs binding rows.
+	UpdateAgentSkillConfig(ctx context.Context, agentID string, mode string, selectedSkills []string) (*types.AgentSkillConfig, error)
+
 	// DeleteAgent deletes an agent
 	// Parameters:
 	//   - ctx: Context information

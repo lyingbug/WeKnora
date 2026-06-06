@@ -266,6 +266,12 @@ type CustomAgentConfig struct {
 	SuggestedPrompts []string `yaml:"suggested_prompts" json:"suggested_prompts,omitempty"`
 }
 
+type AgentSkillConfig struct {
+	AgentID        string   `json:"agent_id"`
+	Mode           string   `json:"mode"`
+	SelectedSkills []string `json:"selected_skills"`
+}
+
 // Value implements driver.Valuer interface for CustomAgentConfig
 func (c CustomAgentConfig) Value() (driver.Value, error) {
 	return json.Marshal(c)
