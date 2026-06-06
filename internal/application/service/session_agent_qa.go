@@ -323,30 +323,29 @@ func (s *sessionService) configureSkillsFromAgent(
 		logger.Infof(ctx, "Sandbox is disabled: skills are not available")
 		return
 	}
-	dir := getPreloadedSkillsDir()
 	switch customAgent.Config.SkillsSelectionMode {
 	case "all":
-		resolved, err := s.resolveAgentSkillNames(ctx, customAgent, "all", nil)
-		if err != nil || len(resolved) == 0 {
+		resolved, dirs, err := s.resolveAgentSkillAccess(ctx, customAgent, "all", nil)
+		if err != nil || len(resolved) == 0 || len(dirs) == 0 {
 			agentConfig.SkillsEnabled = false
 			logger.Warnf(ctx, "SkillsSelectionMode=all but no installed skills resolved: skills disabled, err=%v", err)
 			return
 		}
 		agentConfig.SkillsEnabled = true
-		agentConfig.SkillDirs = []string{dir}
+		agentConfig.SkillDirs = dirs
 		agentConfig.AllowedSkills = resolved
 		logger.Infof(ctx, "SkillsSelectionMode=all: enabled %d installed skills", len(resolved))
 	case "selected":
 		// Enable only selected skills
 		if len(customAgent.Config.SelectedSkills) > 0 {
-			resolved, err := s.resolveAgentSkillNames(ctx, customAgent, "selected", customAgent.Config.SelectedSkills)
-			if err != nil || len(resolved) == 0 {
+			resolved, dirs, err := s.resolveAgentSkillAccess(ctx, customAgent, "selected", customAgent.Config.SelectedSkills)
+			if err != nil || len(resolved) == 0 || len(dirs) == 0 {
 				agentConfig.SkillsEnabled = false
 				logger.Warnf(ctx, "SkillsSelectionMode=selected but no installed selected skills resolved: skills disabled, err=%v", err)
 				return
 			}
 			agentConfig.SkillsEnabled = true
-			agentConfig.SkillDirs = []string{dir}
+			agentConfig.SkillDirs = dirs
 			agentConfig.AllowedSkills = resolved
 			logger.Infof(ctx, "SkillsSelectionMode=selected: enabled %d selected installed skills: %v",
 				len(resolved), resolved)
@@ -366,17 +365,17 @@ func (s *sessionService) configureSkillsFromAgent(
 
 }
 
-func (s *sessionService) resolveAgentSkillNames(
+func (s *sessionService) resolveAgentSkillAccess(
 	ctx context.Context,
 	customAgent *types.CustomAgent,
 	mode string,
 	selected []string,
-) ([]string, error) {
+) ([]string, []string, error) {
 	if s.skillService == nil {
 		if mode == "selected" {
-			return selected, nil
+			return selected, []string{getPreloadedSkillsDir()}, nil
 		}
-		return nil, nil
+		return nil, nil, nil
 	}
 	tenantID := customAgent.TenantID
 	if tenantID == 0 {
@@ -384,5 +383,5 @@ func (s *sessionService) resolveAgentSkillNames(
 			tenantID = ctxTenantID
 		}
 	}
-	return s.skillService.ResolveAgentSelectedSkills(ctx, tenantID, customAgent.ID, mode, selected)
+	return s.skillService.ResolveAgentSkillAccess(ctx, tenantID, customAgent.ID, mode, selected)
 }
