@@ -20,6 +20,7 @@ type mockSkillService struct {
 	installTenantID    uint64
 	installPackagePath string
 	installUserID      string
+	installPermissions types.JSON
 	installEntry       *types.SkillRegistryEntry
 	installs           []*types.TenantSkillInstallInfo
 	setEnabledTenantID uint64
@@ -76,9 +77,20 @@ func (m *mockSkillService) InstallLocalSkillPackage(
 	packagePath string,
 	installedBy string,
 ) (*types.SkillRegistryEntry, error) {
+	return m.InstallLocalSkillPackageWithPermissions(context.Background(), tenantID, packagePath, installedBy, nil)
+}
+
+func (m *mockSkillService) InstallLocalSkillPackageWithPermissions(
+	_ context.Context,
+	tenantID uint64,
+	packagePath string,
+	installedBy string,
+	approvedPermissions types.JSON,
+) (*types.SkillRegistryEntry, error) {
 	m.installTenantID = tenantID
 	m.installPackagePath = packagePath
 	m.installUserID = installedBy
+	m.installPermissions = approvedPermissions
 	return m.installEntry, nil
 }
 
@@ -118,7 +130,7 @@ func TestSkillHandler_InstallLocalSkillPackage(t *testing.T) {
 		h.InstallLocalSkillPackage(c)
 	})
 
-	body := bytes.NewBufferString(`{"package_path":"sample-skill"}`)
+	body := bytes.NewBufferString(`{"package_path":"sample-skill","approved_permissions":{"network":[]}}`)
 	req := httptest.NewRequest(http.MethodPost, "/skills/install-local", body)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -129,6 +141,7 @@ func TestSkillHandler_InstallLocalSkillPackage(t *testing.T) {
 	assert.Equal(t, uint64(10), svc.installTenantID)
 	assert.Equal(t, "sample-skill", svc.installPackagePath)
 	assert.Equal(t, "user-a", svc.installUserID)
+	assert.JSONEq(t, `{"network":[]}`, svc.installPermissions.ToString())
 
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))

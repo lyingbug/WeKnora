@@ -266,6 +266,37 @@ func TestSkillService_InstallLocalSkillPackage(t *testing.T) {
 	assert.Contains(t, err.Error(), "within skill packages directory")
 }
 
+func TestSkillService_InstallLocalSkillPackageWithPermissions_StoresApprovedSubset(t *testing.T) {
+	ctx := context.Background()
+	packagesRoot := t.TempDir()
+	t.Setenv("WEKNORA_SKILL_PACKAGES_DIR", packagesRoot)
+	writeTestSkillPackage(t, packagesRoot, "sample-skill", "sample-skill", "1.2.3", "Sample skill", map[string]any{
+		"network": []string{"api.example.com"},
+		"files":   []string{"session-temp"},
+	})
+
+	db := setupSkillServiceTestDB(t)
+	repo := repository.NewSkillRepository(db)
+	svc := NewSkillServiceWithRepository(repo, t.TempDir())
+
+	entry, err := svc.InstallLocalSkillPackageWithPermissions(
+		ctx,
+		10,
+		"sample-skill",
+		"user-a",
+		types.JSON(`{"network":[]}`),
+	)
+	require.NoError(t, err)
+
+	var install types.TenantSkillInstall
+	require.NoError(t, db.Where("tenant_id = ? AND skill_id = ?", 10, entry.ID).First(&install).Error)
+	assert.JSONEq(t, `{"network":[]}`, install.ApprovedPermissions.ToString())
+
+	_, err = svc.InstallLocalSkillPackageWithPermissions(ctx, 10, "sample-skill", "user-a", types.JSON(`[]`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "approved permissions must be a JSON object")
+}
+
 func TestSkillService_ResolveAgentSkillAccess(t *testing.T) {
 	ctx := context.Background()
 	preloadedRoot := t.TempDir()

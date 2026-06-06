@@ -30,6 +30,9 @@ type SkillService interface {
 	// InstallLocalSkillPackage validates and installs a local Skill package for a tenant.
 	InstallLocalSkillPackage(ctx context.Context, tenantID uint64, packagePath string, installedBy string) (*types.SkillRegistryEntry, error)
 
+	// InstallLocalSkillPackageWithPermissions validates and installs a local Skill package with approved permissions.
+	InstallLocalSkillPackageWithPermissions(ctx context.Context, tenantID uint64, packagePath string, installedBy string, approvedPermissions types.JSON) (*types.SkillRegistryEntry, error)
+
 	// SyncAgentSkillBindings synchronizes explicit Agent binding rows from the Agent config.
 	SyncAgentSkillBindings(ctx context.Context, tenantID uint64, agentID string, mode string, selectedSkillNames []string) error
 

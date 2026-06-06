@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -252,6 +253,16 @@ func (s *skillService) InstallLocalSkillPackage(
 	packagePath string,
 	installedBy string,
 ) (*types.SkillRegistryEntry, error) {
+	return s.InstallLocalSkillPackageWithPermissions(ctx, tenantID, packagePath, installedBy, nil)
+}
+
+func (s *skillService) InstallLocalSkillPackageWithPermissions(
+	ctx context.Context,
+	tenantID uint64,
+	packagePath string,
+	installedBy string,
+	approvedPermissions types.JSON,
+) (*types.SkillRegistryEntry, error) {
 	if tenantID == 0 {
 		return nil, fmt.Errorf("tenant ID is required")
 	}
@@ -268,6 +279,10 @@ func (s *skillService) InstallLocalSkillPackage(
 		return nil, err
 	}
 	digest, err := skillPackageDigest(packageDir)
+	if err != nil {
+		return nil, err
+	}
+	permissions, err := normalizeApprovedSkillPermissions(approvedPermissions, loaded.PermissionsJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +309,7 @@ func (s *skillService) InstallLocalSkillPackage(
 		SkillID:             entry.ID,
 		Enabled:             true,
 		InstalledBy:         installedBy,
-		ApprovedPermissions: types.JSON(loaded.PermissionsJSON),
+		ApprovedPermissions: permissions,
 	}
 	if err := s.repo.UpsertTenantSkillInstall(ctx, install); err != nil {
 		return nil, fmt.Errorf("failed to install local skill package for tenant: %w", err)
@@ -303,6 +318,29 @@ func (s *skillService) InstallLocalSkillPackage(
 	logger.Infof(ctx, "Installed local skill package %s@%s for tenant %d", entry.Name, entry.Version, tenantID)
 
 	return entry, nil
+}
+
+func normalizeApprovedSkillPermissions(approved types.JSON, fallback []byte) (types.JSON, error) {
+	raw := []byte(approved)
+	if len(raw) == 0 {
+		raw = fallback
+	}
+	if len(raw) == 0 {
+		raw = []byte("{}")
+	}
+
+	var obj map[string]interface{}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, fmt.Errorf("approved permissions must be a JSON object: %w", err)
+	}
+	if obj == nil {
+		return types.JSON("{}"), nil
+	}
+	normalized, err := json.Marshal(obj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to normalize approved permissions: %w", err)
+	}
+	return types.JSON(normalized), nil
 }
 
 func (s *skillService) SyncAgentSkillBindings(

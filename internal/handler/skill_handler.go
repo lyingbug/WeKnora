@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"strconv"
@@ -36,7 +37,8 @@ type SkillInfoResponse struct {
 }
 
 type InstallLocalSkillPackageRequest struct {
-	PackagePath string `json:"package_path" binding:"required"`
+	PackagePath         string          `json:"package_path" binding:"required"`
+	ApprovedPermissions json.RawMessage `json:"approved_permissions,omitempty"`
 }
 
 type InstalledSkillResponse struct {
@@ -147,7 +149,13 @@ func (h *SkillHandler) InstallLocalSkillPackage(c *gin.Context) {
 		userID, _ = types.UserIDFromContext(ctx)
 	}
 
-	entry, err := h.skillService.InstallLocalSkillPackage(ctx, tenantID, req.PackagePath, userID)
+	entry, err := h.skillService.InstallLocalSkillPackageWithPermissions(
+		ctx,
+		tenantID,
+		req.PackagePath,
+		userID,
+		types.JSON(req.ApprovedPermissions),
+	)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(errors.NewInternalServerError("Failed to install local skill package: " + err.Error()))

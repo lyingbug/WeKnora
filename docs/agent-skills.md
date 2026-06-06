@@ -246,7 +246,11 @@ POST /api/v1/skills/install-local
 Content-Type: application/json
 
 {
-  "package_path": "my-skill"
+  "package_path": "my-skill",
+  "approved_permissions": {
+    "network": [],
+    "files": ["session-temp"]
+  }
 }
 ```
 
@@ -254,8 +258,10 @@ Content-Type: application/json
 
 - 校验 `skill.json` 与 `SKILL.md`，要求 manifest name 与 `SKILL.md` frontmatter name 一致。
 - 计算包内容 digest，并写入 `skills` 注册表，`source_type=local`。
-- 为当前租户写入启用状态的 `tenant_skill_installs`。
+- 为当前租户写入启用状态的 `tenant_skill_installs`，并保存管理员批准的 `approved_permissions`。
 - 运行时根据 Agent 的 `skills_selection_mode` 和已安装 Skill 解析 `AllowedSkills` 与 `SkillDirs`。
+
+`approved_permissions` 可以省略；省略时后端会兼容旧行为，使用 manifest 中声明的 `permissions` 作为批准权限。生产管理界面应展示 manifest requested permissions，并由租户管理员明确提交批准后的权限对象。
 
 ### 租户级启停
 
