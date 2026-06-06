@@ -22,6 +22,8 @@ type mockSkillService struct {
 	installUserID      string
 	installPermissions types.JSON
 	installEntry       *types.SkillRegistryEntry
+	previewPackagePath string
+	preview            *types.LocalSkillPackagePreview
 	installs           []*types.TenantSkillInstallInfo
 	setEnabledTenantID uint64
 	setEnabledSkillID  string
@@ -78,6 +80,11 @@ func (m *mockSkillService) InstallLocalSkillPackage(
 	installedBy string,
 ) (*types.SkillRegistryEntry, error) {
 	return m.InstallLocalSkillPackageWithPermissions(context.Background(), tenantID, packagePath, installedBy, nil)
+}
+
+func (m *mockSkillService) PreviewLocalSkillPackage(_ context.Context, packagePath string) (*types.LocalSkillPackagePreview, error) {
+	m.previewPackagePath = packagePath
+	return m.preview, nil
 }
 
 func (m *mockSkillService) InstallLocalSkillPackageWithPermissions(
@@ -167,6 +174,35 @@ func TestSkillHandler_InstallLocalSkillPackage_RequiresPackagePath(t *testing.T)
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "package_path is required")
+}
+
+func TestSkillHandler_PreviewLocalSkillPackage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &mockSkillService{
+		preview: &types.LocalSkillPackagePreview{
+			Name:                 "sample-skill",
+			Version:              "1.0.0",
+			Description:          "Sample skill",
+			SourceType:           types.SkillSourceTypeLocal,
+			Digest:               "digest",
+			RequestedPermissions: types.JSON(`{"network":[]}`),
+		},
+	}
+	h := NewSkillHandler(svc, nil)
+	r := gin.New()
+	r.POST("/skills/preview-local", h.PreviewLocalSkillPackage)
+
+	body := bytes.NewBufferString(`{"package_path":"sample-skill"}`)
+	req := httptest.NewRequest(http.MethodPost, "/skills/preview-local", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "sample-skill", svc.previewPackagePath)
+	assert.Contains(t, w.Body.String(), `"requested_permissions":{"network":[]}`)
 }
 
 func TestSkillHandler_ListInstalledSkills(t *testing.T) {

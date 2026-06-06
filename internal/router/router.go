@@ -968,6 +968,7 @@ func RegisterSkillRoutes(r *gin.RouterGroup, skillHandler *handler.SkillHandler,
 		skills.GET("", g.Viewer(), skillHandler.ListSkills)
 		skills.GET("/installed", g.Viewer(), skillHandler.ListInstalledSkills)
 		skills.GET("/runs", g.Viewer(), skillHandler.ListSkillExecutionRuns)
+		skills.POST("/preview-local", g.Admin(), skillHandler.PreviewLocalSkillPackage)
 		skills.POST("/install-local", g.Admin(), skillHandler.InstallLocalSkillPackage)
 		skills.PATCH("/:skill_id", g.Admin(), skillHandler.UpdateTenantSkillInstall)
 	}

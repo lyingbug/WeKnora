@@ -256,6 +256,35 @@ func (s *skillService) InstallLocalSkillPackage(
 	return s.InstallLocalSkillPackageWithPermissions(ctx, tenantID, packagePath, installedBy, nil)
 }
 
+func (s *skillService) PreviewLocalSkillPackage(
+	ctx context.Context,
+	packagePath string,
+) (*types.LocalSkillPackagePreview, error) {
+	packageDir, err := resolveLocalSkillPackageDir(getSkillPackagesDir(), packagePath)
+	if err != nil {
+		return nil, err
+	}
+	loaded, err := skills.LoadSkillPackageManifest(packageDir)
+	if err != nil {
+		return nil, err
+	}
+	digest, err := skillPackageDigest(packageDir)
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.LocalSkillPackagePreview{
+		Name:                 loaded.Manifest.Name,
+		Version:              loaded.Manifest.Version,
+		Description:          loaded.Manifest.Description,
+		SourceType:           types.SkillSourceTypeLocal,
+		SourceURI:            packageDir,
+		Digest:               digest,
+		Manifest:             types.JSON(loaded.RawJSON),
+		RequestedPermissions: types.JSON(loaded.PermissionsJSON),
+	}, nil
+}
+
 func (s *skillService) InstallLocalSkillPackageWithPermissions(
 	ctx context.Context,
 	tenantID uint64,

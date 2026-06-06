@@ -41,6 +41,10 @@ type InstallLocalSkillPackageRequest struct {
 	ApprovedPermissions json.RawMessage `json:"approved_permissions,omitempty"`
 }
 
+type PreviewLocalSkillPackageRequest struct {
+	PackagePath string `json:"package_path" binding:"required"`
+}
+
 type InstalledSkillResponse struct {
 	ID                  string     `json:"id"`
 	Name                string     `json:"name"`
@@ -173,6 +177,44 @@ func (h *SkillHandler) InstallLocalSkillPackage(c *gin.Context) {
 			Enabled:     true,
 			IsBuiltin:   entry.IsBuiltin,
 		},
+	})
+}
+
+// PreviewLocalSkillPackage godoc
+// @Summary      预览本地 Skill 包
+// @Description  校验本地 Skill 包并返回 manifest、digest 和请求权限，不安装到租户。
+// @Tags         Skills
+// @Accept       json
+// @Produce      json
+// @Param        request  body      PreviewLocalSkillPackageRequest  true  "本地 Skill 包路径"
+// @Success      200      {object}  map[string]interface{}           "预览结果"
+// @Failure      400      {object}  map[string]interface{}           "请求参数错误"
+// @Failure      500      {object}  errors.AppError                  "服务器错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /skills/preview-local [post]
+func (h *SkillHandler) PreviewLocalSkillPackage(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var req PreviewLocalSkillPackageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "package_path is required",
+		})
+		return
+	}
+
+	preview, err := h.skillService.PreviewLocalSkillPackage(ctx, req.PackagePath)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(errors.NewInternalServerError("Failed to preview local skill package: " + err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    preview,
 	})
 }
 

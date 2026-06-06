@@ -29,6 +29,17 @@ func (SkillRegistryEntry) TableName() string {
 	return "skills"
 }
 
+type LocalSkillPackagePreview struct {
+	Name                 string `json:"name"`
+	Version              string `json:"version"`
+	Description          string `json:"description"`
+	SourceType           string `json:"source_type"`
+	SourceURI            string `json:"source_uri"`
+	Digest               string `json:"digest"`
+	Manifest             JSON   `json:"manifest"`
+	RequestedPermissions JSON   `json:"requested_permissions"`
+}
+
 type TenantSkillInstall struct {
 	ID                  string    `gorm:"column:id;primaryKey" json:"id"`
 	TenantID            uint64    `gorm:"column:tenant_id" json:"tenant_id"`

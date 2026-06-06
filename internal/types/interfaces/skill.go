@@ -30,6 +30,9 @@ type SkillService interface {
 	// InstallLocalSkillPackage validates and installs a local Skill package for a tenant.
 	InstallLocalSkillPackage(ctx context.Context, tenantID uint64, packagePath string, installedBy string) (*types.SkillRegistryEntry, error)
 
+	// PreviewLocalSkillPackage validates a local Skill package without installing it.
+	PreviewLocalSkillPackage(ctx context.Context, packagePath string) (*types.LocalSkillPackagePreview, error)
+
 	// InstallLocalSkillPackageWithPermissions validates and installs a local Skill package with approved permissions.
 	InstallLocalSkillPackageWithPermissions(ctx context.Context, tenantID uint64, packagePath string, installedBy string, approvedPermissions types.JSON) (*types.SkillRegistryEntry, error)
 

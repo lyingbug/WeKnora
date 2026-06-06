@@ -239,6 +239,17 @@ skills/packages/my-skill/
 }
 ```
 
+预览接口会校验包格式并返回 manifest、digest 和 requested permissions，但不会安装：
+
+```http
+POST /api/v1/skills/preview-local
+Content-Type: application/json
+
+{
+  "package_path": "my-skill"
+}
+```
+
 安装接口：
 
 ```http
