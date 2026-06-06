@@ -76,6 +76,29 @@ func TestApprovedNetworkAllowed(t *testing.T) {
 	assert.Contains(t, err.Error(), "network entries must be strings")
 }
 
+func TestRejectUnsupportedFilePermissions(t *testing.T) {
+	err := rejectUnsupportedFilePermissions(types.JSON(`{"files":[]}`))
+	require.NoError(t, err)
+
+	err = rejectUnsupportedFilePermissions(types.JSON(`{"files":["   "]}`))
+	require.NoError(t, err)
+
+	err = rejectUnsupportedFilePermissions(types.JSON(`{"compute":{"timeout_seconds":2}}`))
+	require.NoError(t, err)
+
+	err = rejectUnsupportedFilePermissions(types.JSON(`{"files":["session-temp"]}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "files permissions are not supported at runtime")
+
+	err = rejectUnsupportedFilePermissions(types.JSON(`{"files":"session-temp"}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "files must be an array")
+
+	err = rejectUnsupportedFilePermissions(types.JSON(`{"files":[123]}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "files entries must be strings")
+}
+
 func TestApprovedExecutionPolicy(t *testing.T) {
 	tool := NewExecuteSkillScriptTool(nil)
 	tool.SetPermissionChecker(fakeSkillPermissionChecker{
@@ -89,6 +112,18 @@ func TestApprovedExecutionPolicy(t *testing.T) {
 	assert.True(t, policy.AllowNetwork)
 	assert.Equal(t, int64(128*1024*1024), policy.MemoryLimit)
 	assert.Equal(t, 0.75, policy.CPULimit)
+}
+
+func TestApprovedExecutionPolicyRejectsFilePermissions(t *testing.T) {
+	tool := NewExecuteSkillScriptTool(nil)
+	tool.SetPermissionChecker(fakeSkillPermissionChecker{
+		permissions: types.JSON(`{"files":["session-temp"]}`),
+	})
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+
+	_, err := tool.approvedExecutionPolicy(ctx, "file-processor")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "files permissions are not supported at runtime")
 }
 
 type fakeSkillPermissionChecker struct {

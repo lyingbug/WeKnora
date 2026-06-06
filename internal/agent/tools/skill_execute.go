@@ -256,6 +256,9 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 	if err != nil {
 		return skillExecutionPolicy{}, err
 	}
+	if err := rejectUnsupportedFilePermissions(permissions); err != nil {
+		return skillExecutionPolicy{}, err
+	}
 	return skillExecutionPolicy{
 		Timeout:      timeout,
 		AllowNetwork: allowNetwork,
@@ -350,6 +353,31 @@ func approvedNetworkAllowed(permissions types.JSON) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func rejectUnsupportedFilePermissions(permissions types.JSON) error {
+	permissionsMap, err := permissions.Map()
+	if err != nil {
+		return fmt.Errorf("approved permissions are invalid JSON: %w", err)
+	}
+	filesRaw, ok := permissionsMap["files"]
+	if !ok || filesRaw == nil {
+		return nil
+	}
+	files, ok := filesRaw.([]interface{})
+	if !ok {
+		return fmt.Errorf("approved permissions files must be an array")
+	}
+	for _, rawScope := range files {
+		scope, ok := rawScope.(string)
+		if !ok {
+			return fmt.Errorf("approved permissions files entries must be strings")
+		}
+		if strings.TrimSpace(scope) != "" {
+			return fmt.Errorf("files permissions are not supported at runtime until sandbox file mounts are implemented")
+		}
+	}
+	return nil
 }
 
 // Cleanup releases any resources
