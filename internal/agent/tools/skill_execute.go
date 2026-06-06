@@ -56,6 +56,7 @@ type ExecuteSkillScriptTool struct {
 	BaseTool
 	skillManager      *skills.Manager
 	permissionChecker SkillPermissionChecker
+	mcpBroker         *SkillMCPBroker
 }
 
 type SkillPermissionChecker interface {
@@ -74,6 +75,10 @@ func NewExecuteSkillScriptTool(skillManager *skills.Manager) *ExecuteSkillScript
 
 func (t *ExecuteSkillScriptTool) SetPermissionChecker(checker SkillPermissionChecker) {
 	t.permissionChecker = checker
+}
+
+func (t *ExecuteSkillScriptTool) SetMCPBroker(broker *SkillMCPBroker) {
+	t.mcpBroker = broker
 }
 
 // Execute executes the execute_skill_script tool
@@ -119,6 +124,9 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 			Success: false,
 			Error:   err.Error(),
 		}, nil
+	}
+	if policy.Cleanup != nil {
+		defer policy.Cleanup()
 	}
 
 	execCtx := ctx
@@ -236,6 +244,7 @@ type skillExecutionPolicy struct {
 	CPULimit              float64
 	Mounts                []sandbox.Mount
 	Env                   map[string]string
+	Cleanup               func()
 }
 
 func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, skillName string) (skillExecutionPolicy, error) {
@@ -279,19 +288,20 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 		return skillExecutionPolicy{}, err
 	}
 	env = mergeEnv(env, credentialEnv)
-	mcpEnv, err := t.approvedMCPBindingEnv(ctx, inputTenantID(ctx), skillName, permissions)
+	mcpEnv, cleanup, err := t.approvedMCPBindingEnv(ctx, inputTenantID(ctx), skillName, permissions)
 	if err != nil {
 		return skillExecutionPolicy{}, err
 	}
 	env = mergeEnv(env, mcpEnv)
 	return skillExecutionPolicy{
 		Timeout:               timeout,
-		AllowNetwork:          len(networkDomains) > 0,
+		AllowNetwork:          len(networkDomains) > 0 || len(mcpEnv) > 0,
 		AllowedNetworkDomains: networkDomains,
 		MemoryLimit:           memoryLimit,
 		CPULimit:              cpuLimit,
 		Mounts:                mounts,
 		Env:                   env,
+		Cleanup:               cleanup,
 	}, nil
 }
 
@@ -540,41 +550,58 @@ func (t *ExecuteSkillScriptTool) approvedMCPBindingEnv(
 	tenantID uint64,
 	skillName string,
 	permissions types.JSON,
-) (map[string]string, error) {
+) (map[string]string, func(), error) {
 	names, err := approvedMCPNames(permissions)
 	if err != nil || len(names) == 0 {
-		return nil, err
+		return nil, nil, err
 	}
 	if t.permissionChecker == nil || tenantID == 0 {
-		return nil, fmt.Errorf("approved mcp bindings require tenant context")
+		return nil, nil, fmt.Errorf("approved mcp bindings require tenant context")
 	}
 	bindings, err := t.permissionChecker.ApprovedMCPBindings(ctx, tenantID, skillName)
 	if err != nil {
-		return nil, fmt.Errorf("approved mcp bindings are not configured for skill: %s", skillName)
+		return nil, nil, fmt.Errorf("approved mcp bindings are not configured for skill: %s", skillName)
 	}
 	bindingMap, err := bindings.Map()
 	if err != nil {
-		return nil, fmt.Errorf("approved mcp bindings are invalid JSON: %w", err)
+		return nil, nil, fmt.Errorf("approved mcp bindings are invalid JSON: %w", err)
 	}
 	approved := make(map[string]string, len(names))
 	for _, name := range names {
 		rawServiceID, ok := bindingMap[name]
 		if !ok || rawServiceID == nil {
-			return nil, fmt.Errorf("approved mcp binding %s is not configured", name)
+			return nil, nil, fmt.Errorf("approved mcp binding %s is not configured", name)
 		}
 		serviceID, ok := rawServiceID.(string)
 		if !ok || strings.TrimSpace(serviceID) == "" {
-			return nil, fmt.Errorf("approved mcp binding %s must be a non-empty service id", name)
+			return nil, nil, fmt.Errorf("approved mcp binding %s must be a non-empty service id", name)
 		}
 		approved[name] = serviceID
 	}
 	raw, err := json.Marshal(approved)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encode approved mcp bindings: %w", err)
+		return nil, nil, fmt.Errorf("failed to encode approved mcp bindings: %w", err)
 	}
-	return map[string]string{
+	env := map[string]string{
 		"WEKNORA_SKILL_MCP_BINDINGS": string(raw),
-	}, nil
+	}
+	if t.mcpBroker == nil {
+		return env, nil, nil
+	}
+	registration, err := t.mcpBroker.Register(ctx, SkillMCPBrokerRegistration{
+		TenantID: tenantID,
+		Bindings: approved,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to register skill mcp broker session: %w", err)
+	}
+	env["WEKNORA_SKILL_MCP_BROKER_URL"] = dockerHostBrokerURL(registration.URL)
+	env["WEKNORA_SKILL_MCP_TOKEN"] = registration.Token
+	return env, registration.Cleanup, nil
+}
+
+func dockerHostBrokerURL(rawURL string) string {
+	return strings.Replace(rawURL, "http://127.0.0.1:", "http://host.docker.internal:", 1)
 }
 
 func approvedMCPNames(permissions types.JSON) ([]string, error) {

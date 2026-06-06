@@ -347,7 +347,7 @@ Content-Type: application/json
 }
 ```
 
-未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb`、`compute.cpu` 与 `files.session-temp` 依赖 Docker sandbox 生效，local fallback 只能提供进程级超时和基础校验，遇到文件挂载权限会拒绝执行。`network` 目前会按 sandbox 级别强制开关，并对脚本中静态可见的 URL host 做批准域名校验；完整网络层 egress allowlist 还需要后续网络代理/网关适配后继续细化。`mcp` 目前完成控制面绑定和运行时绑定校验，脚本内直接调用 MCP 的 broker/proxy 仍是后续运行时能力。
+未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb`、`compute.cpu` 与 `files.session-temp` 依赖 Docker sandbox 生效，local fallback 只能提供进程级超时和基础校验，遇到文件挂载权限会拒绝执行。`network` 目前会按 sandbox 级别强制开关，并对脚本中静态可见的 URL host 做批准域名校验；完整网络层 egress allowlist 还需要后续网络代理/网关适配后继续细化。`mcp` 会通过本机 broker 调用服务端 MCP client，不会把 MCP URL、headers、token 或 api key 暴露给脚本。
 
 ### 租户级凭据
 
@@ -392,6 +392,32 @@ Content-Type: application/json
 ```
 
 后端只接受已批准 alias，并要求目标 MCP service 属于当前租户且处于启用状态。绑定保存在 `tenant_skill_mcp_bindings`，不会复制 MCP 的 URL、headers、token 或 api key。运行时会把有效绑定注入为 `WEKNORA_SKILL_MCP_BINDINGS`，内容是 alias 到 service id 的 JSON；如果批准的 alias 缺少绑定，脚本执行会被拒绝。
+
+脚本执行时，`execute_skill_script` 会为本次运行注册一次性 broker token，并注入：
+
+| 环境变量 | 含义 |
+|---|---|
+| `WEKNORA_SKILL_MCP_BROKER_URL` | 本次运行可访问的 broker HTTP 地址 |
+| `WEKNORA_SKILL_MCP_TOKEN` | Bearer token，脚本结束后立即失效 |
+| `WEKNORA_SKILL_MCP_BINDINGS` | alias 到 service id 的 JSON，便于脚本发现已批准 alias |
+
+调用格式：
+
+```http
+POST $WEKNORA_SKILL_MCP_BROKER_URL/v1/tools/call
+Authorization: Bearer $WEKNORA_SKILL_MCP_TOKEN
+Content-Type: application/json
+
+{
+  "alias": "github",
+  "tool": "search",
+  "args": {
+    "q": "weknora"
+  }
+}
+```
+
+broker 会在服务端按租户重新读取 MCP service，复用现有 MCP client、凭据解密和连接管理。若目标 MCP tool 被配置为需要人工审批，Skill broker 会 fail-closed 返回拒绝，避免脚本绕过用户审批链路。
 
 ### 租户级启停
 

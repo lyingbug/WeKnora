@@ -344,6 +344,13 @@ func (s *agentService) initializeSkillsManager(
 		if s.skillRepo != nil {
 			executeSkillTool.SetPermissionChecker(skillPermissionChecker{repo: s.skillRepo})
 		}
+		if s.mcpServiceService != nil && s.mcpManager != nil {
+			executeSkillTool.SetMCPBroker(tools.NewSkillMCPBroker(
+				s.mcpServiceService,
+				s.mcpManager,
+				s.toolApprovalGate,
+			))
+		}
 		toolRegistry.RegisterTool(executeSkillTool)
 		logger.Infof(ctx, "Registered execute_skill_script tool")
 	}

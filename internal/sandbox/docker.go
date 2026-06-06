@@ -139,6 +139,9 @@ func (s *DockerSandbox) buildDockerArgs(config *ExecuteConfig) []string {
 	if !config.AllowNetwork {
 		args = append(args, "--network", "none")
 	}
+	if config.Env["WEKNORA_SKILL_MCP_BROKER_URL"] != "" {
+		args = append(args, "--add-host", "host.docker.internal:host-gateway")
+	}
 
 	// Security: disable privileged mode and limit PIDs
 	args = append(args, "--pids-limit", "100")

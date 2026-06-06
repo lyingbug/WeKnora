@@ -213,6 +213,20 @@ func TestDockerSandboxBuildArgsMountsAdditionalPaths(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxBuildArgsAddsHostGatewayForSkillMCPBroker(t *testing.T) {
+	sandbox := NewDockerSandbox(DefaultConfig())
+	args := sandbox.buildDockerArgs(&ExecuteConfig{
+		Script: "/skills/scripts/run.py",
+		Env: map[string]string{
+			"WEKNORA_SKILL_MCP_BROKER_URL": "http://host.docker.internal:12345",
+		},
+	})
+
+	if !containsArg(args, "host.docker.internal:host-gateway") {
+		t.Fatalf("Expected docker args to include host gateway mapping, got %v", args)
+	}
+}
+
 func containsArg(args []string, want string) bool {
 	for _, arg := range args {
 		if arg == want {

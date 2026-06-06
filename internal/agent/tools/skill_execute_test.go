@@ -210,6 +210,31 @@ func TestApprovedExecutionPolicyInjectsApprovedMCPBindings(t *testing.T) {
 	assert.JSONEq(t, `{"github":"mcp-service-1"}`, policy.Env["WEKNORA_SKILL_MCP_BINDINGS"])
 }
 
+func TestApprovedExecutionPolicyInjectsMCPBrokerSession(t *testing.T) {
+	broker := NewSkillMCPBroker(
+		fakeBrokerMCPServiceGetter{service: &types.MCPService{ID: "mcp-service-1", TenantID: 7, Name: "github", Enabled: true}},
+		fakeBrokerMCPClientProvider{client: &fakeBrokerMCPClient{}},
+		nil,
+	)
+	defer broker.Shutdown(context.Background())
+
+	tool := NewExecuteSkillScriptTool(nil)
+	tool.SetMCPBroker(broker)
+	tool.SetPermissionChecker(fakeSkillPermissionChecker{
+		permissions: types.JSON(`{"mcp":["github"]}`),
+		mcpBindings: types.JSON(`{"github":"mcp-service-1"}`),
+	})
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+
+	policy, err := tool.approvedExecutionPolicy(ctx, "mcp-skill")
+	require.NoError(t, err)
+	defer policy.Cleanup()
+	assert.True(t, policy.AllowNetwork)
+	assert.Contains(t, policy.Env["WEKNORA_SKILL_MCP_BROKER_URL"], "http://host.docker.internal:")
+	assert.NotEmpty(t, policy.Env["WEKNORA_SKILL_MCP_TOKEN"])
+	assert.JSONEq(t, `{"github":"mcp-service-1"}`, policy.Env["WEKNORA_SKILL_MCP_BINDINGS"])
+}
+
 func TestApprovedExecutionPolicyRejectsMissingApprovedMCPBinding(t *testing.T) {
 	tool := NewExecuteSkillScriptTool(nil)
 	tool.SetPermissionChecker(fakeSkillPermissionChecker{
