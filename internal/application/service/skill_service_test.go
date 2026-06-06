@@ -19,8 +19,14 @@ func setupSkillServiceTestDB(t *testing.T) *gorm.DB {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&types.SkillRegistryEntry{}))
+	require.NoError(t, db.AutoMigrate(
+		&types.SkillRegistryEntry{},
+		&types.TenantSkillInstall{},
+		&types.AgentSkillBinding{},
+	))
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_version ON skills(name, version)").Error)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_installs_tenant_skill ON tenant_skill_installs(tenant_id, skill_id)").Error)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_skill_bindings_tenant_agent_skill ON agent_skill_bindings(tenant_id, agent_id, skill_id)").Error)
 
 	return db
 }
@@ -88,4 +94,51 @@ func TestSkillRegistryID_FitsDatabaseColumn(t *testing.T) {
 
 	require.LessOrEqual(t, len(id), 64)
 	assert.Contains(t, id, "-")
+}
+
+func TestSkillService_EnsureTenantPreloadedSkillInstalls_ListsTenantSkills(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	writeTestSkill(t, tempDir, "alpha-dir", "alpha", "Alpha skill")
+	writeTestSkill(t, tempDir, "beta-dir", "beta", "Beta skill")
+
+	repo := repository.NewSkillRepository(setupSkillServiceTestDB(t))
+	svc := NewSkillServiceWithRepository(repo, tempDir)
+
+	require.NoError(t, svc.EnsureTenantPreloadedSkillInstalls(ctx, 10))
+
+	got, err := svc.ListTenantSkills(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "alpha", got[0].Name)
+	assert.Equal(t, "beta", got[1].Name)
+}
+
+func TestSkillService_SyncAndResolveAgentSelectedSkills(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	writeTestSkill(t, tempDir, "alpha-dir", "alpha", "Alpha skill")
+	writeTestSkill(t, tempDir, "beta-dir", "beta", "Beta skill")
+
+	repo := repository.NewSkillRepository(setupSkillServiceTestDB(t))
+	svc := NewSkillServiceWithRepository(repo, tempDir)
+	require.NoError(t, svc.EnsureTenantPreloadedSkillInstalls(ctx, 10))
+
+	require.NoError(t, svc.SyncAgentSkillBindings(ctx, 10, "agent-a", "selected", []string{"beta", "missing"}))
+	selected, err := svc.ResolveAgentSelectedSkills(ctx, 10, "agent-a", "selected", []string{"beta", "missing"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"beta"}, selected)
+
+	all, err := svc.ResolveAgentSelectedSkills(ctx, 10, "agent-a", "all", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"alpha", "beta"}, all)
+
+	require.NoError(t, svc.SyncAgentSkillBindings(ctx, 10, "agent-a", "none", []string{"beta"}))
+	selected, err = svc.ResolveAgentSelectedSkills(ctx, 10, "agent-a", "selected", []string{"beta"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"beta"}, selected)
+
+	none, err := svc.ResolveAgentSelectedSkills(ctx, 10, "agent-a", "none", nil)
+	require.NoError(t, err)
+	assert.Empty(t, none)
 }

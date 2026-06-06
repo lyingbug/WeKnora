@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
@@ -159,6 +160,156 @@ func (s *skillService) ImportPreloadedSkills(ctx context.Context) error {
 	return nil
 }
 
+func (s *skillService) EnsureTenantPreloadedSkillInstalls(ctx context.Context, tenantID uint64) error {
+	if tenantID == 0 || s.repo == nil {
+		return nil
+	}
+	if err := s.ImportPreloadedSkills(ctx); err != nil {
+		return err
+	}
+
+	entries, err := s.repo.ListActiveSkills(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list active skills for tenant install: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.SourceType != types.SkillSourceTypePreloaded {
+			continue
+		}
+		install := &types.TenantSkillInstall{
+			ID:                  tenantSkillInstallID(tenantID, entry.ID),
+			TenantID:            tenantID,
+			SkillID:             entry.ID,
+			Enabled:             true,
+			ApprovedPermissions: types.JSON("{}"),
+		}
+		if err := s.repo.UpsertTenantSkillInstall(ctx, install); err != nil {
+			return fmt.Errorf("failed to upsert tenant skill install %s: %w", entry.Name, err)
+		}
+	}
+
+	return nil
+}
+
+func (s *skillService) ListTenantSkills(ctx context.Context, tenantID uint64) ([]*skills.SkillMetadata, error) {
+	if tenantID == 0 || s.repo == nil {
+		return s.ListPreloadedSkills(ctx)
+	}
+	if err := s.EnsureTenantPreloadedSkillInstalls(ctx, tenantID); err != nil {
+		logger.Warnf(ctx, "Failed to ensure tenant skill installs, falling back to preloaded skills: %v", err)
+		return s.ListPreloadedSkills(ctx)
+	}
+
+	entries, err := s.repo.ListTenantInstalledSkills(ctx, tenantID)
+	if err != nil {
+		logger.Warnf(ctx, "Failed to list tenant skills, falling back to preloaded skills: %v", err)
+		return s.ListPreloadedSkills(ctx)
+	}
+	if len(entries) == 0 {
+		return s.ListPreloadedSkills(ctx)
+	}
+	return skillRegistryEntriesToMetadata(entries), nil
+}
+
+func (s *skillService) SyncAgentSkillBindings(
+	ctx context.Context,
+	tenantID uint64,
+	agentID string,
+	mode string,
+	selectedSkillNames []string,
+) error {
+	if tenantID == 0 || agentID == "" || s.repo == nil {
+		return nil
+	}
+	if mode != "selected" {
+		return s.repo.ReplaceAgentSkillBindings(ctx, tenantID, agentID, nil)
+	}
+	if err := s.EnsureTenantPreloadedSkillInstalls(ctx, tenantID); err != nil {
+		return err
+	}
+
+	installed, err := s.repo.ListTenantInstalledSkillNames(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("failed to list tenant installed skills: %w", err)
+	}
+
+	skillIDs := make([]string, 0, len(selectedSkillNames))
+	seen := make(map[string]struct{}, len(selectedSkillNames))
+	for _, name := range selectedSkillNames {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		if entry, ok := installed[name]; ok {
+			skillIDs = append(skillIDs, entry.ID)
+		}
+	}
+
+	return s.repo.ReplaceAgentSkillBindings(ctx, tenantID, agentID, skillIDs)
+}
+
+func (s *skillService) ResolveAgentSelectedSkills(
+	ctx context.Context,
+	tenantID uint64,
+	agentID string,
+	mode string,
+	selectedSkillNames []string,
+) ([]string, error) {
+	if tenantID == 0 || s.repo == nil {
+		if mode == "selected" {
+			return selectedSkillNames, nil
+		}
+		if mode == "all" {
+			metadata, err := s.ListPreloadedSkills(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return skillMetadataNames(metadata), nil
+		}
+		return nil, nil
+	}
+
+	if err := s.EnsureTenantPreloadedSkillInstalls(ctx, tenantID); err != nil {
+		return nil, err
+	}
+
+	switch mode {
+	case "all":
+		entries, err := s.repo.ListTenantInstalledSkills(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		return skillEntryNames(entries), nil
+	case "selected":
+		if len(selectedSkillNames) == 0 && agentID != "" {
+			entries, err := s.repo.ListAgentSkillBindings(ctx, tenantID, agentID)
+			if err != nil {
+				return nil, err
+			}
+			return skillEntryNames(entries), nil
+		}
+		installed, err := s.repo.ListTenantInstalledSkillNames(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(selectedSkillNames))
+		seen := make(map[string]struct{}, len(selectedSkillNames))
+		for _, name := range selectedSkillNames {
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			if _, ok := installed[name]; ok {
+				names = append(names, name)
+			}
+		}
+		return names, nil
+	default:
+		return nil, nil
+	}
+}
+
 // GetSkillByName retrieves a skill by its name
 func (s *skillService) GetSkillByName(ctx context.Context, name string) (*skills.Skill, error) {
 	if err := s.ensureInitialized(ctx); err != nil {
@@ -194,6 +345,24 @@ func skillRegistryEntriesToMetadata(entries []*types.SkillRegistryEntry) []*skil
 	return metadata
 }
 
+func skillEntryNames(entries []*types.SkillRegistryEntry) []string {
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func skillMetadataNames(metadata []*skills.SkillMetadata) []string {
+	names := make([]string, 0, len(metadata))
+	for _, meta := range metadata {
+		names = append(names, meta.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func newPreloadedSkillRegistryEntry(preloadedDir string, meta *skills.SkillMetadata) *types.SkillRegistryEntry {
 	version := types.DefaultSkillVersion
 	sourceURI := meta.BasePath
@@ -227,6 +396,10 @@ func skillRegistryID(sourceType, name, version string) string {
 	suffix := hex.EncodeToString(sum[:])[:12]
 	prefix := strings.Trim(cleanID[:64-len(suffix)-1], "-")
 	return prefix + "-" + suffix
+}
+
+func tenantSkillInstallID(tenantID uint64, skillID string) string {
+	return skillRegistryID("tenant-install", fmt.Sprintf("%d", tenantID), skillID)
 }
 
 func skillRegistryDigest(parts ...string) string {
