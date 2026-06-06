@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -14,12 +15,17 @@ import (
 // SkillHandler handles skill-related HTTP requests
 type SkillHandler struct {
 	skillService interfaces.SkillService
+	runRepo      interfaces.SkillExecutionRunRepository
 }
 
 // NewSkillHandler creates a new skill handler
-func NewSkillHandler(skillService interfaces.SkillService) *SkillHandler {
+func NewSkillHandler(
+	skillService interfaces.SkillService,
+	runRepo interfaces.SkillExecutionRunRepository,
+) *SkillHandler {
 	return &SkillHandler{
 		skillService: skillService,
+		runRepo:      runRepo,
 	}
 }
 
@@ -47,6 +53,23 @@ type InstalledSkillResponse struct {
 
 type UpdateTenantSkillInstallRequest struct {
 	Enabled *bool `json:"enabled" binding:"required"`
+}
+
+type SkillExecutionRunResponse struct {
+	ID            string     `json:"id"`
+	TenantID      uint64     `json:"tenant_id"`
+	UserID        string     `json:"user_id"`
+	AgentID       string     `json:"agent_id"`
+	SessionID     string     `json:"session_id"`
+	MessageID     string     `json:"message_id"`
+	ToolCallID    string     `json:"tool_call_id"`
+	SkillID       string     `json:"skill_id"`
+	ScriptPath    string     `json:"script_path"`
+	Status        string     `json:"status"`
+	DurationMS    int64      `json:"duration_ms"`
+	ResourceUsage types.JSON `json:"resource_usage"`
+	ErrorSummary  string     `json:"error_summary,omitempty"`
+	CreatedAt     string     `json:"created_at"`
 }
 
 // ListSkills godoc
@@ -224,5 +247,71 @@ func (h *SkillHandler) UpdateTenantSkillInstall(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
+	})
+}
+
+// ListSkillExecutionRuns godoc
+// @Summary      获取 Skill 执行审计记录
+// @Description  获取当前租户最近的 Skill 脚本执行记录。
+// @Tags         Skills
+// @Accept       json
+// @Produce      json
+// @Param        limit  query     int  false  "返回数量，默认50，最大100"
+// @Success      200    {object}  map[string]interface{}  "Skill执行记录"
+// @Failure      500    {object}  errors.AppError         "服务器错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /skills/runs [get]
+func (h *SkillHandler) ListSkillExecutionRuns(c *gin.Context) {
+	ctx := c.Request.Context()
+	if h.runRepo == nil {
+		c.Error(errors.NewInternalServerError("Skill execution run repository is not configured"))
+		return
+	}
+
+	limit := 50
+	if rawLimit := c.Query("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "limit must be a positive integer",
+			})
+			return
+		}
+		limit = parsed
+	}
+
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	runs, err := h.runRepo.ListSkillExecutionRuns(ctx, tenantID, limit)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(errors.NewInternalServerError("Failed to list skill execution runs: " + err.Error()))
+		return
+	}
+
+	response := make([]SkillExecutionRunResponse, 0, len(runs))
+	for _, run := range runs {
+		response = append(response, SkillExecutionRunResponse{
+			ID:            run.ID,
+			TenantID:      run.TenantID,
+			UserID:        run.UserID,
+			AgentID:       run.AgentID,
+			SessionID:     run.SessionID,
+			MessageID:     run.MessageID,
+			ToolCallID:    run.ToolCallID,
+			SkillID:       run.SkillID,
+			ScriptPath:    run.ScriptPath,
+			Status:        run.Status,
+			DurationMS:    run.DurationMS,
+			ResourceUsage: run.ResourceUsage,
+			ErrorSummary:  run.ErrorSummary,
+			CreatedAt:     run.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    response,
 	})
 }

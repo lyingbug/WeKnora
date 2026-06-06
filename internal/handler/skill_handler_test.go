@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -24,6 +25,22 @@ type mockSkillService struct {
 	setEnabledTenantID uint64
 	setEnabledSkillID  string
 	setEnabled         bool
+}
+
+type mockSkillExecutionRunRepo struct {
+	tenantID uint64
+	limit    int
+	runs     []*types.SkillExecutionRun
+}
+
+func (m *mockSkillExecutionRunRepo) CreateSkillExecutionRun(context.Context, *types.SkillExecutionRun) error {
+	return nil
+}
+
+func (m *mockSkillExecutionRunRepo) ListSkillExecutionRuns(_ context.Context, tenantID uint64, limit int) ([]*types.SkillExecutionRun, error) {
+	m.tenantID = tenantID
+	m.limit = limit
+	return m.runs, nil
 }
 
 func (m *mockSkillService) ListPreloadedSkills(context.Context) ([]*skills.SkillMetadata, error) {
@@ -93,7 +110,7 @@ func TestSkillHandler_InstallLocalSkillPackage(t *testing.T) {
 			SourceType:  types.SkillSourceTypeLocal,
 		},
 	}
-	h := NewSkillHandler(svc)
+	h := NewSkillHandler(svc, nil)
 	r := gin.New()
 	r.POST("/skills/install-local", func(c *gin.Context) {
 		c.Set(types.TenantIDContextKey.String(), uint64(10))
@@ -125,7 +142,7 @@ func TestSkillHandler_InstallLocalSkillPackage(t *testing.T) {
 func TestSkillHandler_InstallLocalSkillPackage_RequiresPackagePath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	h := NewSkillHandler(&mockSkillService{})
+	h := NewSkillHandler(&mockSkillService{}, nil)
 	r := gin.New()
 	r.POST("/skills/install-local", h.InstallLocalSkillPackage)
 
@@ -157,7 +174,7 @@ func TestSkillHandler_ListInstalledSkills(t *testing.T) {
 			},
 		},
 	}
-	h := NewSkillHandler(svc)
+	h := NewSkillHandler(svc, nil)
 	r := gin.New()
 	r.GET("/skills/installed", func(c *gin.Context) {
 		c.Set(types.TenantIDContextKey.String(), uint64(10))
@@ -178,7 +195,7 @@ func TestSkillHandler_UpdateTenantSkillInstall(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	svc := &mockSkillService{}
-	h := NewSkillHandler(svc)
+	h := NewSkillHandler(svc, nil)
 	r := gin.New()
 	r.PATCH("/skills/:skill_id", func(c *gin.Context) {
 		c.Set(types.TenantIDContextKey.String(), uint64(10))
@@ -200,7 +217,7 @@ func TestSkillHandler_UpdateTenantSkillInstall(t *testing.T) {
 func TestSkillHandler_UpdateTenantSkillInstall_RequiresEnabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	h := NewSkillHandler(&mockSkillService{})
+	h := NewSkillHandler(&mockSkillService{}, nil)
 	r := gin.New()
 	r.PATCH("/skills/:skill_id", h.UpdateTenantSkillInstall)
 
@@ -212,4 +229,63 @@ func TestSkillHandler_UpdateTenantSkillInstall_RequiresEnabled(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "enabled is required")
+}
+
+func TestSkillHandler_ListSkillExecutionRuns(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	runRepo := &mockSkillExecutionRunRepo{
+		runs: []*types.SkillExecutionRun{
+			{
+				ID:            "run-1",
+				TenantID:      10,
+				UserID:        "user-a",
+				AgentID:       "agent-a",
+				SessionID:     "session-a",
+				MessageID:     "message-a",
+				ToolCallID:    "call-a",
+				SkillID:       "alpha",
+				ScriptPath:    "scripts/run.py",
+				Status:        "failed",
+				DurationMS:    42,
+				ResourceUsage: types.JSON(`{"exit_code":1}`),
+				ErrorSummary:  "boom",
+				CreatedAt:     time.Date(2026, 6, 6, 1, 2, 3, 0, time.UTC),
+			},
+		},
+	}
+	h := NewSkillHandler(&mockSkillService{}, runRepo)
+	r := gin.New()
+	r.GET("/skills/runs", func(c *gin.Context) {
+		c.Set(types.TenantIDContextKey.String(), uint64(10))
+		h.ListSkillExecutionRuns(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/skills/runs?limit=20", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, uint64(10), runRepo.tenantID)
+	assert.Equal(t, 20, runRepo.limit)
+	assert.Contains(t, w.Body.String(), `"skill_id":"alpha"`)
+	assert.Contains(t, w.Body.String(), `"resource_usage":{"exit_code":1}`)
+	assert.Contains(t, w.Body.String(), `"created_at":"2026-06-06T01:02:03Z"`)
+}
+
+func TestSkillHandler_ListSkillExecutionRuns_RejectsBadLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := NewSkillHandler(&mockSkillService{}, &mockSkillExecutionRunRepo{})
+	r := gin.New()
+	r.GET("/skills/runs", h.ListSkillExecutionRuns)
+
+	req := httptest.NewRequest(http.MethodGet, "/skills/runs?limit=bad", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "limit must be a positive integer")
 }

@@ -329,6 +329,14 @@ Content-Type: application/json
 
 审计写入失败不会中断用户对话或脚本执行结果返回；它只会记录 warning 日志。管理端查询 API 和更完整的资源用量统计可以在后续运行时沙箱阶段继续补齐。
 
+查询当前租户最近的 Skill 执行记录：
+
+```http
+GET /api/v1/skills/runs?limit=50
+```
+
+`limit` 默认 50，最大由后端限制为 100。该接口只返回当前租户的记录，可用于管理页展示最近失败脚本、排查某个 session/message/tool_call 的执行情况。
+
 系统内置了以下 5 个预加载技能，用于增强知识库问答和文档处理能力：
 
 ### 1. citation-generator - 引用生成器
