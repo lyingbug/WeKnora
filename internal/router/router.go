@@ -928,6 +928,8 @@ func RegisterCustomAgentRoutes(r *gin.RouterGroup, agentHandler *handler.CustomA
 		agents.GET("", g.Viewer(), agentHandler.ListAgents)
 		// Get agent by ID — Viewer+
 		agents.GET("/:id", g.Viewer(), agentHandler.GetAgent)
+		agents.GET("/:id/skills", g.Viewer(), agentHandler.GetAgentSkills)
+		agents.PUT("/:id/skills", g.OwnedAgentOrAdmin(), agentHandler.UpdateAgentSkills)
 		// Update agent — creator OR Admin+
 		agents.PUT("/:id", g.OwnedAgentOrAdmin(), agentHandler.UpdateAgent)
 		// Delete agent — creator OR Admin+

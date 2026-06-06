@@ -39,10 +39,10 @@ func NewCustomAgentHandler(
 
 // CreateAgentRequest defines the request body for creating an agent
 type CreateAgentRequest struct {
-	Name        string                   `json:"name" binding:"required"`
-	Description string                   `json:"description"`
-	Avatar      string                   `json:"avatar"`
-	Config      types.CustomAgentConfig  `json:"config"`
+	Name        string                  `json:"name" binding:"required"`
+	Description string                  `json:"description"`
+	Avatar      string                  `json:"avatar"`
+	Config      types.CustomAgentConfig `json:"config"`
 }
 
 // UpdateAgentRequest defines the request body for updating an agent
@@ -51,6 +51,11 @@ type UpdateAgentRequest struct {
 	Description string                  `json:"description"`
 	Avatar      string                  `json:"avatar"`
 	Config      types.CustomAgentConfig `json:"config"`
+}
+
+type UpdateAgentSkillsRequest struct {
+	Mode           string   `json:"mode"`
+	SelectedSkills []string `json:"selected_skills"`
 }
 
 // CreateAgent godoc
@@ -150,6 +155,70 @@ func (h *CustomAgentHandler) GetAgent(c *gin.Context) {
 		"success": true,
 		"data":    agent,
 	})
+}
+
+// GetAgentSkills godoc
+// @Summary      获取智能体 Skill 配置
+// @Description  获取智能体当前 Skill 选择模式和已选择 Skill。
+// @Tags         智能体
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "智能体ID"
+// @Success      200  {object}  map[string]interface{}  "Skill 配置"
+// @Failure      500  {object}  errors.AppError         "服务器错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /agents/{id}/skills [get]
+func (h *CustomAgentHandler) GetAgentSkills(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+
+	config, err := h.service.GetAgentSkillConfig(ctx, id)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{"agent_id": id})
+		c.Error(errors.NewInternalServerError("Failed to get agent skills: " + err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": config})
+}
+
+// UpdateAgentSkills godoc
+// @Summary      更新智能体 Skill 配置
+// @Description  更新智能体 Skill 选择模式，并同步 Agent Skill 绑定表。
+// @Tags         智能体
+// @Accept       json
+// @Produce      json
+// @Param        id       path      string                    true  "智能体ID"
+// @Param        request  body      UpdateAgentSkillsRequest  true  "Skill 配置"
+// @Success      200      {object}  map[string]interface{}    "更新后的 Skill 配置"
+// @Failure      400      {object}  errors.AppError           "请求参数错误"
+// @Failure      500      {object}  errors.AppError           "服务器错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /agents/{id}/skills [put]
+func (h *CustomAgentHandler) UpdateAgentSkills(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+
+	var req UpdateAgentSkillsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("Invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	config, err := h.service.UpdateAgentSkillConfig(ctx, id, req.Mode, req.SelectedSkills)
+	if err != nil {
+		if err == service.ErrInvalidSkillMode {
+			c.Error(errors.NewBadRequestError("Invalid skill selection mode"))
+			return
+		}
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{"agent_id": id})
+		c.Error(errors.NewInternalServerError("Failed to update agent skills: " + err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": config})
 }
 
 // ListAgents godoc

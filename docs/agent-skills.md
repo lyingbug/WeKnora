@@ -278,6 +278,38 @@ Content-Type: application/json
 
 禁用不会删除 `skills` 注册表记录、包文件或历史 Agent 配置；它只更新当前租户的 `tenant_skill_installs.enabled`。运行时解析会过滤禁用项，因此禁用后该 Skill 不会进入 Agent prompt，也不会被 `read_skill` / `execute_skill_script` 作为允许 Skill 暴露。
 
+### Agent 级绑定
+
+Agent 级配置决定某个 Agent 愿意暴露哪些租户已安装 Skill。租户启停仍然是最终 gate：即使 Agent 选择了某个 Skill，只要该租户安装记录被禁用，运行时也不会暴露它。
+
+读取 Agent 的 Skill 配置：
+
+```http
+GET /api/v1/agents/{agent_id}/skills
+```
+
+替换 Agent 的 Skill 配置：
+
+```http
+PUT /api/v1/agents/{agent_id}/skills
+Content-Type: application/json
+
+{
+  "mode": "selected",
+  "selected_skills": ["citation-generator", "document-summarizer"]
+}
+```
+
+支持的 `mode`：
+
+| mode | 说明 |
+|------|------|
+| `none` | 不启用 Skills |
+| `selected` | 仅暴露 `selected_skills` 中当前租户已安装且启用的 Skill |
+| `all` | 暴露当前租户所有已安装且启用的 Skill |
+
+该接口会同步更新 `custom_agents.config.skills_selection_mode`、`custom_agents.config.selected_skills` 和 `agent_skill_bindings`，避免 Agent 编辑页与运行时绑定表出现两套状态。
+
 系统内置了以下 5 个预加载技能，用于增强知识库问答和文档处理能力：
 
 ### 1. citation-generator - 引用生成器
