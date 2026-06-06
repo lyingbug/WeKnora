@@ -54,6 +54,12 @@ func UserIDFromContext(ctx context.Context) (string, bool) {
 	return v, ok && v != ""
 }
 
+// SessionIDFromContext extracts the active chat session ID from ctx.
+func SessionIDFromContext(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(SessionIDContextKey).(string)
+	return v, ok && v != ""
+}
+
 // IsSyntheticUserID reports whether id refers to the synthetic system
 // user that the X-API-Key auth path attaches to each tenant
 // (User.ID = "system-<tenantID>"). These users have no real human

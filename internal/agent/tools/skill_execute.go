@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/utils"
 )
@@ -137,6 +140,8 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 			AllowNetwork: policy.AllowNetwork,
 			MemoryLimit:  policy.MemoryLimit,
 			CPULimit:     policy.CPULimit,
+			Mounts:       policy.Mounts,
+			Env:          policy.Env,
 		},
 	)
 	if err != nil {
@@ -225,6 +230,8 @@ type skillExecutionPolicy struct {
 	AllowNetwork bool
 	MemoryLimit  int64
 	CPULimit     float64
+	Mounts       []sandbox.Mount
+	Env          map[string]string
 }
 
 func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, skillName string) (skillExecutionPolicy, error) {
@@ -259,11 +266,17 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 	if err := rejectUnsupportedRuntimePermissions(permissions); err != nil {
 		return skillExecutionPolicy{}, err
 	}
+	mounts, env, err := approvedFileMounts(ctx, permissions)
+	if err != nil {
+		return skillExecutionPolicy{}, err
+	}
 	return skillExecutionPolicy{
 		Timeout:      timeout,
 		AllowNetwork: allowNetwork,
 		MemoryLimit:  memoryLimit,
 		CPULimit:     cpuLimit,
+		Mounts:       mounts,
+		Env:          env,
 	}, nil
 }
 
@@ -360,7 +373,7 @@ func rejectUnsupportedRuntimePermissions(permissions types.JSON) error {
 	if err != nil {
 		return fmt.Errorf("approved permissions are invalid JSON: %w", err)
 	}
-	for _, key := range []string{"files", "credentials", "mcp"} {
+	for _, key := range []string{"credentials", "mcp"} {
 		if err := rejectUnsupportedRuntimePermission(permissionsMap, key); err != nil {
 			return err
 		}
@@ -400,6 +413,102 @@ func permissionValueIsEmpty(raw interface{}) bool {
 	default:
 		return false
 	}
+}
+
+const skillSessionMountPath = "/mnt/weknora/session"
+
+func approvedFileMounts(ctx context.Context, permissions types.JSON) ([]sandbox.Mount, map[string]string, error) {
+	permissionsMap, err := permissions.Map()
+	if err != nil {
+		return nil, nil, fmt.Errorf("approved permissions are invalid JSON: %w", err)
+	}
+	filesRaw, ok := permissionsMap["files"]
+	if !ok || filesRaw == nil || permissionValueIsEmpty(filesRaw) {
+		return nil, nil, nil
+	}
+	files, ok := filesRaw.([]interface{})
+	if !ok {
+		return nil, nil, fmt.Errorf("approved permissions files must be an array")
+	}
+	for _, rawScope := range files {
+		scope, ok := rawScope.(string)
+		if !ok {
+			return nil, nil, fmt.Errorf("approved permissions files entries must be strings")
+		}
+		if strings.TrimSpace(scope) == "" {
+			continue
+		}
+		if scope != "session-temp" {
+			return nil, nil, fmt.Errorf("unsupported files permission scope: %s", scope)
+		}
+		hostPath, err := skillSessionTempDir(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []sandbox.Mount{
+				{
+					HostPath:      hostPath,
+					ContainerPath: skillSessionMountPath,
+					ReadOnly:      false,
+				},
+			}, map[string]string{
+				"WEKNORA_SKILL_SESSION_DIR": skillSessionMountPath,
+			}, nil
+	}
+	return nil, nil, nil
+}
+
+func skillSessionTempDir(ctx context.Context) (string, error) {
+	tenantID, _ := types.TenantIDFromContext(ctx)
+	userID, ok := types.UserIDFromContext(ctx)
+	if !ok {
+		userID = "anonymous"
+	}
+	sessionID, ok := types.SessionIDFromContext(ctx)
+	if !ok {
+		if requestID, requestOK := types.RequestIDFromContext(ctx); requestOK {
+			sessionID = requestID
+		} else {
+			sessionID = "default"
+		}
+	}
+	root := strings.TrimSpace(os.Getenv("WEKNORA_SKILL_SESSION_DIR"))
+	if root == "" {
+		root = filepath.Join(os.TempDir(), "weknora", "skill-sessions")
+	}
+	dir := filepath.Join(
+		root,
+		fmt.Sprintf("tenant-%d", tenantID),
+		safePathComponent(userID),
+		safePathComponent(sessionID),
+	)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", fmt.Errorf("failed to create skill session temp dir: %w", err)
+	}
+	return dir, nil
+}
+
+func safePathComponent(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "default"
+	}
+	var builder strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '-', r == '_', r == '.':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('_')
+		}
+	}
+	return builder.String()
 }
 
 // Cleanup releases any resources

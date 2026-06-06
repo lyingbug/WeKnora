@@ -147,6 +147,13 @@ func (s *DockerSandbox) buildDockerArgs(config *ExecuteConfig) []string {
 	// Mount the script and working directory as read-only
 	scriptDir := filepath.Dir(config.Script)
 	args = append(args, "-v", fmt.Sprintf("%s:/workspace:ro", scriptDir))
+	for _, mount := range config.Mounts {
+		mode := "rw"
+		if mount.ReadOnly {
+			mode = "ro"
+		}
+		args = append(args, "-v", fmt.Sprintf("%s:%s:%s", mount.HostPath, mount.ContainerPath, mode))
+	}
 
 	// Working directory
 	args = append(args, "-w", "/workspace")

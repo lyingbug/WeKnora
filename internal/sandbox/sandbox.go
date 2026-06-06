@@ -102,6 +102,9 @@ type ExecuteConfig struct {
 	// CPULimit is the maximum CPU cores (Docker only)
 	CPULimit float64
 
+	// Mounts are additional host paths mounted into the sandbox.
+	Mounts []Mount
+
 	// ReadOnlyRootfs makes the root filesystem read-only (Docker only)
 	ReadOnlyRootfs bool
 
@@ -113,6 +116,13 @@ type ExecuteConfig struct {
 
 	// ScriptContent is the script content for validation (optional, will be read from file if not provided)
 	ScriptContent string
+}
+
+// Mount describes an additional filesystem mount for sandbox execution.
+type Mount struct {
+	HostPath      string
+	ContainerPath string
+	ReadOnly      bool
 }
 
 // ExecuteResult contains the result of script execution

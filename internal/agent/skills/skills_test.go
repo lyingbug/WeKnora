@@ -394,7 +394,7 @@ description: A test skill for network execution.
 		t.Fatalf("Failed to write script: %v", err)
 	}
 
-	fakeSandbox := &capturingSandboxManager{}
+	fakeSandbox := &capturingSandboxManager{sandboxType: sandbox.SandboxTypeDocker}
 	manager := NewManager(&ManagerConfig{
 		SkillDirs: []string{tmpDir},
 		Enabled:   true,
@@ -410,6 +410,13 @@ description: A test skill for network execution.
 			AllowNetwork: true,
 			MemoryLimit:  128 * 1024 * 1024,
 			CPULimit:     0.75,
+			Mounts: []sandbox.Mount{
+				{
+					HostPath:      "/tmp/weknora/session",
+					ContainerPath: "/mnt/weknora/session",
+					ReadOnly:      false,
+				},
+			},
 		},
 	)
 	if err != nil {
@@ -427,10 +434,62 @@ description: A test skill for network execution.
 	if fakeSandbox.lastConfig.CPULimit != 0.75 {
 		t.Fatalf("Expected CPULimit to be passed to sandbox, got %f", fakeSandbox.lastConfig.CPULimit)
 	}
+	if len(fakeSandbox.lastConfig.Mounts) != 1 {
+		t.Fatalf("Expected one mount to be passed to sandbox, got %d", len(fakeSandbox.lastConfig.Mounts))
+	}
+}
+
+func TestManagerExecuteScriptWithOptionsRejectsMountsWithoutDocker(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "skills-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	skillDir := filepath.Join(tmpDir, "file-skill")
+	scriptsDir := filepath.Join(skillDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		t.Fatalf("Failed to create skill dir: %v", err)
+	}
+	skillContent := `---
+name: file-skill
+description: A test skill for file mounts.
+---
+# File Skill
+`
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0644); err != nil {
+		t.Fatalf("Failed to write SKILL.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scriptsDir, "run.py"), []byte("print('ok')"), 0644); err != nil {
+		t.Fatalf("Failed to write script: %v", err)
+	}
+
+	manager := NewManager(&ManagerConfig{
+		SkillDirs: []string{tmpDir},
+		Enabled:   true,
+	}, &capturingSandboxManager{sandboxType: sandbox.SandboxTypeLocal})
+
+	_, err = manager.ExecuteScriptWithOptions(
+		context.Background(),
+		"file-skill",
+		"scripts/run.py",
+		nil,
+		"",
+		ExecuteScriptOptions{
+			Mounts: []sandbox.Mount{{HostPath: "/tmp/session", ContainerPath: "/mnt/weknora/session"}},
+		},
+	)
+	if err == nil {
+		t.Fatal("Expected mounts to require docker sandbox")
+	}
+	if !containsString(err.Error(), "require docker sandbox") {
+		t.Fatalf("Expected docker sandbox error, got %v", err)
+	}
 }
 
 type capturingSandboxManager struct {
-	lastConfig *sandbox.ExecuteConfig
+	lastConfig  *sandbox.ExecuteConfig
+	sandboxType sandbox.SandboxType
 }
 
 func (m *capturingSandboxManager) Execute(ctx context.Context, config *sandbox.ExecuteConfig) (*sandbox.ExecuteResult, error) {
@@ -447,7 +506,10 @@ func (m *capturingSandboxManager) GetSandbox() sandbox.Sandbox {
 }
 
 func (m *capturingSandboxManager) GetType() sandbox.SandboxType {
-	return sandbox.SandboxTypeLocal
+	if m.sandboxType == "" {
+		return sandbox.SandboxTypeLocal
+	}
+	return m.sandboxType
 }
 
 func TestIsScript(t *testing.T) {

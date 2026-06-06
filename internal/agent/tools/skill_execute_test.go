@@ -87,8 +87,7 @@ func TestRejectUnsupportedRuntimePermissions(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rejectUnsupportedRuntimePermissions(types.JSON(`{"files":["session-temp"]}`))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "files permissions are not supported at runtime")
+	require.NoError(t, err)
 
 	err = rejectUnsupportedRuntimePermissions(types.JSON(`{"credentials":{"api_key":"secret"}}`))
 	require.Error(t, err)
@@ -145,16 +144,36 @@ func TestApprovedExecutionPolicy(t *testing.T) {
 	assert.Equal(t, 0.75, policy.CPULimit)
 }
 
-func TestApprovedExecutionPolicyRejectsFilePermissions(t *testing.T) {
+func TestApprovedExecutionPolicyCreatesSessionTempFileMount(t *testing.T) {
+	t.Setenv("WEKNORA_SKILL_SESSION_DIR", t.TempDir())
 	tool := NewExecuteSkillScriptTool(nil)
 	tool.SetPermissionChecker(fakeSkillPermissionChecker{
 		permissions: types.JSON(`{"files":["session-temp"]}`),
 	})
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+	ctx = context.WithValue(ctx, types.UserIDContextKey, "user-a")
+	ctx = context.WithValue(ctx, types.SessionIDContextKey, "session-a")
+
+	policy, err := tool.approvedExecutionPolicy(ctx, "file-processor")
+	require.NoError(t, err)
+	require.Len(t, policy.Mounts, 1)
+	assert.Contains(t, policy.Mounts[0].HostPath, "tenant-7")
+	assert.Contains(t, policy.Mounts[0].HostPath, "user-a")
+	assert.Contains(t, policy.Mounts[0].HostPath, "session-a")
+	assert.Equal(t, "/mnt/weknora/session", policy.Mounts[0].ContainerPath)
+	assert.False(t, policy.Mounts[0].ReadOnly)
+}
+
+func TestApprovedExecutionPolicyRejectsUnsupportedFileScope(t *testing.T) {
+	tool := NewExecuteSkillScriptTool(nil)
+	tool.SetPermissionChecker(fakeSkillPermissionChecker{
+		permissions: types.JSON(`{"files":["workspace-read"]}`),
+	})
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 
 	_, err := tool.approvedExecutionPolicy(ctx, "file-processor")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "files permissions are not supported at runtime")
+	assert.Contains(t, err.Error(), "unsupported files permission scope")
 }
 
 type fakeSkillPermissionChecker struct {

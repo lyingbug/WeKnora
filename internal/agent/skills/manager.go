@@ -36,6 +36,8 @@ type ExecuteScriptOptions struct {
 	AllowNetwork bool
 	MemoryLimit  int64
 	CPULimit     float64
+	Mounts       []sandbox.Mount
+	Env          map[string]string
 }
 
 // NewManager creates a new skill manager with the given configuration
@@ -203,6 +205,9 @@ func (m *Manager) ExecuteScriptWithOptions(
 	if m.sandboxMgr == nil {
 		return nil, fmt.Errorf("sandbox is not configured")
 	}
+	if len(options.Mounts) > 0 && m.sandboxMgr.GetType() != sandbox.SandboxTypeDocker {
+		return nil, fmt.Errorf("file permission mounts require docker sandbox")
+	}
 
 	// Get the skill base path
 	basePath, err := m.loader.GetSkillBasePath(skillName)
@@ -229,6 +234,8 @@ func (m *Manager) ExecuteScriptWithOptions(
 		AllowNetwork: options.AllowNetwork,
 		MemoryLimit:  options.MemoryLimit,
 		CPULimit:     options.CPULimit,
+		Mounts:       options.Mounts,
+		Env:          options.Env,
 	}
 
 	// Execute in sandbox

@@ -195,6 +195,33 @@ func TestNewDisabledManager(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxBuildArgsMountsAdditionalPaths(t *testing.T) {
+	sandbox := NewDockerSandbox(DefaultConfig())
+	args := sandbox.buildDockerArgs(&ExecuteConfig{
+		Script: "/skills/scripts/run.py",
+		Mounts: []Mount{
+			{
+				HostPath:      "/tmp/weknora/session",
+				ContainerPath: "/mnt/weknora/session",
+				ReadOnly:      false,
+			},
+		},
+	})
+
+	if !containsArg(args, "/tmp/weknora/session:/mnt/weknora/session:rw") {
+		t.Fatalf("Expected docker args to include writable session mount, got %v", args)
+	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDefaultManagerValidateExecutionAllowNetwork(t *testing.T) {
 	manager := &DefaultManager{validator: NewScriptValidator()}
 	networkScript := `import requests
