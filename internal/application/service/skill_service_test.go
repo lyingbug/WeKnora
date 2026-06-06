@@ -182,6 +182,36 @@ func TestSkillRegistryID_FitsDatabaseColumn(t *testing.T) {
 	assert.Contains(t, id, "-")
 }
 
+func TestSkillRegistryID_UsesStableHashFallbackForNonASCIIName(t *testing.T) {
+	first := skillRegistryID(types.SkillSourceTypePreloaded, "数据处理器", types.DefaultSkillVersion)
+	second := skillRegistryID(types.SkillSourceTypePreloaded, "文档分析器", types.DefaultSkillVersion)
+
+	require.NotEqual(t, first, second)
+	assert.Regexp(t, `^preloaded-[a-f0-9]{12}-0-0-0$`, first)
+	assert.Regexp(t, `^preloaded-[a-f0-9]{12}-0-0-0$`, second)
+}
+
+func TestSkillService_ImportPreloadedSkills_ImportsNonASCIINamesWithoutIDCollision(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	writeTestSkill(t, tempDir, "data-processor", "数据处理器", "Data processing skill")
+	writeTestSkill(t, tempDir, "document-analyzer", "文档分析器", "Document analysis skill")
+
+	repo := repository.NewSkillRepository(setupSkillServiceTestDB(t))
+	svc := NewSkillServiceWithRepository(repo, tempDir)
+
+	require.NoError(t, svc.ImportPreloadedSkills(ctx))
+
+	first, err := repo.GetActiveSkillByNameVersion(ctx, "数据处理器", types.DefaultSkillVersion)
+	require.NoError(t, err)
+	second, err := repo.GetActiveSkillByNameVersion(ctx, "文档分析器", types.DefaultSkillVersion)
+	require.NoError(t, err)
+
+	require.NotEqual(t, first.ID, second.ID)
+	assert.Regexp(t, `^preloaded-[a-f0-9]{12}-0-0-0$`, first.ID)
+	assert.Regexp(t, `^preloaded-[a-f0-9]{12}-0-0-0$`, second.ID)
+}
+
 func TestSkillService_EnsureTenantPreloadedSkillInstalls_ListsTenantSkills(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()

@@ -1047,7 +1047,12 @@ func newPreloadedSkillRegistryEntry(preloadedDir string, meta *skills.SkillMetad
 }
 
 func skillRegistryID(sourceType, name, version string) string {
-	rawID := sourceType + "-" + name + "-" + version
+	cleanName := cleanSkillRegistryIDPart(name)
+	if cleanName == "" {
+		sum := sha256.Sum256([]byte(sourceType + "\x00" + name + "\x00" + version))
+		cleanName = hex.EncodeToString(sum[:])[:12]
+	}
+	rawID := sourceType + "-" + cleanName + "-" + version
 	cleanID := regexp.MustCompile(`[^a-zA-Z0-9_-]+`).ReplaceAllString(rawID, "-")
 	cleanID = strings.Trim(cleanID, "-")
 	if len(cleanID) <= 64 {
@@ -1058,6 +1063,11 @@ func skillRegistryID(sourceType, name, version string) string {
 	suffix := hex.EncodeToString(sum[:])[:12]
 	prefix := strings.Trim(cleanID[:64-len(suffix)-1], "-")
 	return prefix + "-" + suffix
+}
+
+func cleanSkillRegistryIDPart(value string) string {
+	clean := regexp.MustCompile(`[^a-zA-Z0-9_-]+`).ReplaceAllString(value, "-")
+	return strings.Trim(clean, "-")
 }
 
 func tenantSkillInstallID(tenantID uint64, skillID string) string {
