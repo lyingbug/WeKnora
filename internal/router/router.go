@@ -957,14 +957,14 @@ func RegisterUserFavoriteRoutes(r *gin.RouterGroup, h *handler.UserResourceFavor
 
 // RegisterSkillRoutes registers skill routes.
 //
-// PR 2 currently only exposes a read-only `ListSkills`; gated to
-// Viewer+. Future skill upload / enable endpoints must use Admin+ since
-// skills run sandboxed code on tenant resources.
+// Read-only listing is gated to Viewer+. Install endpoints use Admin+
+// because skills can expose tools and scripts against tenant resources.
 func RegisterSkillRoutes(r *gin.RouterGroup, skillHandler *handler.SkillHandler, g *rbacGuards) {
 	skills := r.Group("/skills")
 	{
 		// List all preloaded skills — Viewer+
 		skills.GET("", g.Viewer(), skillHandler.ListSkills)
+		skills.POST("/install-local", g.Admin(), skillHandler.InstallLocalSkillPackage)
 	}
 }
 

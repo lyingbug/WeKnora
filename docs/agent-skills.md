@@ -202,6 +202,61 @@ Skills 功能通过两个工具与 Agent 交互：
 
 第二阶段开始，预装 Skill 会为租户生成安装记录，Agent 编辑页仍使用 `skills_selection_mode` 和 `selected_skills` 配置，但后端会同步到 `agent_skill_bindings`。运行时会根据当前 Agent 所属租户的已安装 Skill 过滤可用 Skill，避免 Agent 暴露未安装或已禁用的 Skill。
 
+第三阶段开始，后端支持从服务端本地 packages 目录安装租户级 Skill 包。该能力用于承接后续 Skill Hub/在线安装流程：当前版本只做本地目录校验、manifest 入库、租户安装和运行时目录解析，不包含远端下载、签名校验、权限审批流 UI 或独立云端沙箱调度。
+
+### 本地 Skill 包安装
+
+本地 Skill 包必须位于 `WEKNORA_SKILL_PACKAGES_DIR` 指向的目录内；如果环境变量未设置，默认使用 `skills/packages`。安装接口会拒绝越过该目录的绝对路径或 `../` 路径。
+
+包目录示例：
+
+```
+skills/packages/my-skill/
+├── skill.json
+├── SKILL.md
+├── REFERENCE.md
+└── scripts/
+    └── run.py
+```
+
+`skill.json` 示例：
+
+```json
+{
+  "name": "my-skill",
+  "version": "1.0.0",
+  "description": "Describe when the agent should use this skill.",
+  "entrypoints": {
+    "instructions": "SKILL.md"
+  },
+  "runtime": {
+    "type": "sandbox"
+  },
+  "permissions": {
+    "network": ["api.example.com"],
+    "files": ["workspace-read"]
+  }
+}
+```
+
+安装接口：
+
+```http
+POST /api/v1/skills/install-local
+Content-Type: application/json
+
+{
+  "package_path": "my-skill"
+}
+```
+
+安装成功后，后端会：
+
+- 校验 `skill.json` 与 `SKILL.md`，要求 manifest name 与 `SKILL.md` frontmatter name 一致。
+- 计算包内容 digest，并写入 `skills` 注册表，`source_type=local`。
+- 为当前租户写入启用状态的 `tenant_skill_installs`。
+- 运行时根据 Agent 的 `skills_selection_mode` 和已安装 Skill 解析 `AllowedSkills` 与 `SkillDirs`。
+
 系统内置了以下 5 个预加载技能，用于增强知识库问答和文档处理能力：
 
 ### 1. citation-generator - 引用生成器
