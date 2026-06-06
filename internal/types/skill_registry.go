@@ -4,6 +4,7 @@ import "time"
 
 const (
 	SkillSourceTypePreloaded = "preloaded"
+	SkillSourceTypeLocal     = "local"
 	SkillStatusActive        = "active"
 	SkillStatusDisabled      = "disabled"
 	DefaultSkillVersion      = "0.0.0"

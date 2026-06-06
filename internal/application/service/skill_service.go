@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,6 +21,9 @@ import (
 
 // DefaultPreloadedSkillsDir is the default directory for preloaded skills
 const DefaultPreloadedSkillsDir = "skills/preloaded"
+
+// DefaultSkillPackagesDir is the default directory for local skill packages.
+const DefaultSkillPackagesDir = "skills/packages"
 
 // skillService implements SkillService interface
 type skillService struct {
@@ -72,6 +76,13 @@ func getPreloadedSkillsDir() string {
 
 	// Default to relative path (will be created if needed)
 	return DefaultPreloadedSkillsDir
+}
+
+func getSkillPackagesDir() string {
+	if dir := os.Getenv("WEKNORA_SKILL_PACKAGES_DIR"); dir != "" {
+		return dir
+	}
+	return DefaultSkillPackagesDir
 }
 
 // ensureInitialized initializes the loader if not already done
@@ -209,6 +220,65 @@ func (s *skillService) ListTenantSkills(ctx context.Context, tenantID uint64) ([
 	return skillRegistryEntriesToMetadata(entries), nil
 }
 
+func (s *skillService) InstallLocalSkillPackage(
+	ctx context.Context,
+	tenantID uint64,
+	packagePath string,
+	installedBy string,
+) (*types.SkillRegistryEntry, error) {
+	if tenantID == 0 {
+		return nil, fmt.Errorf("tenant ID is required")
+	}
+	if s.repo == nil {
+		return nil, fmt.Errorf("skill repository is required")
+	}
+
+	packageDir, err := resolveLocalSkillPackageDir(getSkillPackagesDir(), packagePath)
+	if err != nil {
+		return nil, err
+	}
+	loaded, err := skills.LoadSkillPackageManifest(packageDir)
+	if err != nil {
+		return nil, err
+	}
+	digest, err := skillPackageDigest(packageDir)
+	if err != nil {
+		return nil, err
+	}
+
+	entry := &types.SkillRegistryEntry{
+		ID:          skillRegistryID(types.SkillSourceTypeLocal, loaded.Manifest.Name, loaded.Manifest.Version),
+		Name:        loaded.Manifest.Name,
+		Version:     loaded.Manifest.Version,
+		Description: loaded.Manifest.Description,
+		SourceType:  types.SkillSourceTypeLocal,
+		SourceURI:   packageDir,
+		Digest:      digest,
+		Manifest:    types.JSON(loaded.RawJSON),
+		Status:      types.SkillStatusActive,
+		IsBuiltin:   false,
+	}
+	if err := s.repo.UpsertSkill(ctx, entry); err != nil {
+		return nil, fmt.Errorf("failed to upsert local skill package: %w", err)
+	}
+
+	install := &types.TenantSkillInstall{
+		ID:                  tenantSkillInstallID(tenantID, entry.ID),
+		TenantID:            tenantID,
+		SkillID:             entry.ID,
+		Enabled:             true,
+		InstalledBy:         installedBy,
+		ApprovedPermissions: types.JSON(loaded.PermissionsJSON),
+	}
+	if err := s.repo.UpsertTenantSkillInstall(ctx, install); err != nil {
+		return nil, fmt.Errorf("failed to install local skill package for tenant: %w", err)
+	}
+
+	logger.Infof(ctx, "Installed local skill package %s@%s for tenant %d", entry.Name, entry.Version, tenantID)
+
+	return entry, nil
+}
+
 func (s *skillService) SyncAgentSkillBindings(
 	ctx context.Context,
 	tenantID uint64,
@@ -253,58 +323,75 @@ func (s *skillService) ResolveAgentSelectedSkills(
 	mode string,
 	selectedSkillNames []string,
 ) ([]string, error) {
+	names, _, err := s.ResolveAgentSkillAccess(ctx, tenantID, agentID, mode, selectedSkillNames)
+	return names, err
+}
+
+func (s *skillService) ResolveAgentSkillAccess(
+	ctx context.Context,
+	tenantID uint64,
+	agentID string,
+	mode string,
+	selectedSkillNames []string,
+) ([]string, []string, error) {
 	if tenantID == 0 || s.repo == nil {
 		if mode == "selected" {
-			return selectedSkillNames, nil
+			return selectedSkillNames, []string{s.preloadedDir}, nil
 		}
 		if mode == "all" {
 			metadata, err := s.ListPreloadedSkills(ctx)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
-			return skillMetadataNames(metadata), nil
+			names := skillMetadataNames(metadata)
+			if len(names) == 0 {
+				return names, nil, nil
+			}
+			return names, []string{s.preloadedDir}, nil
 		}
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	if err := s.EnsureTenantPreloadedSkillInstalls(ctx, tenantID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	var entries []*types.SkillRegistryEntry
+	var err error
 	switch mode {
 	case "all":
-		entries, err := s.repo.ListTenantInstalledSkills(ctx, tenantID)
+		entries, err = s.repo.ListTenantInstalledSkills(ctx, tenantID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return skillEntryNames(entries), nil
 	case "selected":
 		if len(selectedSkillNames) == 0 && agentID != "" {
-			entries, err := s.repo.ListAgentSkillBindings(ctx, tenantID, agentID)
+			entries, err = s.repo.ListAgentSkillBindings(ctx, tenantID, agentID)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
-			return skillEntryNames(entries), nil
+			break
 		}
 		installed, err := s.repo.ListTenantInstalledSkillNames(ctx, tenantID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		names := make([]string, 0, len(selectedSkillNames))
+		entries = make([]*types.SkillRegistryEntry, 0, len(selectedSkillNames))
 		seen := make(map[string]struct{}, len(selectedSkillNames))
 		for _, name := range selectedSkillNames {
 			if _, ok := seen[name]; ok {
 				continue
 			}
 			seen[name] = struct{}{}
-			if _, ok := installed[name]; ok {
-				names = append(names, name)
+			if entry, ok := installed[name]; ok {
+				entries = append(entries, entry)
 			}
 		}
-		return names, nil
 	default:
-		return nil, nil
+		return nil, nil, nil
 	}
+
+	return skillEntryNamesInOrder(entries), skillEntryLoaderDirs(entries), nil
 }
 
 // GetSkillByName retrieves a skill by its name
@@ -349,6 +436,38 @@ func skillEntryNames(entries []*types.SkillRegistryEntry) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func skillEntryNamesInOrder(entries []*types.SkillRegistryEntry) []string {
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name)
+	}
+	return names
+}
+
+func skillEntryLoaderDirs(entries []*types.SkillRegistryEntry) []string {
+	dirs := make([]string, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		dir := skillEntryLoaderDir(entry)
+		if dir == "" {
+			continue
+		}
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		dirs = append(dirs, dir)
+	}
+	return dirs
+}
+
+func skillEntryLoaderDir(entry *types.SkillRegistryEntry) string {
+	if entry == nil || entry.SourceURI == "" {
+		return ""
+	}
+	return filepath.Dir(entry.SourceURI)
 }
 
 func skillMetadataNames(metadata []*skills.SkillMetadata) []string {
@@ -406,4 +525,85 @@ func skillRegistryDigest(parts ...string) string {
 		hash.Write([]byte{0})
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func resolveLocalSkillPackageDir(packagesRoot, packagePath string) (string, error) {
+	if strings.TrimSpace(packagePath) == "" {
+		return "", fmt.Errorf("skill package path is required")
+	}
+	root, err := filepath.Abs(packagesRoot)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve skill packages directory: %w", err)
+	}
+
+	var candidate string
+	if filepath.IsAbs(packagePath) {
+		candidate = filepath.Clean(packagePath)
+	} else {
+		candidate = filepath.Join(root, packagePath)
+	}
+	candidate, err = filepath.Abs(candidate)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve skill package path: %w", err)
+	}
+	if candidate != root && !strings.HasPrefix(candidate, root+string(os.PathSeparator)) {
+		return "", fmt.Errorf("skill package path must be within skill packages directory %s", root)
+	}
+
+	info, err := os.Stat(candidate)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat skill package path: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("skill package path must be a directory")
+	}
+	return candidate, nil
+}
+
+func skillPackageDigest(packageDir string) (string, error) {
+	var files []string
+	if err := filepath.WalkDir(packageDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	}); err != nil {
+		return "", fmt.Errorf("failed to walk skill package: %w", err)
+	}
+	sort.Strings(files)
+
+	hash := sha256.New()
+	for _, path := range files {
+		rel, err := filepath.Rel(packageDir, path)
+		if err != nil {
+			return "", err
+		}
+		hash.Write([]byte(filepath.ToSlash(rel)))
+		hash.Write([]byte{0})
+
+		file, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
+		if _, err := io.Copy(hash, file); err != nil {
+			_ = file.Close()
+			return "", err
+		}
+		if err := file.Close(); err != nil {
+			return "", err
+		}
+		hash.Write([]byte{0})
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }

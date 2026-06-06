@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,6 +40,31 @@ func writeTestSkill(t *testing.T, root, dir, name, description string) {
 
 	content := "---\nname: " + name + "\ndescription: " + description + "\n---\n\n# " + name + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0644))
+}
+
+func writeTestSkillPackage(t *testing.T, root, dir, name, version, description string, permissions map[string]any) string {
+	t.Helper()
+
+	skillDir := filepath.Join(root, dir)
+	require.NoError(t, os.MkdirAll(skillDir, 0755))
+
+	content := "---\nname: " + name + "\ndescription: " + description + "\n---\n\n# " + name + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0644))
+
+	manifest := map[string]any{
+		"name":        name,
+		"version":     version,
+		"description": description,
+		"entrypoints": map[string]any{
+			"instructions": "SKILL.md",
+		},
+		"permissions": permissions,
+	}
+	raw, err := json.Marshal(manifest)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "skill.json"), raw, 0644))
+
+	return skillDir
 }
 
 func TestSkillService_ImportPreloadedSkills_ImportsIntoRegistryAndListsRegistryEntries(t *testing.T) {
@@ -165,4 +191,76 @@ func TestSkillService_SyncAndResolveAgentSelectedSkills(t *testing.T) {
 	none, err := svc.ResolveAgentSelectedSkills(ctx, 10, "agent-a", "none", nil)
 	require.NoError(t, err)
 	assert.Empty(t, none)
+}
+
+func TestSkillService_InstallLocalSkillPackage(t *testing.T) {
+	ctx := context.Background()
+	packagesRoot := t.TempDir()
+	t.Setenv("WEKNORA_SKILL_PACKAGES_DIR", packagesRoot)
+	packageDir := writeTestSkillPackage(t, packagesRoot, "sample-skill", "sample-skill", "1.2.3", "Sample skill", map[string]any{
+		"network": []string{"api.example.com"},
+	})
+
+	db := setupSkillServiceTestDB(t)
+	repo := repository.NewSkillRepository(db)
+	svc := NewSkillServiceWithRepository(repo, t.TempDir())
+
+	entry, err := svc.InstallLocalSkillPackage(ctx, 10, "sample-skill", "user-a")
+	require.NoError(t, err)
+
+	assert.Equal(t, "local-sample-skill-1-2-3", entry.ID)
+	assert.Equal(t, "sample-skill", entry.Name)
+	assert.Equal(t, "1.2.3", entry.Version)
+	assert.Equal(t, types.SkillSourceTypeLocal, entry.SourceType)
+	assert.Equal(t, packageDir, entry.SourceURI)
+	assert.Equal(t, types.SkillStatusActive, entry.Status)
+	assert.False(t, entry.IsBuiltin)
+	assert.NotEmpty(t, entry.Digest)
+	assert.JSONEq(t, `{"description":"Sample skill","entrypoints":{"instructions":"SKILL.md"},"name":"sample-skill","permissions":{"network":["api.example.com"]},"version":"1.2.3"}`, entry.Manifest.ToString())
+
+	var install types.TenantSkillInstall
+	require.NoError(t, db.Where("tenant_id = ? AND skill_id = ?", 10, entry.ID).First(&install).Error)
+	assert.True(t, install.Enabled)
+	assert.Equal(t, "user-a", install.InstalledBy)
+	assert.JSONEq(t, `{"network":["api.example.com"]}`, install.ApprovedPermissions.ToString())
+
+	outside := filepath.Join(t.TempDir(), "sample-skill")
+	_, err = svc.InstallLocalSkillPackage(ctx, 10, outside, "user-a")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "within skill packages directory")
+}
+
+func TestSkillService_ResolveAgentSkillAccess(t *testing.T) {
+	ctx := context.Background()
+	preloadedRoot := t.TempDir()
+	writeTestSkill(t, preloadedRoot, "alpha-dir", "alpha", "Alpha skill")
+
+	packagesRoot := t.TempDir()
+	t.Setenv("WEKNORA_SKILL_PACKAGES_DIR", packagesRoot)
+	localDir := writeTestSkillPackage(t, packagesRoot, "local-one", "local-one", "1.0.0", "Local one", map[string]any{})
+	writeTestSkillPackage(t, packagesRoot, "local-two", "local-two", "1.0.0", "Local two", map[string]any{})
+
+	repo := repository.NewSkillRepository(setupSkillServiceTestDB(t))
+	svc := NewSkillServiceWithRepository(repo, preloadedRoot)
+	require.NoError(t, svc.EnsureTenantPreloadedSkillInstalls(ctx, 10))
+	_, err := svc.InstallLocalSkillPackage(ctx, 10, "local-one", "user-a")
+	require.NoError(t, err)
+	_, err = svc.InstallLocalSkillPackage(ctx, 10, "local-two", "user-a")
+	require.NoError(t, err)
+
+	names, dirs, err := svc.ResolveAgentSkillAccess(ctx, 10, "agent-a", "selected", []string{"local-one", "missing", "alpha"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"local-one", "alpha"}, names)
+	assert.ElementsMatch(t, []string{preloadedRoot, packagesRoot}, dirs)
+
+	names, dirs, err = svc.ResolveAgentSkillAccess(ctx, 10, "agent-a", "all", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"alpha", "local-one", "local-two"}, names)
+	assert.ElementsMatch(t, []string{preloadedRoot, filepath.Dir(localDir)}, dirs)
+
+	require.NoError(t, svc.SyncAgentSkillBindings(ctx, 10, "agent-a", "selected", []string{"local-two"}))
+	names, dirs, err = svc.ResolveAgentSkillAccess(ctx, 10, "agent-a", "selected", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"local-two"}, names)
+	assert.Equal(t, []string{packagesRoot}, dirs)
 }
