@@ -319,6 +319,28 @@ func TestSkillService_InstallLocalSkillPackageWithPermissions_RejectsUnrequested
 	assert.Contains(t, err.Error(), "approved permission credentials was not requested by skill manifest")
 }
 
+func TestSkillService_InstallLocalSkillPackageWithPermissions_RejectsUnrequestedNetworkScope(t *testing.T) {
+	ctx := context.Background()
+	packagesRoot := t.TempDir()
+	t.Setenv("WEKNORA_SKILL_PACKAGES_DIR", packagesRoot)
+	writeTestSkillPackage(t, packagesRoot, "sample-skill", "sample-skill", "1.2.3", "Sample skill", map[string]any{
+		"network": []string{"api.example.com"},
+	})
+
+	repo := repository.NewSkillRepository(setupSkillServiceTestDB(t))
+	svc := NewSkillServiceWithRepository(repo, t.TempDir())
+
+	_, err := svc.InstallLocalSkillPackageWithPermissions(
+		ctx,
+		10,
+		"sample-skill",
+		"user-a",
+		types.JSON(`{"network":["evil.example.com"]}`),
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "approved network scope evil.example.com was not requested by skill manifest")
+}
+
 func TestSkillService_PreviewLocalSkillPackage_ValidatesWithoutInstalling(t *testing.T) {
 	ctx := context.Background()
 	packagesRoot := t.TempDir()

@@ -376,12 +376,63 @@ func normalizeApprovedSkillPermissions(approved types.JSON, fallback []byte) (ty
 				return nil, fmt.Errorf("approved permission %s was not requested by skill manifest", key)
 			}
 		}
+		if err := validateApprovedStringArraySubset("network", obj, requested); err != nil {
+			return nil, err
+		}
 	}
 	normalized, err := json.Marshal(obj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to normalize approved permissions: %w", err)
 	}
 	return types.JSON(normalized), nil
+}
+
+func validateApprovedStringArraySubset(
+	key string,
+	approved map[string]interface{},
+	requested map[string]interface{},
+) error {
+	approvedRaw, ok := approved[key]
+	if !ok || approvedRaw == nil {
+		return nil
+	}
+	approvedValues, err := stringArrayPermission(approvedRaw, "approved "+key)
+	if err != nil {
+		return err
+	}
+	requestedValues, err := stringArrayPermission(requested[key], "requested "+key)
+	if err != nil {
+		return err
+	}
+	requestedSet := make(map[string]struct{}, len(requestedValues))
+	for _, value := range requestedValues {
+		requestedSet[value] = struct{}{}
+	}
+	for _, value := range approvedValues {
+		if _, ok := requestedSet[value]; !ok {
+			return fmt.Errorf("approved %s scope %s was not requested by skill manifest", key, value)
+		}
+	}
+	return nil
+}
+
+func stringArrayPermission(raw interface{}, label string) ([]string, error) {
+	values, ok := raw.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("%s permission must be an array", label)
+	}
+	result := make([]string, 0, len(values))
+	for _, rawValue := range values {
+		value, ok := rawValue.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s permission entries must be strings", label)
+		}
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result, nil
 }
 
 func parseSkillPermissionObject(raw []byte, label string) (map[string]interface{}, error) {
