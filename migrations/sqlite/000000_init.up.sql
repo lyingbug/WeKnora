@@ -685,3 +685,89 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_vector_stores_name_tenant
 CREATE INDEX IF NOT EXISTS idx_vector_stores_tenant_id ON vector_stores(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_vector_stores_engine_type ON vector_stores(engine_type);
 CREATE INDEX IF NOT EXISTS idx_vector_stores_deleted_at ON vector_stores(deleted_at);
+
+CREATE TABLE IF NOT EXISTS skills (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    version VARCHAR(64) NOT NULL DEFAULT '0.0.0',
+    description TEXT NOT NULL DEFAULT '',
+    source_type VARCHAR(32) NOT NULL DEFAULT 'preloaded',
+    source_uri TEXT NOT NULL DEFAULT '',
+    digest VARCHAR(128) NOT NULL DEFAULT '',
+    manifest TEXT NOT NULL DEFAULT '{}',
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    is_builtin INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_version ON skills(name, version);
+CREATE INDEX IF NOT EXISTS idx_skills_source_type ON skills(source_type);
+CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status);
+CREATE INDEX IF NOT EXISTS idx_skills_is_builtin ON skills(is_builtin);
+
+CREATE TABLE IF NOT EXISTS tenant_skill_installs (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    skill_id VARCHAR(64) NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    installed_by VARCHAR(64) NOT NULL DEFAULT '',
+    approved_permissions TEXT NOT NULL DEFAULT '{}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_installs_tenant_skill ON tenant_skill_installs(tenant_id, skill_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_skill_installs_tenant ON tenant_skill_installs(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_skill_installs_skill ON tenant_skill_installs(skill_id);
+
+CREATE TABLE IF NOT EXISTS agent_skill_bindings (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    agent_id VARCHAR(64) NOT NULL,
+    skill_id VARCHAR(64) NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    config TEXT NOT NULL DEFAULT '{}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_skill_bindings_tenant_agent_skill ON agent_skill_bindings(tenant_id, agent_id, skill_id);
+CREATE INDEX IF NOT EXISTS idx_agent_skill_bindings_tenant_agent ON agent_skill_bindings(tenant_id, agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_skill_bindings_skill ON agent_skill_bindings(skill_id);
+
+CREATE TABLE IF NOT EXISTS tenant_skill_credentials (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    skill_id VARCHAR(64) NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    credentials TEXT NOT NULL DEFAULT '{}',
+    updated_by VARCHAR(64) NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_credentials_tenant_skill ON tenant_skill_credentials(tenant_id, skill_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_skill_credentials_tenant ON tenant_skill_credentials(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_skill_credentials_skill ON tenant_skill_credentials(skill_id);
+
+CREATE TABLE IF NOT EXISTS skill_execution_runs (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL DEFAULT 0,
+    user_id VARCHAR(64) NOT NULL DEFAULT '',
+    agent_id VARCHAR(64) NOT NULL DEFAULT '',
+    session_id VARCHAR(64) NOT NULL DEFAULT '',
+    message_id VARCHAR(64) NOT NULL DEFAULT '',
+    tool_call_id VARCHAR(128) NOT NULL DEFAULT '',
+    skill_id VARCHAR(64) NOT NULL REFERENCES skills(id),
+    script_path TEXT NOT NULL DEFAULT '',
+    status VARCHAR(32) NOT NULL DEFAULT 'started',
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    resource_usage TEXT NOT NULL DEFAULT '{}',
+    error_summary TEXT NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_skill_execution_runs_tenant_created ON skill_execution_runs(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_skill_execution_runs_session ON skill_execution_runs(session_id);
+CREATE INDEX IF NOT EXISTS idx_skill_execution_runs_skill ON skill_execution_runs(skill_id);

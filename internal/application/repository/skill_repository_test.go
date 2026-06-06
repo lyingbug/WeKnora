@@ -21,10 +21,12 @@ func setupSkillRepositoryTestDB(t *testing.T) *gorm.DB {
 		&types.SkillRegistryEntry{},
 		&types.TenantSkillInstall{},
 		&types.AgentSkillBinding{},
+		&types.TenantSkillCredential{},
 	))
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_version ON skills(name, version)").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_installs_tenant_skill ON tenant_skill_installs(tenant_id, skill_id)").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_skill_bindings_tenant_agent_skill ON agent_skill_bindings(tenant_id, agent_id, skill_id)").Error)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_credentials_tenant_skill ON tenant_skill_credentials(tenant_id, skill_id)").Error)
 
 	return db
 }
@@ -266,6 +268,48 @@ func TestSkillRepository_GetTenantSkillInstallEntryByName(t *testing.T) {
 	assert.JSONEq(t, `{"compute":{"timeout_seconds":5}}`, got.ApprovedPermissions.ToString())
 
 	_, err = repo.GetTenantSkillInstallEntryByName(ctx, 10, "beta")
+	require.Error(t, err)
+}
+
+func TestSkillRepository_TenantSkillCredentialsByName(t *testing.T) {
+	ctx := context.Background()
+	db := setupSkillRepositoryTestDB(t)
+	repo := NewSkillRepository(db)
+
+	require.NoError(t, repo.UpsertSkill(ctx, testSkillEntry("alpha", "1.0.0", types.SkillStatusActive)))
+	require.NoError(t, repo.UpsertSkill(ctx, testSkillEntry("beta", "1.0.0", types.SkillStatusActive)))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:                  "install-alpha",
+		TenantID:            10,
+		SkillID:             "alpha-1.0.0",
+		Enabled:             true,
+		ApprovedPermissions: types.JSON(`{"credentials":["API_KEY"]}`),
+	}))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:                  "install-beta",
+		TenantID:            10,
+		SkillID:             "beta-1.0.0",
+		Enabled:             false,
+		ApprovedPermissions: types.JSON(`{"credentials":["API_KEY"]}`),
+	}))
+	require.NoError(t, repo.UpsertTenantSkillCredential(ctx, &types.TenantSkillCredential{
+		ID:          "cred-alpha",
+		TenantID:    10,
+		SkillID:     "alpha-1.0.0",
+		Credentials: types.JSON(`{"API_KEY":"secret"}`),
+	}))
+	require.NoError(t, repo.UpsertTenantSkillCredential(ctx, &types.TenantSkillCredential{
+		ID:          "cred-beta",
+		TenantID:    10,
+		SkillID:     "beta-1.0.0",
+		Credentials: types.JSON(`{"API_KEY":"secret"}`),
+	}))
+
+	got, err := repo.GetTenantSkillCredentialByName(ctx, 10, "alpha")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"API_KEY":"secret"}`, got.Credentials.ToString())
+
+	_, err = repo.GetTenantSkillCredentialByName(ctx, 10, "beta")
 	require.Error(t, err)
 }
 

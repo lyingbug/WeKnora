@@ -28,6 +28,10 @@ type mockSkillService struct {
 	setEnabledTenantID uint64
 	setEnabledSkillID  string
 	setEnabled         bool
+	credentialTenantID uint64
+	credentialSkillID  string
+	credentialUserID   string
+	credentials        map[string]string
 }
 
 type mockSkillExecutionRunRepo struct {
@@ -99,6 +103,20 @@ func (m *mockSkillService) InstallLocalSkillPackageWithPermissions(
 	m.installUserID = installedBy
 	m.installPermissions = approvedPermissions
 	return m.installEntry, nil
+}
+
+func (m *mockSkillService) UpdateTenantSkillCredentials(
+	_ context.Context,
+	tenantID uint64,
+	skillID string,
+	updatedBy string,
+	credentials map[string]string,
+) error {
+	m.credentialTenantID = tenantID
+	m.credentialSkillID = skillID
+	m.credentialUserID = updatedBy
+	m.credentials = credentials
+	return nil
 }
 
 func (m *mockSkillService) SyncAgentSkillBindings(context.Context, uint64, string, string, []string) error {
@@ -278,6 +296,55 @@ func TestSkillHandler_UpdateTenantSkillInstall_RequiresEnabled(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "enabled is required")
+}
+
+func TestSkillHandler_UpdateTenantSkillCredentials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &mockSkillService{}
+	h := NewSkillHandler(svc, nil)
+	r := gin.New()
+	r.PUT("/skills/:skill_id/credentials", func(c *gin.Context) {
+		c.Set(types.TenantIDContextKey.String(), uint64(10))
+		c.Set(types.UserIDContextKey.String(), "user-a")
+		h.UpdateTenantSkillCredentials(c)
+	})
+
+	body := bytes.NewBufferString(`{"credentials":{"API_KEY":"secret","TOKEN":"hidden"}}`)
+	req := httptest.NewRequest(http.MethodPut, "/skills/local-sample-1-0-0/credentials", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, uint64(10), svc.credentialTenantID)
+	assert.Equal(t, "local-sample-1-0-0", svc.credentialSkillID)
+	assert.Equal(t, "user-a", svc.credentialUserID)
+	assert.Equal(t, "secret", svc.credentials["API_KEY"])
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, true, got["success"])
+	assert.NotContains(t, w.Body.String(), "secret")
+	assert.Contains(t, w.Body.String(), `"configured":["API_KEY","TOKEN"]`)
+}
+
+func TestSkillHandler_UpdateTenantSkillCredentials_RequiresCredentials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := NewSkillHandler(&mockSkillService{}, nil)
+	r := gin.New()
+	r.PUT("/skills/:skill_id/credentials", h.UpdateTenantSkillCredentials)
+
+	req := httptest.NewRequest(http.MethodPut, "/skills/local-sample-1-0-0/credentials", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "credentials is required")
 }
 
 func TestSkillHandler_ListSkillExecutionRuns(t *testing.T) {

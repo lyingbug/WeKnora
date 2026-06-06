@@ -24,10 +24,12 @@ func setupSkillServiceTestDB(t *testing.T) *gorm.DB {
 		&types.SkillRegistryEntry{},
 		&types.TenantSkillInstall{},
 		&types.AgentSkillBinding{},
+		&types.TenantSkillCredential{},
 	))
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_version ON skills(name, version)").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_installs_tenant_skill ON tenant_skill_installs(tenant_id, skill_id)").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_skill_bindings_tenant_agent_skill ON agent_skill_bindings(tenant_id, agent_id, skill_id)").Error)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_credentials_tenant_skill ON tenant_skill_credentials(tenant_id, skill_id)").Error)
 
 	return db
 }
@@ -385,6 +387,31 @@ func TestSkillService_InstallLocalSkillPackageWithPermissions_RejectsExpandedCom
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "approved compute.cpu exceeds requested value")
+}
+
+func TestSkillService_UpdateTenantSkillCredentials_StoresCredentials(t *testing.T) {
+	ctx := context.Background()
+	packagesRoot := t.TempDir()
+	t.Setenv("WEKNORA_SKILL_PACKAGES_DIR", packagesRoot)
+	writeTestSkillPackage(t, packagesRoot, "sample-skill", "sample-skill", "1.2.3", "Sample skill", map[string]any{
+		"credentials": []string{"API_KEY"},
+	})
+
+	db := setupSkillServiceTestDB(t)
+	repo := repository.NewSkillRepository(db)
+	svc := NewSkillServiceWithRepository(repo, t.TempDir())
+	entry, err := svc.InstallLocalSkillPackage(ctx, 10, "sample-skill", "user-a")
+	require.NoError(t, err)
+
+	err = svc.UpdateTenantSkillCredentials(ctx, 10, entry.ID, "user-a", map[string]string{
+		"API_KEY": "secret",
+	})
+	require.NoError(t, err)
+
+	got, err := repo.GetTenantSkillCredentialByName(ctx, 10, "sample-skill")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"API_KEY":"secret"}`, got.Credentials.ToString())
+	assert.Equal(t, "user-a", got.UpdatedBy)
 }
 
 func TestSkillService_PreviewLocalSkillPackage_ValidatesWithoutInstalling(t *testing.T) {

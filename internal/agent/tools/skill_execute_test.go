@@ -90,8 +90,7 @@ func TestRejectUnsupportedRuntimePermissions(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rejectUnsupportedRuntimePermissions(types.JSON(`{"credentials":{"api_key":"secret"}}`))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "credentials permissions are not supported at runtime")
+	require.NoError(t, err)
 
 	err = rejectUnsupportedRuntimePermissions(types.JSON(`{"mcp":{"services":["weather"]}}`))
 	require.Error(t, err)
@@ -104,11 +103,6 @@ func TestApprovedExecutionPolicyRejectsUnsupportedRuntimePermissions(t *testing.
 		permissions types.JSON
 		want        string
 	}{
-		{
-			name:        "credentials",
-			permissions: types.JSON(`{"credentials":["OPENAI_API_KEY"]}`),
-			want:        "credentials permissions are not supported at runtime",
-		},
 		{
 			name:        "mcp",
 			permissions: types.JSON(`{"mcp":["weather"]}`),
@@ -127,6 +121,33 @@ func TestApprovedExecutionPolicyRejectsUnsupportedRuntimePermissions(t *testing.
 			assert.Contains(t, err.Error(), tt.want)
 		})
 	}
+}
+
+func TestApprovedExecutionPolicyInjectsApprovedCredentials(t *testing.T) {
+	tool := NewExecuteSkillScriptTool(nil)
+	tool.SetPermissionChecker(fakeSkillPermissionChecker{
+		permissions: types.JSON(`{"credentials":["API_KEY"]}`),
+		credentials: types.JSON(`{"API_KEY":"secret","OTHER":"hidden"}`),
+	})
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+
+	policy, err := tool.approvedExecutionPolicy(ctx, "credential-skill")
+	require.NoError(t, err)
+	assert.Equal(t, "secret", policy.Env["API_KEY"])
+	assert.NotContains(t, policy.Env, "OTHER")
+}
+
+func TestApprovedExecutionPolicyRejectsMissingApprovedCredential(t *testing.T) {
+	tool := NewExecuteSkillScriptTool(nil)
+	tool.SetPermissionChecker(fakeSkillPermissionChecker{
+		permissions: types.JSON(`{"credentials":["API_KEY"]}`),
+		credentials: types.JSON(`{}`),
+	})
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+
+	_, err := tool.approvedExecutionPolicy(ctx, "credential-skill")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "approved credential API_KEY is not configured")
 }
 
 func TestApprovedExecutionPolicy(t *testing.T) {
@@ -179,8 +200,13 @@ func TestApprovedExecutionPolicyRejectsUnsupportedFileScope(t *testing.T) {
 
 type fakeSkillPermissionChecker struct {
 	permissions types.JSON
+	credentials types.JSON
 }
 
 func (f fakeSkillPermissionChecker) ApprovedPermissions(context.Context, uint64, string) (types.JSON, error) {
 	return f.permissions, nil
+}
+
+func (f fakeSkillPermissionChecker) ApprovedCredentials(context.Context, uint64, string) (types.JSON, error) {
+	return f.credentials, nil
 }

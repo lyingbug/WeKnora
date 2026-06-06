@@ -90,6 +90,20 @@ func (AgentSkillBinding) TableName() string {
 	return "agent_skill_bindings"
 }
 
+type TenantSkillCredential struct {
+	ID          string    `gorm:"column:id;primaryKey" json:"id"`
+	TenantID    uint64    `gorm:"column:tenant_id" json:"tenant_id"`
+	SkillID     string    `gorm:"column:skill_id" json:"skill_id"`
+	Credentials JSON      `gorm:"column:credentials;type:jsonb;default:'{}'" json:"credentials"`
+	UpdatedBy   string    `gorm:"column:updated_by" json:"updated_by"`
+	CreatedAt   time.Time `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"column:updated_at" json:"updated_at"`
+}
+
+func (TenantSkillCredential) TableName() string {
+	return "tenant_skill_credentials"
+}
+
 type SkillExecutionRun struct {
 	ID            string    `gorm:"column:id;primaryKey" json:"id"`
 	TenantID      uint64    `gorm:"column:tenant_id" json:"tenant_id"`

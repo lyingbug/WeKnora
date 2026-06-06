@@ -60,6 +60,7 @@ type ExecuteSkillScriptTool struct {
 
 type SkillPermissionChecker interface {
 	ApprovedPermissions(ctx context.Context, tenantID uint64, skillName string) (types.JSON, error)
+	ApprovedCredentials(ctx context.Context, tenantID uint64, skillName string) (types.JSON, error)
 }
 
 // NewExecuteSkillScriptTool creates a new execute_skill_script tool instance
@@ -272,6 +273,11 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 	if err != nil {
 		return skillExecutionPolicy{}, err
 	}
+	credentialEnv, err := t.approvedCredentialEnv(ctx, inputTenantID(ctx), skillName, permissions)
+	if err != nil {
+		return skillExecutionPolicy{}, err
+	}
+	env = mergeEnv(env, credentialEnv)
 	return skillExecutionPolicy{
 		Timeout:               timeout,
 		AllowNetwork:          len(networkDomains) > 0,
@@ -386,7 +392,7 @@ func rejectUnsupportedRuntimePermissions(permissions types.JSON) error {
 	if err != nil {
 		return fmt.Errorf("approved permissions are invalid JSON: %w", err)
 	}
-	for _, key := range []string{"credentials", "mcp"} {
+	for _, key := range []string{"mcp"} {
 		if err := rejectUnsupportedRuntimePermission(permissionsMap, key); err != nil {
 			return err
 		}
@@ -426,6 +432,105 @@ func permissionValueIsEmpty(raw interface{}) bool {
 	default:
 		return false
 	}
+}
+
+func (t *ExecuteSkillScriptTool) approvedCredentialEnv(
+	ctx context.Context,
+	tenantID uint64,
+	skillName string,
+	permissions types.JSON,
+) (map[string]string, error) {
+	names, err := approvedCredentialNames(permissions)
+	if err != nil || len(names) == 0 {
+		return nil, err
+	}
+	if t.permissionChecker == nil || tenantID == 0 {
+		return nil, fmt.Errorf("approved credentials require tenant context")
+	}
+	credentials, err := t.permissionChecker.ApprovedCredentials(ctx, tenantID, skillName)
+	if err != nil {
+		return nil, fmt.Errorf("approved credentials are not configured for skill: %s", skillName)
+	}
+	credentialMap, err := credentials.Map()
+	if err != nil {
+		return nil, fmt.Errorf("approved credentials are invalid JSON: %w", err)
+	}
+	env := make(map[string]string, len(names))
+	for _, name := range names {
+		if !isSafeEnvName(name) {
+			return nil, fmt.Errorf("approved credential name is not a safe environment variable: %s", name)
+		}
+		rawValue, ok := credentialMap[name]
+		if !ok || rawValue == nil {
+			return nil, fmt.Errorf("approved credential %s is not configured", name)
+		}
+		value, ok := rawValue.(string)
+		if !ok || value == "" {
+			return nil, fmt.Errorf("approved credential %s must be a non-empty string", name)
+		}
+		env[name] = value
+	}
+	return env, nil
+}
+
+func approvedCredentialNames(permissions types.JSON) ([]string, error) {
+	permissionsMap, err := permissions.Map()
+	if err != nil {
+		return nil, fmt.Errorf("approved permissions are invalid JSON: %w", err)
+	}
+	raw, ok := permissionsMap["credentials"]
+	if !ok || raw == nil || permissionValueIsEmpty(raw) {
+		return nil, nil
+	}
+	values, ok := raw.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("approved permissions credentials must be an array")
+	}
+	names := make([]string, 0, len(values))
+	for _, rawName := range values {
+		name, ok := rawName.(string)
+		if !ok {
+			return nil, fmt.Errorf("approved permissions credentials entries must be strings")
+		}
+		name = strings.TrimSpace(name)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+func inputTenantID(ctx context.Context) uint64 {
+	tenantID, _ := types.TenantIDFromContext(ctx)
+	return tenantID
+}
+
+func mergeEnv(base map[string]string, extra map[string]string) map[string]string {
+	if len(extra) == 0 {
+		return base
+	}
+	if base == nil {
+		base = make(map[string]string, len(extra))
+	}
+	for key, value := range extra {
+		base[key] = value
+	}
+	return base
+}
+
+func isSafeEnvName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		if i == 0 && !((r >= 'A' && r <= 'Z') || r == '_') {
+			return false
+		}
+		if !((r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 const skillSessionMountPath = "/mnt/weknora/session"

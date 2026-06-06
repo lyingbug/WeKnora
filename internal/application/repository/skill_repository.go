@@ -249,6 +249,48 @@ func (r *skillRepository) ListAgentSkillBindings(ctx context.Context, tenantID u
 	return skills, nil
 }
 
+func (r *skillRepository) UpsertTenantSkillCredential(ctx context.Context, credential *types.TenantSkillCredential) error {
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "tenant_id"}, {Name: "skill_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"credentials",
+				"updated_by",
+				"updated_at",
+			}),
+		}).
+		Create(credential).Error
+}
+
+func (r *skillRepository) GetTenantSkillCredentialByName(
+	ctx context.Context,
+	tenantID uint64,
+	skillName string,
+) (*types.TenantSkillCredential, error) {
+	var credential types.TenantSkillCredential
+	result := r.db.WithContext(ctx).
+		Table("tenant_skill_credentials AS tsc").
+		Select("tsc.*").
+		Joins("JOIN skills ON skills.id = tsc.skill_id").
+		Joins("JOIN tenant_skill_installs tsi ON tsi.tenant_id = tsc.tenant_id AND tsi.skill_id = tsc.skill_id").
+		Where(
+			"tsc.tenant_id = ? AND tsi.enabled = ? AND skills.name = ? AND skills.status = ?",
+			tenantID,
+			true,
+			skillName,
+			types.SkillStatusActive,
+		).
+		Limit(1).
+		Find(&credential)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &credential, nil
+}
+
 func skillBindingID(tenantID uint64, agentID, skillID string) string {
 	raw := fmt.Sprintf("%d-%s-%s", tenantID, agentID, skillID)
 	sum := sha256.Sum256([]byte(raw))

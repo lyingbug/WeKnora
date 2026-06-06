@@ -18,6 +18,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/Tencent/WeKnora/internal/utils"
 )
 
 // DefaultPreloadedSkillsDir is the default directory for preloaded skills
@@ -347,6 +348,95 @@ func (s *skillService) InstallLocalSkillPackageWithPermissions(
 	logger.Infof(ctx, "Installed local skill package %s@%s for tenant %d", entry.Name, entry.Version, tenantID)
 
 	return entry, nil
+}
+
+func (s *skillService) UpdateTenantSkillCredentials(
+	ctx context.Context,
+	tenantID uint64,
+	skillID string,
+	updatedBy string,
+	credentials map[string]string,
+) error {
+	if tenantID == 0 {
+		return fmt.Errorf("tenant ID is required")
+	}
+	skillID = strings.TrimSpace(skillID)
+	if skillID == "" {
+		return fmt.Errorf("skill ID is required")
+	}
+	if s.repo == nil {
+		return fmt.Errorf("skill repository is required")
+	}
+
+	installs, err := s.repo.ListTenantSkillInstallEntries(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("failed to list tenant skill installs: %w", err)
+	}
+	installed := false
+	for _, install := range installs {
+		if install.SkillID == skillID {
+			installed = true
+			break
+		}
+	}
+	if !installed {
+		return fmt.Errorf("skill is not installed for tenant: %s", skillID)
+	}
+
+	encryptedCredentials, err := normalizeTenantSkillCredentials(credentials)
+	if err != nil {
+		return err
+	}
+	rawCredentials, err := json.Marshal(encryptedCredentials)
+	if err != nil {
+		return fmt.Errorf("failed to encode skill credentials: %w", err)
+	}
+
+	return s.repo.UpsertTenantSkillCredential(ctx, &types.TenantSkillCredential{
+		ID:          tenantSkillCredentialID(tenantID, skillID),
+		TenantID:    tenantID,
+		SkillID:     skillID,
+		Credentials: types.JSON(rawCredentials),
+		UpdatedBy:   updatedBy,
+	})
+}
+
+func normalizeTenantSkillCredentials(credentials map[string]string) (map[string]string, error) {
+	normalized := make(map[string]string, len(credentials))
+	key := utils.GetAESKey()
+	for name, value := range credentials {
+		name = strings.TrimSpace(name)
+		if !isSkillCredentialName(name) {
+			return nil, fmt.Errorf("credential name %q must be a valid environment variable name", name)
+		}
+		if value == "" {
+			return nil, fmt.Errorf("credential %s must not be empty", name)
+		}
+		encrypted, err := utils.EncryptAESGCM(value, key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt credential %s: %w", name, err)
+		}
+		normalized[name] = encrypted
+	}
+	return normalized, nil
+}
+
+func isSkillCredentialName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		if i == 0 {
+			if r != '_' && (r < 'A' || r > 'Z') {
+				return false
+			}
+			continue
+		}
+		if r != '_' && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeApprovedSkillPermissions(approved types.JSON, fallback []byte) (types.JSON, error) {
@@ -746,6 +836,10 @@ func skillRegistryID(sourceType, name, version string) string {
 
 func tenantSkillInstallID(tenantID uint64, skillID string) string {
 	return skillRegistryID("tenant-install", fmt.Sprintf("%d", tenantID), skillID)
+}
+
+func tenantSkillCredentialID(tenantID uint64, skillID string) string {
+	return skillRegistryID("tenant-credential", fmt.Sprintf("%d", tenantID), skillID)
 }
 
 func skillRegistryDigest(parts ...string) string {

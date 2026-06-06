@@ -36,6 +36,9 @@ type SkillService interface {
 	// InstallLocalSkillPackageWithPermissions validates and installs a local Skill package with approved permissions.
 	InstallLocalSkillPackageWithPermissions(ctx context.Context, tenantID uint64, packagePath string, installedBy string, approvedPermissions types.JSON) (*types.SkillRegistryEntry, error)
 
+	// UpdateTenantSkillCredentials stores tenant-scoped credentials for an installed Skill.
+	UpdateTenantSkillCredentials(ctx context.Context, tenantID uint64, skillID string, updatedBy string, credentials map[string]string) error
+
 	// SyncAgentSkillBindings synchronizes explicit Agent binding rows from the Agent config.
 	SyncAgentSkillBindings(ctx context.Context, tenantID uint64, agentID string, mode string, selectedSkillNames []string) error
 
@@ -63,6 +66,8 @@ type SkillRepository interface {
 	ListTenantInstalledSkillNames(ctx context.Context, tenantID uint64) (map[string]*types.SkillRegistryEntry, error)
 	ReplaceAgentSkillBindings(ctx context.Context, tenantID uint64, agentID string, skillIDs []string) error
 	ListAgentSkillBindings(ctx context.Context, tenantID uint64, agentID string) ([]*types.SkillRegistryEntry, error)
+	UpsertTenantSkillCredential(ctx context.Context, credential *types.TenantSkillCredential) error
+	GetTenantSkillCredentialByName(ctx context.Context, tenantID uint64, skillName string) (*types.TenantSkillCredential, error)
 }
 
 type SkillExecutionRunRepository interface {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -59,6 +60,10 @@ type InstalledSkillResponse struct {
 
 type UpdateTenantSkillInstallRequest struct {
 	Enabled *bool `json:"enabled" binding:"required"`
+}
+
+type UpdateTenantSkillCredentialsRequest struct {
+	Credentials map[string]string `json:"credentials" binding:"required"`
 }
 
 type SkillExecutionRunResponse struct {
@@ -297,6 +302,59 @@ func (h *SkillHandler) UpdateTenantSkillInstall(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
+	})
+}
+
+// UpdateTenantSkillCredentials godoc
+// @Summary      配置租户 Skill 凭据
+// @Description  为当前租户已安装 Skill 写入运行时凭据。响应不会回显凭据值。
+// @Tags         Skills
+// @Accept       json
+// @Produce      json
+// @Param        skill_id  path      string                                true  "Skill ID"
+// @Param        request   body      UpdateTenantSkillCredentialsRequest   true  "凭据键值"
+// @Success      200       {object}  map[string]interface{}                "更新结果"
+// @Failure      400       {object}  map[string]interface{}                "请求参数错误"
+// @Failure      500       {object}  errors.AppError                       "服务器错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /skills/{skill_id}/credentials [put]
+func (h *SkillHandler) UpdateTenantSkillCredentials(c *gin.Context) {
+	ctx := c.Request.Context()
+	skillID := c.Param("skill_id")
+
+	var req UpdateTenantSkillCredentialsRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Credentials == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "credentials is required",
+		})
+		return
+	}
+
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	userID := c.GetString(types.UserIDContextKey.String())
+	if userID == "" {
+		userID, _ = types.UserIDFromContext(ctx)
+	}
+
+	if err := h.skillService.UpdateTenantSkillCredentials(ctx, tenantID, skillID, userID, req.Credentials); err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(errors.NewInternalServerError("Failed to update tenant skill credentials: " + err.Error()))
+		return
+	}
+
+	configured := make([]string, 0, len(req.Credentials))
+	for name := range req.Credentials {
+		configured = append(configured, name)
+	}
+	sort.Strings(configured)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"configured": configured,
+		},
 	})
 }
 
