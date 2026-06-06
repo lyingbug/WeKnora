@@ -206,9 +206,6 @@ func (s *skillService) ListTenantSkills(ctx context.Context, tenantID uint64) ([
 		logger.Warnf(ctx, "Failed to list tenant skills, falling back to preloaded skills: %v", err)
 		return s.ListPreloadedSkills(ctx)
 	}
-	if len(entries) == 0 {
-		return s.ListPreloadedSkills(ctx)
-	}
 	return skillRegistryEntriesToMetadata(entries), nil
 }
 

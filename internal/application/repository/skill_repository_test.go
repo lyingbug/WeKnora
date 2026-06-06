@@ -149,10 +149,10 @@ func TestSkillRepository_TenantInstalls_ListEnabledActiveSkills(t *testing.T) {
 		Enabled:  true,
 	}))
 	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
-		ID:       "tenant-10-beta",
+		ID:       "tenant-10-beta-disabled",
 		TenantID: 10,
 		SkillID:  "beta-1.0.0",
-		Enabled:  true,
+		Enabled:  false,
 	}))
 	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
 		ID:       "tenant-10-disabled-install",
@@ -166,13 +166,6 @@ func TestSkillRepository_TenantInstalls_ListEnabledActiveSkills(t *testing.T) {
 		SkillID:  "alpha-1.0.0",
 		Enabled:  true,
 	}))
-	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
-		ID:       "tenant-10-beta-disabled",
-		TenantID: 10,
-		SkillID:  "beta-1.0.0",
-		Enabled:  false,
-	}))
-
 	got, err := repo.ListTenantInstalledSkills(ctx, 10)
 	require.NoError(t, err)
 	require.Len(t, got, 1)

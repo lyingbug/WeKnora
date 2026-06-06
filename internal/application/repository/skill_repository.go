@@ -79,7 +79,6 @@ func (r *skillRepository) UpsertTenantSkillInstall(ctx context.Context, install 
 		Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "tenant_id"}, {Name: "skill_id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
-				"enabled",
 				"installed_by",
 				"approved_permissions",
 				"updated_at",

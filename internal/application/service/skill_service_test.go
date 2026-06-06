@@ -114,6 +114,30 @@ func TestSkillService_EnsureTenantPreloadedSkillInstalls_ListsTenantSkills(t *te
 	assert.Equal(t, "beta", got[1].Name)
 }
 
+func TestSkillService_EnsureTenantPreloadedSkillInstalls_DoesNotReenableDisabledInstall(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	writeTestSkill(t, tempDir, "alpha-dir", "alpha", "Alpha skill")
+
+	db := setupSkillServiceTestDB(t)
+	repo := repository.NewSkillRepository(db)
+	svc := NewSkillServiceWithRepository(repo, tempDir)
+
+	require.NoError(t, svc.EnsureTenantPreloadedSkillInstalls(ctx, 10))
+	require.NoError(t, db.Model(&types.TenantSkillInstall{}).
+		Where("tenant_id = ? AND skill_id = ?", 10, "preloaded-alpha-0-0-0").
+		Update("enabled", false).Error)
+	require.NoError(t, svc.EnsureTenantPreloadedSkillInstalls(ctx, 10))
+
+	got, err := svc.ListTenantSkills(ctx, 10)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	installed, err := repo.ListTenantInstalledSkills(ctx, 10)
+	require.NoError(t, err)
+	assert.Empty(t, installed)
+}
+
 func TestSkillService_SyncAndResolveAgentSelectedSkills(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
