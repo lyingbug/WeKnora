@@ -31,6 +31,11 @@ type ManagerConfig struct {
 	Enabled       bool     // Whether skills are enabled
 }
 
+// ExecuteScriptOptions controls sandbox behavior for a skill script execution.
+type ExecuteScriptOptions struct {
+	AllowNetwork bool
+}
+
 // NewManager creates a new skill manager with the given configuration
 func NewManager(config *ManagerConfig, sandboxMgr sandbox.Manager) *Manager {
 	if config == nil {
@@ -173,6 +178,17 @@ func (m *Manager) ListSkillFiles(ctx context.Context, skillName string) ([]strin
 
 // ExecuteScript executes a script from a skill in the sandbox
 func (m *Manager) ExecuteScript(ctx context.Context, skillName, scriptPath string, args []string, stdin string) (*sandbox.ExecuteResult, error) {
+	return m.ExecuteScriptWithOptions(ctx, skillName, scriptPath, args, stdin, ExecuteScriptOptions{})
+}
+
+// ExecuteScriptWithOptions executes a script from a skill in the sandbox with runtime policy options.
+func (m *Manager) ExecuteScriptWithOptions(
+	ctx context.Context,
+	skillName, scriptPath string,
+	args []string,
+	stdin string,
+	options ExecuteScriptOptions,
+) (*sandbox.ExecuteResult, error) {
 	if !m.enabled {
 		return nil, fmt.Errorf("skills are not enabled")
 	}
@@ -204,10 +220,11 @@ func (m *Manager) ExecuteScript(ctx context.Context, skillName, scriptPath strin
 
 	// Prepare execution config
 	config := &sandbox.ExecuteConfig{
-		Script:  file.Path,
-		Args:    args,
-		WorkDir: basePath,
-		Stdin:   stdin,
+		Script:       file.Path,
+		Args:         args,
+		WorkDir:      basePath,
+		Stdin:        stdin,
+		AllowNetwork: options.AllowNetwork,
 	}
 
 	// Execute in sandbox

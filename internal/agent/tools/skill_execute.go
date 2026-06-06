@@ -108,15 +108,18 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 		}, nil
 	}
 
-	execCtx := ctx
-	cancel := func() {}
-	if timeout, err := t.approvedComputeTimeout(ctx, input.SkillName); err != nil {
+	policy, err := t.approvedExecutionPolicy(ctx, input.SkillName)
+	if err != nil {
 		return &types.ToolResult{
 			Success: false,
 			Error:   err.Error(),
 		}, nil
-	} else if timeout > 0 {
-		execCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
+
+	execCtx := ctx
+	cancel := func() {}
+	if policy.Timeout > 0 {
+		execCtx, cancel = context.WithTimeout(ctx, policy.Timeout)
 		defer cancel()
 	}
 
@@ -124,7 +127,16 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 	logger.Infof(ctx, "[Tool][ExecuteSkillScript] Executing script: %s/%s with args: %v, input length: %d",
 		input.SkillName, input.ScriptPath, input.Args, len(input.Input))
 
-	result, err := t.skillManager.ExecuteScript(execCtx, input.SkillName, input.ScriptPath, input.Args, input.Input)
+	result, err := t.skillManager.ExecuteScriptWithOptions(
+		execCtx,
+		input.SkillName,
+		input.ScriptPath,
+		input.Args,
+		input.Input,
+		skills.ExecuteScriptOptions{
+			AllowNetwork: policy.AllowNetwork,
+		},
+	)
 	if err != nil {
 		logger.Errorf(ctx, "[Tool][ExecuteSkillScript] Script execution failed: %v", err)
 		return &types.ToolResult{
@@ -206,19 +218,36 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 	}, nil
 }
 
-func (t *ExecuteSkillScriptTool) approvedComputeTimeout(ctx context.Context, skillName string) (time.Duration, error) {
+type skillExecutionPolicy struct {
+	Timeout      time.Duration
+	AllowNetwork bool
+}
+
+func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, skillName string) (skillExecutionPolicy, error) {
 	if t.permissionChecker == nil {
-		return 0, nil
+		return skillExecutionPolicy{}, nil
 	}
 	tenantID, ok := types.TenantIDFromContext(ctx)
 	if !ok || tenantID == 0 {
-		return 0, nil
+		return skillExecutionPolicy{}, nil
 	}
 	permissions, err := t.permissionChecker.ApprovedPermissions(ctx, tenantID, skillName)
 	if err != nil {
-		return 0, fmt.Errorf("skill is not installed or enabled for this tenant: %s", skillName)
+		return skillExecutionPolicy{}, fmt.Errorf("skill is not installed or enabled for this tenant: %s", skillName)
 	}
-	return approvedComputeTimeout(permissions)
+
+	timeout, err := approvedComputeTimeout(permissions)
+	if err != nil {
+		return skillExecutionPolicy{}, err
+	}
+	allowNetwork, err := approvedNetworkAllowed(permissions)
+	if err != nil {
+		return skillExecutionPolicy{}, err
+	}
+	return skillExecutionPolicy{
+		Timeout:      timeout,
+		AllowNetwork: allowNetwork,
+	}, nil
 }
 
 func approvedComputeTimeout(permissions types.JSON) (time.Duration, error) {
@@ -258,6 +287,31 @@ func approvedComputeTimeout(permissions types.JSON) (time.Duration, error) {
 		return 0, fmt.Errorf("compute.timeout_seconds must be greater than zero")
 	}
 	return time.Duration(seconds * float64(time.Second)), nil
+}
+
+func approvedNetworkAllowed(permissions types.JSON) (bool, error) {
+	permissionsMap, err := permissions.Map()
+	if err != nil {
+		return false, fmt.Errorf("approved permissions are invalid JSON: %w", err)
+	}
+	networkRaw, ok := permissionsMap["network"]
+	if !ok || networkRaw == nil {
+		return false, nil
+	}
+	network, ok := networkRaw.([]interface{})
+	if !ok {
+		return false, fmt.Errorf("approved permissions network must be an array")
+	}
+	for _, rawDomain := range network {
+		domain, ok := rawDomain.(string)
+		if !ok {
+			return false, fmt.Errorf("approved permissions network entries must be strings")
+		}
+		if strings.TrimSpace(domain) != "" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Cleanup releases any resources

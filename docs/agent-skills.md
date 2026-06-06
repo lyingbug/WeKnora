@@ -281,18 +281,20 @@ Content-Type: application/json
 | 权限 | 行为 |
 |------|------|
 | `compute.timeout_seconds` | 当批准权限包含该值时，脚本执行会使用更短的 context timeout；值必须大于 0 |
+| `network` | 仅当批准权限包含非空数组时，sandbox 才会启用网络；为空或缺省时保持禁用网络 |
 
 示例：
 
 ```json
 {
+  "network": ["api.example.com"],
   "compute": {
     "timeout_seconds": 10
   }
 }
 ```
 
-未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`network`、`files`、`credentials`、`mcp` 等权限目前已能保存为批准权限，但还需要后续 sandbox/runtime 适配后继续强制。
+未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`network` 目前按 sandbox 级别强制开关执行，域名级 egress allowlist 还需要后续网络代理/网关适配后继续细化；`files`、`credentials`、`mcp` 等权限目前已能保存为批准权限，但还需要后续 sandbox/runtime 适配后继续强制。
 
 ### 租户级启停
 

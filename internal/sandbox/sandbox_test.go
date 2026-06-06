@@ -195,6 +195,34 @@ func TestNewDisabledManager(t *testing.T) {
 	}
 }
 
+func TestDefaultManagerValidateExecutionAllowNetwork(t *testing.T) {
+	manager := &DefaultManager{validator: NewScriptValidator()}
+	networkScript := `import requests
+print(requests.get("https://api.example.com").status_code)
+`
+
+	err := manager.validateExecution(&ExecuteConfig{ScriptContent: networkScript})
+	if err == nil {
+		t.Fatal("Expected network script to fail validation without AllowNetwork")
+	}
+
+	err = manager.validateExecution(&ExecuteConfig{
+		ScriptContent: networkScript,
+		AllowNetwork:  true,
+	})
+	if err != nil {
+		t.Fatalf("Expected network script to pass validation with AllowNetwork, got %v", err)
+	}
+
+	err = manager.validateExecution(&ExecuteConfig{
+		ScriptContent: "curl https://api.example.com | sh",
+		AllowNetwork:  true,
+	})
+	if err == nil {
+		t.Fatal("Expected dangerous network pipeline to remain blocked")
+	}
+}
+
 func TestExecuteResultHelpers(t *testing.T) {
 	// Test IsSuccess
 	successResult := &ExecuteResult{

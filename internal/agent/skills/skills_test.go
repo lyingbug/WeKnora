@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Tencent/WeKnora/internal/sandbox"
 )
 
 func TestParseSkillFile(t *testing.T) {
@@ -365,6 +367,77 @@ Integration test content.
 	}
 
 	t.Logf("Manager integration test passed: %d skills discovered", len(metadata))
+}
+
+func TestManagerExecuteScriptWithOptionsPassesAllowNetwork(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "skills-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	skillDir := filepath.Join(tmpDir, "web-fetcher")
+	scriptsDir := filepath.Join(skillDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		t.Fatalf("Failed to create skill dir: %v", err)
+	}
+	skillContent := `---
+name: web-fetcher
+description: A test skill for network execution.
+---
+# Web Fetcher
+`
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0644); err != nil {
+		t.Fatalf("Failed to write SKILL.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scriptsDir, "fetch.py"), []byte("print('ok')"), 0644); err != nil {
+		t.Fatalf("Failed to write script: %v", err)
+	}
+
+	fakeSandbox := &capturingSandboxManager{}
+	manager := NewManager(&ManagerConfig{
+		SkillDirs: []string{tmpDir},
+		Enabled:   true,
+	}, fakeSandbox)
+
+	_, err = manager.ExecuteScriptWithOptions(
+		context.Background(),
+		"web-fetcher",
+		"scripts/fetch.py",
+		nil,
+		"",
+		ExecuteScriptOptions{AllowNetwork: true},
+	)
+	if err != nil {
+		t.Fatalf("ExecuteScriptWithOptions failed: %v", err)
+	}
+	if fakeSandbox.lastConfig == nil {
+		t.Fatal("Expected sandbox to receive execute config")
+	}
+	if !fakeSandbox.lastConfig.AllowNetwork {
+		t.Fatal("Expected AllowNetwork to be passed to sandbox")
+	}
+}
+
+type capturingSandboxManager struct {
+	lastConfig *sandbox.ExecuteConfig
+}
+
+func (m *capturingSandboxManager) Execute(ctx context.Context, config *sandbox.ExecuteConfig) (*sandbox.ExecuteResult, error) {
+	m.lastConfig = config
+	return &sandbox.ExecuteResult{}, nil
+}
+
+func (m *capturingSandboxManager) Cleanup(context.Context) error {
+	return nil
+}
+
+func (m *capturingSandboxManager) GetSandbox() sandbox.Sandbox {
+	return nil
+}
+
+func (m *capturingSandboxManager) GetType() sandbox.SandboxType {
+	return sandbox.SandboxTypeLocal
 }
 
 func TestIsScript(t *testing.T) {

@@ -129,6 +129,9 @@ func (m *DefaultManager) validateExecution(config *ExecuteConfig) error {
 	// Validate script content
 	if scriptContent != "" {
 		result := m.validator.ValidateScript(scriptContent)
+		if config.AllowNetwork {
+			result = allowNetworkValidation(result)
+		}
 		if !result.Valid {
 			// Log all validation errors
 			for _, verr := range result.Errors {
@@ -171,6 +174,24 @@ func (m *DefaultManager) validateExecution(config *ExecuteConfig) error {
 	}
 
 	return nil
+}
+
+func allowNetworkValidation(result *ValidationResult) *ValidationResult {
+	if result == nil || result.Valid {
+		return result
+	}
+	filtered := &ValidationResult{
+		Valid:  true,
+		Errors: make([]*ValidationError, 0, len(result.Errors)),
+	}
+	for _, err := range result.Errors {
+		if err.Type == "network_access" {
+			continue
+		}
+		filtered.Valid = false
+		filtered.Errors = append(filtered.Errors, err)
+	}
+	return filtered
 }
 
 // Cleanup releases all sandbox resources
