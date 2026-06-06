@@ -30,6 +30,7 @@ type customAgentService struct {
 	kbService      interfaces.KnowledgeBaseService
 	kbShareService interfaces.KBShareService
 	wikiPageRepo   interfaces.WikiPageRepository
+	skillService   interfaces.SkillService
 }
 
 // NewCustomAgentService creates a new custom agent service
@@ -39,6 +40,7 @@ func NewCustomAgentService(
 	kbService interfaces.KnowledgeBaseService,
 	kbShareService interfaces.KBShareService,
 	wikiPageRepo interfaces.WikiPageRepository,
+	skillService interfaces.SkillService,
 ) interfaces.CustomAgentService {
 	return &customAgentService{
 		repo:           repo,
@@ -46,6 +48,7 @@ func NewCustomAgentService(
 		kbService:      kbService,
 		kbShareService: kbShareService,
 		wikiPageRepo:   wikiPageRepo,
+		skillService:   skillService,
 	}
 }
 
@@ -100,6 +103,9 @@ func (s *customAgentService) CreateAgent(ctx context.Context, agent *types.Custo
 			"agent_id":  agent.ID,
 			"tenant_id": agent.TenantID,
 		})
+		return nil, err
+	}
+	if err := s.syncAgentSkillBindings(ctx, agent); err != nil {
 		return nil, err
 	}
 
@@ -276,9 +282,25 @@ func (s *customAgentService) UpdateAgent(ctx context.Context, agent *types.Custo
 		})
 		return nil, err
 	}
+	if err := s.syncAgentSkillBindings(ctx, existingAgent); err != nil {
+		return nil, err
+	}
 
 	logger.Infof(ctx, "Custom agent updated successfully, ID: %s", agent.ID)
 	return existingAgent, nil
+}
+
+func (s *customAgentService) syncAgentSkillBindings(ctx context.Context, agent *types.CustomAgent) error {
+	if s.skillService == nil || agent == nil {
+		return nil
+	}
+	return s.skillService.SyncAgentSkillBindings(
+		ctx,
+		agent.TenantID,
+		agent.ID,
+		agent.Config.SkillsSelectionMode,
+		agent.Config.SelectedSkills,
+	)
 }
 
 // updateBuiltinAgent updates a built-in agent's configuration (but not basic info)
@@ -309,6 +331,9 @@ func (s *customAgentService) updateBuiltinAgent(ctx context.Context, agent *type
 			})
 			return nil, err
 		}
+		if err := s.syncAgentSkillBindings(ctx, existingAgent); err != nil {
+			return nil, err
+		}
 
 		logger.Infof(ctx, "Built-in agent config updated successfully, ID: %s", agent.ID)
 		return existingAgent, nil
@@ -335,6 +360,9 @@ func (s *customAgentService) updateBuiltinAgent(ctx context.Context, agent *type
 			"agent_id":  agent.ID,
 			"tenant_id": tenantID,
 		})
+		return nil, err
+	}
+	if err := s.syncAgentSkillBindings(ctx, newAgent); err != nil {
 		return nil, err
 	}
 
