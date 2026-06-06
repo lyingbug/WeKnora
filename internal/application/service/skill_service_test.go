@@ -341,6 +341,52 @@ func TestSkillService_InstallLocalSkillPackageWithPermissions_RejectsUnrequested
 	assert.Contains(t, err.Error(), "approved network scope evil.example.com was not requested by skill manifest")
 }
 
+func TestSkillService_InstallLocalSkillPackageWithPermissions_RejectsExpandedComputeLimits(t *testing.T) {
+	ctx := context.Background()
+	packagesRoot := t.TempDir()
+	t.Setenv("WEKNORA_SKILL_PACKAGES_DIR", packagesRoot)
+	writeTestSkillPackage(t, packagesRoot, "sample-skill", "sample-skill", "1.2.3", "Sample skill", map[string]any{
+		"compute": map[string]any{
+			"timeout_seconds": 30,
+			"memory_mb":       256,
+			"cpu":             1,
+		},
+	})
+
+	repo := repository.NewSkillRepository(setupSkillServiceTestDB(t))
+	svc := NewSkillServiceWithRepository(repo, t.TempDir())
+
+	_, err := svc.InstallLocalSkillPackageWithPermissions(
+		ctx,
+		10,
+		"sample-skill",
+		"user-a",
+		types.JSON(`{"compute":{"timeout_seconds":60,"memory_mb":256,"cpu":1}}`),
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "approved compute.timeout_seconds exceeds requested value")
+
+	_, err = svc.InstallLocalSkillPackageWithPermissions(
+		ctx,
+		10,
+		"sample-skill",
+		"user-a",
+		types.JSON(`{"compute":{"timeout_seconds":10,"memory_mb":512,"cpu":1}}`),
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "approved compute.memory_mb exceeds requested value")
+
+	_, err = svc.InstallLocalSkillPackageWithPermissions(
+		ctx,
+		10,
+		"sample-skill",
+		"user-a",
+		types.JSON(`{"compute":{"timeout_seconds":10,"memory_mb":128,"cpu":2}}`),
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "approved compute.cpu exceeds requested value")
+}
+
 func TestSkillService_PreviewLocalSkillPackage_ValidatesWithoutInstalling(t *testing.T) {
 	ctx := context.Background()
 	packagesRoot := t.TempDir()

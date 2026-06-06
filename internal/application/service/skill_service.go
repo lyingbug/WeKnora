@@ -379,12 +379,72 @@ func normalizeApprovedSkillPermissions(approved types.JSON, fallback []byte) (ty
 		if err := validateApprovedStringArraySubset("network", obj, requested); err != nil {
 			return nil, err
 		}
+		if err := validateApprovedComputeSubset(obj, requested); err != nil {
+			return nil, err
+		}
 	}
 	normalized, err := json.Marshal(obj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to normalize approved permissions: %w", err)
 	}
 	return types.JSON(normalized), nil
+}
+
+func validateApprovedComputeSubset(
+	approved map[string]interface{},
+	requested map[string]interface{},
+) error {
+	approvedRaw, ok := approved["compute"]
+	if !ok || approvedRaw == nil {
+		return nil
+	}
+	approvedCompute, ok := approvedRaw.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("approved compute permission must be an object")
+	}
+	requestedCompute, ok := requested["compute"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("requested compute permission must be an object")
+	}
+	for _, key := range []string{"timeout_seconds", "memory_mb", "cpu"} {
+		approvedValue, ok := approvedCompute[key]
+		if !ok || approvedValue == nil {
+			continue
+		}
+		approvedNumber, err := numericPermissionValue(approvedValue, "approved compute."+key)
+		if err != nil {
+			return err
+		}
+		requestedValue, ok := requestedCompute[key]
+		if !ok || requestedValue == nil {
+			return fmt.Errorf("approved compute.%s was not requested by skill manifest", key)
+		}
+		requestedNumber, err := numericPermissionValue(requestedValue, "requested compute."+key)
+		if err != nil {
+			return err
+		}
+		if approvedNumber > requestedNumber {
+			return fmt.Errorf("approved compute.%s exceeds requested value", key)
+		}
+	}
+	return nil
+}
+
+func numericPermissionValue(raw interface{}, label string) (float64, error) {
+	switch value := raw.(type) {
+	case float64:
+		return value, nil
+	case int:
+		return float64(value), nil
+	case json.Number:
+		parsed, err := value.Float64()
+		if err != nil {
+			return 0, fmt.Errorf("%s must be a number", label)
+		}
+		return parsed, nil
+	default:
+		return 0, fmt.Errorf("%s must be a number", label)
+	}
 }
 
 func validateApprovedStringArraySubset(
