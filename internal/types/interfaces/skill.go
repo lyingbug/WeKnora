@@ -57,6 +57,7 @@ type SkillRepository interface {
 	CountSkills(ctx context.Context) (int64, error)
 	UpsertTenantSkillInstall(ctx context.Context, install *types.TenantSkillInstall) error
 	ListTenantSkillInstallEntries(ctx context.Context, tenantID uint64) ([]*types.TenantSkillInstallInfo, error)
+	GetTenantSkillInstallEntryByName(ctx context.Context, tenantID uint64, skillName string) (*types.TenantSkillInstallInfo, error)
 	SetTenantSkillInstallEnabled(ctx context.Context, tenantID uint64, skillID string, enabled bool) error
 	ListTenantInstalledSkills(ctx context.Context, tenantID uint64) ([]*types.SkillRegistryEntry, error)
 	ListTenantInstalledSkillNames(ctx context.Context, tenantID uint64) (map[string]*types.SkillRegistryEntry, error)

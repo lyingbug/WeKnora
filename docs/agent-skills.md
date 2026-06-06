@@ -274,6 +274,26 @@ Content-Type: application/json
 
 `approved_permissions` 可以省略；省略时后端会兼容旧行为，使用 manifest 中声明的 `permissions` 作为批准权限。生产管理界面应展示 manifest requested permissions，并由租户管理员明确提交批准后的权限对象。
 
+### 运行时权限强制
+
+`execute_skill_script` 会读取当前租户该 Skill 安装记录中的 `approved_permissions`。当前已强制执行的权限：
+
+| 权限 | 行为 |
+|------|------|
+| `compute.timeout_seconds` | 当批准权限包含该值时，脚本执行会使用更短的 context timeout；值必须大于 0 |
+
+示例：
+
+```json
+{
+  "compute": {
+    "timeout_seconds": 10
+  }
+}
+```
+
+未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`network`、`files`、`credentials`、`mcp` 等权限目前已能保存为批准权限，但还需要后续 sandbox/runtime 适配后继续强制。
+
 ### 租户级启停
 
 兼容接口 `GET /api/v1/skills` 只返回当前租户已启用的 Skill 元数据，用于 Agent 编辑和运行时过滤。管理界面如需展示启用和禁用状态，应使用：

@@ -239,6 +239,36 @@ func TestSkillRepository_TenantSkillInstallLifecycle(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestSkillRepository_GetTenantSkillInstallEntryByName(t *testing.T) {
+	db := setupSkillRepositoryTestDB(t)
+	repo := NewSkillRepository(db)
+	ctx := context.Background()
+
+	require.NoError(t, repo.UpsertSkill(ctx, testSkillEntry("alpha", "1.0.0", types.SkillStatusActive)))
+	require.NoError(t, repo.UpsertSkill(ctx, testSkillEntry("beta", "1.0.0", types.SkillStatusActive)))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:                  "tenant-10-alpha",
+		TenantID:            10,
+		SkillID:             "alpha-1.0.0",
+		Enabled:             true,
+		ApprovedPermissions: types.JSON(`{"compute":{"timeout_seconds":5}}`),
+	}))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:       "tenant-10-beta",
+		TenantID: 10,
+		SkillID:  "beta-1.0.0",
+		Enabled:  false,
+	}))
+
+	got, err := repo.GetTenantSkillInstallEntryByName(ctx, 10, "alpha")
+	require.NoError(t, err)
+	assert.Equal(t, "alpha", got.Name)
+	assert.JSONEq(t, `{"compute":{"timeout_seconds":5}}`, got.ApprovedPermissions.ToString())
+
+	_, err = repo.GetTenantSkillInstallEntryByName(ctx, 10, "beta")
+	require.Error(t, err)
+}
+
 func TestSkillRepository_AgentBindings_ReplaceAndList(t *testing.T) {
 	db := setupSkillRepositoryTestDB(t)
 	repo := NewSkillRepository(db)

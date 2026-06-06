@@ -62,6 +62,7 @@ type agentService struct {
 	tenantService         interfaces.TenantService
 	toolApprovalGate      approval.MCPApproval
 	skillRunRepo          interfaces.SkillExecutionRunRepository
+	skillRepo             interfaces.SkillRepository
 }
 
 // NewAgentService creates a new agent service
@@ -83,6 +84,7 @@ func NewAgentService(
 	tenantService interfaces.TenantService,
 	toolApprovalGate approval.MCPApproval,
 	skillRunRepo interfaces.SkillExecutionRunRepository,
+	skillRepo interfaces.SkillRepository,
 ) interfaces.AgentService {
 	return &agentService{
 		cfg:                   cfg,
@@ -102,6 +104,7 @@ func NewAgentService(
 		tenantService:         tenantService,
 		toolApprovalGate:      toolApprovalGate,
 		skillRunRepo:          skillRunRepo,
+		skillRepo:             skillRepo,
 	}
 }
 
@@ -338,6 +341,9 @@ func (s *agentService) initializeSkillsManager(
 
 	if sandboxMode != "disabled" {
 		executeSkillTool := tools.NewExecuteSkillScriptTool(skillsManager)
+		if s.skillRepo != nil {
+			executeSkillTool.SetPermissionChecker(skillPermissionChecker{repo: s.skillRepo})
+		}
 		toolRegistry.RegisterTool(executeSkillTool)
 		logger.Infof(ctx, "Registered execute_skill_script tool")
 	}

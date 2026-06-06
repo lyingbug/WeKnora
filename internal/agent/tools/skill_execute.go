@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -50,7 +51,12 @@ type ExecuteSkillScriptInput struct {
 // ExecuteSkillScriptTool allows the agent to execute skill scripts in a sandbox
 type ExecuteSkillScriptTool struct {
 	BaseTool
-	skillManager *skills.Manager
+	skillManager      *skills.Manager
+	permissionChecker SkillPermissionChecker
+}
+
+type SkillPermissionChecker interface {
+	ApprovedPermissions(ctx context.Context, tenantID uint64, skillName string) (types.JSON, error)
 }
 
 // NewExecuteSkillScriptTool creates a new execute_skill_script tool instance
@@ -59,6 +65,10 @@ func NewExecuteSkillScriptTool(skillManager *skills.Manager) *ExecuteSkillScript
 		BaseTool:     executeSkillScriptTool,
 		skillManager: skillManager,
 	}
+}
+
+func (t *ExecuteSkillScriptTool) SetPermissionChecker(checker SkillPermissionChecker) {
+	t.permissionChecker = checker
 }
 
 // Execute executes the execute_skill_script tool
@@ -98,11 +108,23 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 		}, nil
 	}
 
+	execCtx := ctx
+	cancel := func() {}
+	if timeout, err := t.approvedComputeTimeout(ctx, input.SkillName); err != nil {
+		return &types.ToolResult{
+			Success: false,
+			Error:   err.Error(),
+		}, nil
+	} else if timeout > 0 {
+		execCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
 	// Execute the script in sandbox
 	logger.Infof(ctx, "[Tool][ExecuteSkillScript] Executing script: %s/%s with args: %v, input length: %d",
 		input.SkillName, input.ScriptPath, input.Args, len(input.Input))
 
-	result, err := t.skillManager.ExecuteScript(ctx, input.SkillName, input.ScriptPath, input.Args, input.Input)
+	result, err := t.skillManager.ExecuteScript(execCtx, input.SkillName, input.ScriptPath, input.Args, input.Input)
 	if err != nil {
 		logger.Errorf(ctx, "[Tool][ExecuteSkillScript] Script execution failed: %v", err)
 		return &types.ToolResult{
@@ -182,6 +204,60 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 			return ""
 		}(),
 	}, nil
+}
+
+func (t *ExecuteSkillScriptTool) approvedComputeTimeout(ctx context.Context, skillName string) (time.Duration, error) {
+	if t.permissionChecker == nil {
+		return 0, nil
+	}
+	tenantID, ok := types.TenantIDFromContext(ctx)
+	if !ok || tenantID == 0 {
+		return 0, nil
+	}
+	permissions, err := t.permissionChecker.ApprovedPermissions(ctx, tenantID, skillName)
+	if err != nil {
+		return 0, fmt.Errorf("skill is not installed or enabled for this tenant: %s", skillName)
+	}
+	return approvedComputeTimeout(permissions)
+}
+
+func approvedComputeTimeout(permissions types.JSON) (time.Duration, error) {
+	permissionsMap, err := permissions.Map()
+	if err != nil {
+		return 0, fmt.Errorf("approved permissions are invalid JSON: %w", err)
+	}
+	computeRaw, ok := permissionsMap["compute"]
+	if !ok {
+		return 0, nil
+	}
+	compute, ok := computeRaw.(map[string]interface{})
+	if !ok {
+		return 0, fmt.Errorf("approved permissions compute must be an object")
+	}
+	rawTimeout, ok := compute["timeout_seconds"]
+	if !ok {
+		return 0, nil
+	}
+
+	var seconds float64
+	switch value := rawTimeout.(type) {
+	case float64:
+		seconds = value
+	case int:
+		seconds = float64(value)
+	case json.Number:
+		parsed, err := value.Float64()
+		if err != nil {
+			return 0, fmt.Errorf("compute.timeout_seconds must be a number")
+		}
+		seconds = parsed
+	default:
+		return 0, fmt.Errorf("compute.timeout_seconds must be a number")
+	}
+	if seconds <= 0 {
+		return 0, fmt.Errorf("compute.timeout_seconds must be greater than zero")
+	}
+	return time.Duration(seconds * float64(time.Second)), nil
 }
 
 // Cleanup releases any resources

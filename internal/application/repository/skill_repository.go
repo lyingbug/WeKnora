@@ -120,6 +120,53 @@ func (r *skillRepository) ListTenantSkillInstallEntries(ctx context.Context, ten
 	return installs, nil
 }
 
+func (r *skillRepository) GetTenantSkillInstallEntryByName(
+	ctx context.Context,
+	tenantID uint64,
+	skillName string,
+) (*types.TenantSkillInstallInfo, error) {
+	var install types.TenantSkillInstallInfo
+	result := r.db.WithContext(ctx).
+		Table("tenant_skill_installs AS tsi").
+		Select(`
+			tsi.id AS install_id,
+			tsi.tenant_id,
+			tsi.skill_id,
+			tsi.enabled,
+			tsi.installed_by,
+			tsi.approved_permissions,
+			tsi.created_at AS installed_at,
+			tsi.updated_at AS install_updated_at,
+			skills.name,
+			skills.version,
+			skills.description,
+			skills.source_type,
+			skills.source_uri,
+			skills.digest,
+			skills.manifest,
+			skills.status,
+			skills.is_builtin
+		`).
+		Joins("JOIN skills ON skills.id = tsi.skill_id").
+		Where(
+			"tsi.tenant_id = ? AND tsi.enabled = ? AND skills.name = ? AND skills.status = ?",
+			tenantID,
+			true,
+			skillName,
+			types.SkillStatusActive,
+		).
+		Order("skills.version DESC").
+		Limit(1).
+		Find(&install)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &install, nil
+}
+
 func (r *skillRepository) SetTenantSkillInstallEnabled(ctx context.Context, tenantID uint64, skillID string, enabled bool) error {
 	result := r.db.WithContext(ctx).
 		Model(&types.TenantSkillInstall{}).
