@@ -20,6 +20,10 @@ type mockSkillService struct {
 	installPackagePath string
 	installUserID      string
 	installEntry       *types.SkillRegistryEntry
+	installs           []*types.TenantSkillInstallInfo
+	setEnabledTenantID uint64
+	setEnabledSkillID  string
+	setEnabled         bool
 }
 
 func (m *mockSkillService) ListPreloadedSkills(context.Context) ([]*skills.SkillMetadata, error) {
@@ -28,6 +32,17 @@ func (m *mockSkillService) ListPreloadedSkills(context.Context) ([]*skills.Skill
 
 func (m *mockSkillService) ListTenantSkills(context.Context, uint64) ([]*skills.SkillMetadata, error) {
 	return nil, nil
+}
+
+func (m *mockSkillService) ListTenantSkillInstalls(context.Context, uint64) ([]*types.TenantSkillInstallInfo, error) {
+	return m.installs, nil
+}
+
+func (m *mockSkillService) SetTenantSkillEnabled(_ context.Context, tenantID uint64, skillID string, enabled bool) error {
+	m.setEnabledTenantID = tenantID
+	m.setEnabledSkillID = skillID
+	m.setEnabled = enabled
+	return nil
 }
 
 func (m *mockSkillService) ImportPreloadedSkills(context.Context) error {
@@ -122,4 +137,79 @@ func TestSkillHandler_InstallLocalSkillPackage_RequiresPackagePath(t *testing.T)
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "package_path is required")
+}
+
+func TestSkillHandler_ListInstalledSkills(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &mockSkillService{
+		installs: []*types.TenantSkillInstallInfo{
+			{
+				SkillID:             "preloaded-alpha-0-0-0",
+				Name:                "alpha",
+				Version:             "0.0.0",
+				Description:         "Alpha skill",
+				SourceType:          types.SkillSourceTypePreloaded,
+				Enabled:             false,
+				InstalledBy:         "user-a",
+				ApprovedPermissions: types.JSON(`{"network":[]}`),
+				IsBuiltin:           true,
+			},
+		},
+	}
+	h := NewSkillHandler(svc)
+	r := gin.New()
+	r.GET("/skills/installed", func(c *gin.Context) {
+		c.Set(types.TenantIDContextKey.String(), uint64(10))
+		h.ListInstalledSkills(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/skills/installed", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"enabled":false`)
+	assert.Contains(t, w.Body.String(), `"name":"alpha"`)
+}
+
+func TestSkillHandler_UpdateTenantSkillInstall(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &mockSkillService{}
+	h := NewSkillHandler(svc)
+	r := gin.New()
+	r.PATCH("/skills/:skill_id", func(c *gin.Context) {
+		c.Set(types.TenantIDContextKey.String(), uint64(10))
+		h.UpdateTenantSkillInstall(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPatch, "/skills/preloaded-alpha-0-0-0", bytes.NewBufferString(`{"enabled":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, uint64(10), svc.setEnabledTenantID)
+	assert.Equal(t, "preloaded-alpha-0-0-0", svc.setEnabledSkillID)
+	assert.False(t, svc.setEnabled)
+}
+
+func TestSkillHandler_UpdateTenantSkillInstall_RequiresEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := NewSkillHandler(&mockSkillService{})
+	r := gin.New()
+	r.PATCH("/skills/:skill_id", h.UpdateTenantSkillInstall)
+
+	req := httptest.NewRequest(http.MethodPatch, "/skills/preloaded-alpha-0-0-0", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "enabled is required")
 }

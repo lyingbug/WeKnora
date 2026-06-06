@@ -34,11 +34,19 @@ type InstallLocalSkillPackageRequest struct {
 }
 
 type InstalledSkillResponse struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	Description string `json:"description"`
-	SourceType  string `json:"source_type"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	Version             string     `json:"version"`
+	Description         string     `json:"description"`
+	SourceType          string     `json:"source_type"`
+	Enabled             bool       `json:"enabled"`
+	InstalledBy         string     `json:"installed_by,omitempty"`
+	ApprovedPermissions types.JSON `json:"approved_permissions,omitempty"`
+	IsBuiltin           bool       `json:"is_builtin,omitempty"`
+}
+
+type UpdateTenantSkillInstallRequest struct {
+	Enabled *bool `json:"enabled" binding:"required"`
 }
 
 // ListSkills godoc
@@ -131,6 +139,90 @@ func (h *SkillHandler) InstallLocalSkillPackage(c *gin.Context) {
 			Version:     entry.Version,
 			Description: entry.Description,
 			SourceType:  entry.SourceType,
+			Enabled:     true,
+			IsBuiltin:   entry.IsBuiltin,
 		},
+	})
+}
+
+// ListInstalledSkills godoc
+// @Summary      获取租户已安装 Skills
+// @Description  获取当前租户的 Skill 安装记录，包含启用和禁用状态。
+// @Tags         Skills
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}  "已安装 Skills"
+// @Failure      500  {object}  errors.AppError         "服务器错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /skills/installed [get]
+func (h *SkillHandler) ListInstalledSkills(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+
+	installs, err := h.skillService.ListTenantSkillInstalls(ctx, tenantID)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(errors.NewInternalServerError("Failed to list installed skills: " + err.Error()))
+		return
+	}
+
+	response := make([]InstalledSkillResponse, 0, len(installs))
+	for _, install := range installs {
+		response = append(response, InstalledSkillResponse{
+			ID:                  install.SkillID,
+			Name:                install.Name,
+			Version:             install.Version,
+			Description:         install.Description,
+			SourceType:          install.SourceType,
+			Enabled:             install.Enabled,
+			InstalledBy:         install.InstalledBy,
+			ApprovedPermissions: install.ApprovedPermissions,
+			IsBuiltin:           install.IsBuiltin,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    response,
+	})
+}
+
+// UpdateTenantSkillInstall godoc
+// @Summary      启用或禁用租户 Skill
+// @Description  更新当前租户某个 Skill 安装记录的 enabled 状态。
+// @Tags         Skills
+// @Accept       json
+// @Produce      json
+// @Param        skill_id  path      string                           true  "Skill ID"
+// @Param        request   body      UpdateTenantSkillInstallRequest  true  "启停状态"
+// @Success      200       {object}  map[string]interface{}           "更新结果"
+// @Failure      400       {object}  map[string]interface{}           "请求参数错误"
+// @Failure      500       {object}  errors.AppError                  "服务器错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /skills/{skill_id} [patch]
+func (h *SkillHandler) UpdateTenantSkillInstall(c *gin.Context) {
+	ctx := c.Request.Context()
+	skillID := c.Param("skill_id")
+
+	var req UpdateTenantSkillInstallRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "enabled is required",
+		})
+		return
+	}
+
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	if err := h.skillService.SetTenantSkillEnabled(ctx, tenantID, skillID, *req.Enabled); err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(errors.NewInternalServerError("Failed to update tenant skill install: " + err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
 	})
 }

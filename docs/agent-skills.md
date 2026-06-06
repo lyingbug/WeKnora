@@ -257,6 +257,27 @@ Content-Type: application/json
 - 为当前租户写入启用状态的 `tenant_skill_installs`。
 - 运行时根据 Agent 的 `skills_selection_mode` 和已安装 Skill 解析 `AllowedSkills` 与 `SkillDirs`。
 
+### 租户级启停
+
+兼容接口 `GET /api/v1/skills` 只返回当前租户已启用的 Skill 元数据，用于 Agent 编辑和运行时过滤。管理界面如需展示启用和禁用状态，应使用：
+
+```http
+GET /api/v1/skills/installed
+```
+
+启用或禁用某个租户已安装 Skill：
+
+```http
+PATCH /api/v1/skills/{skill_id}
+Content-Type: application/json
+
+{
+  "enabled": false
+}
+```
+
+禁用不会删除 `skills` 注册表记录、包文件或历史 Agent 配置；它只更新当前租户的 `tenant_skill_installs.enabled`。运行时解析会过滤禁用项，因此禁用后该 Skill 不会进入 Agent prompt，也不会被 `read_skill` / `execute_skill_script` 作为允许 Skill 暴露。
+
 系统内置了以下 5 个预加载技能，用于增强知识库问答和文档处理能力：
 
 ### 1. citation-generator - 引用生成器
