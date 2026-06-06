@@ -39,6 +39,7 @@ type ExecuteScriptOptions struct {
 	CPULimit              float64
 	Mounts                []sandbox.Mount
 	Env                   map[string]string
+	Metadata              map[string]string
 }
 
 // NewManager creates a new skill manager with the given configuration
@@ -206,8 +207,8 @@ func (m *Manager) ExecuteScriptWithOptions(
 	if m.sandboxMgr == nil {
 		return nil, fmt.Errorf("sandbox is not configured")
 	}
-	if len(options.Mounts) > 0 && m.sandboxMgr.GetType() != sandbox.SandboxTypeDocker {
-		return nil, fmt.Errorf("file permission mounts require docker sandbox")
+	if len(options.Mounts) > 0 && m.sandboxMgr.GetType() != sandbox.SandboxTypeDocker && m.sandboxMgr.GetType() != sandbox.SandboxTypeRemote {
+		return nil, fmt.Errorf("file permission mounts require docker or remote sandbox")
 	}
 
 	// Get the skill base path
@@ -238,6 +239,7 @@ func (m *Manager) ExecuteScriptWithOptions(
 		CPULimit:              options.CPULimit,
 		Mounts:                options.Mounts,
 		Env:                   options.Env,
+		Metadata:              options.Metadata,
 	}
 
 	// Execute in sandbox

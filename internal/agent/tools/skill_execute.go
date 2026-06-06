@@ -153,6 +153,7 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 			CPULimit:              policy.CPULimit,
 			Mounts:                policy.Mounts,
 			Env:                   policy.Env,
+			Metadata:              skillExecutionMetadata(ctx, input.SkillName),
 		},
 	)
 	if err != nil {
@@ -234,6 +235,45 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 			return ""
 		}(),
 	}, nil
+}
+
+func skillExecutionMetadata(ctx context.Context, skillName string) map[string]string {
+	metadata := map[string]string{
+		"skill_name": skillName,
+	}
+	if tenantID, ok := ctx.Value(types.TenantIDContextKey).(uint64); ok && tenantID > 0 {
+		metadata["tenant_id"] = fmt.Sprintf("%d", tenantID)
+	}
+	if sessionTenantID, ok := ctx.Value(types.SessionTenantIDContextKey).(uint64); ok && sessionTenantID > 0 {
+		metadata["session_tenant_id"] = fmt.Sprintf("%d", sessionTenantID)
+	}
+	if userID, ok := ctx.Value(types.UserIDContextKey).(string); ok && userID != "" {
+		metadata["user_id"] = userID
+	}
+	if sessionID, ok := ctx.Value(types.SessionIDContextKey).(string); ok && sessionID != "" {
+		metadata["session_id"] = sessionID
+	}
+	if requestID, ok := ctx.Value(types.RequestIDContextKey).(string); ok && requestID != "" {
+		metadata["request_id"] = requestID
+	}
+	if execMeta, ok := ToolExecFromContext(ctx); ok {
+		if execMeta.SessionID != "" {
+			metadata["session_id"] = execMeta.SessionID
+		}
+		if execMeta.UserID != "" {
+			metadata["user_id"] = execMeta.UserID
+		}
+		if execMeta.RequestID != "" {
+			metadata["request_id"] = execMeta.RequestID
+		}
+		if execMeta.AssistantMessageID != "" {
+			metadata["assistant_message_id"] = execMeta.AssistantMessageID
+		}
+		if execMeta.ToolCallID != "" {
+			metadata["tool_call_id"] = execMeta.ToolCallID
+		}
+	}
+	return metadata
 }
 
 type skillExecutionPolicy struct {

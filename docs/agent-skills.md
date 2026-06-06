@@ -128,17 +128,22 @@ Sandbox 相关配置通过环境变量设置：
 
 | 环境变量 | 说明 | 默认值 |
 |---------|------|--------|
-| `WEKNORA_SANDBOX_MODE` | sandbox 模式: `docker`, `local`, `disabled` | `disabled` |
+| `WEKNORA_SANDBOX_MODE` | sandbox 模式: `docker`, `remote`, `local`, `disabled` | `disabled` |
 | `WEKNORA_SANDBOX_TIMEOUT` | 脚本执行超时（秒） | `60` |
 | `WEKNORA_SANDBOX_DOCKER_IMAGE` | 自定义 Docker 镜像 | `wechatopenai/weknora-sandbox:latest` |
+| `WEKNORA_SANDBOX_REMOTE_ENDPOINT` | 远端 sandbox 调度器基础 URL，仅 `remote` 模式使用 | 空 |
+| `WEKNORA_SANDBOX_REMOTE_TOKEN` | 远端 sandbox 调度器 Bearer token，仅 `remote` 模式使用 | 空 |
 
 ### Sandbox 模式
 
 | 模式 | 说明 |
 |------|------|
-| `docker` | 使用 Docker 容器隔离（推荐） |
+| `remote` | 委托云端/远端 sandbox 调度器执行（多租户生产推荐） |
+| `docker` | 使用 Docker 容器隔离（单机部署与开发推荐） |
 | `local` | 本地进程执行（基础安全限制） |
 | `disabled` | 禁用脚本执行 |
+
+`remote` 模式启动时会先访问 `$WEKNORA_SANDBOX_REMOTE_ENDPOINT/health`。调度器需要实现 `POST /v1/execute`，接收脚本内容、参数、stdin、环境变量、资源限制、网络 allowlist、文件挂载声明和 `tenant_id/user_id/session_id/request_id/tool_call_id` 等 metadata，并返回 stdout、stderr、exit code、duration、killed 和 error。调度器应按 tenant/session 分配隔离运行环境，并在基础设施层强制执行 egress allowlist 与资源限制。
 
 ## Agent 工具
 
@@ -202,7 +207,7 @@ Skills 功能通过两个工具与 Agent 交互：
 
 第二阶段开始，预装 Skill 会为租户生成安装记录，Agent 编辑页仍使用 `skills_selection_mode` 和 `selected_skills` 配置，但后端会同步到 `agent_skill_bindings`。运行时会根据当前 Agent 所属租户的已安装 Skill 过滤可用 Skill，避免 Agent 暴露未安装或已禁用的 Skill。
 
-第三阶段开始，后端支持从服务端本地 packages 目录安装租户级 Skill 包，并支持从允许的 Skill Hub host 下载归档包后缓存为本地包。当前版本包含 manifest 入库、租户安装、权限审批承载、运行时目录解析和基础下载安全校验；包签名校验、发布者信任链、权限审批流 UI 和独立云端沙箱调度仍是后续演进项。
+第三阶段开始，后端支持从服务端本地 packages 目录安装租户级 Skill 包，并支持从允许的 Skill Hub host 下载归档包后缓存为本地包。当前版本包含 manifest 入库、租户安装、权限审批承载、运行时目录解析、Hub 发布者签名校验、租户级启停/凭据/MCP 绑定，以及远端 sandbox 调度协议。
 
 ### 本地 Skill 包安装
 
@@ -343,8 +348,8 @@ Content-Type: application/json
 | 权限 | 行为 |
 |------|------|
 | `compute.timeout_seconds` | 当批准权限包含该值时，脚本执行会使用更短的 context timeout；值必须大于 0 |
-| `compute.memory_mb` | 当批准权限包含该值时，Docker sandbox 会使用对应内存上限；值必须大于 0 |
-| `compute.cpu` | 当批准权限包含该值时，Docker sandbox 会使用对应 CPU 上限；值必须大于 0 |
+| `compute.memory_mb` | 当批准权限包含该值时，Docker/remote sandbox 会使用对应内存上限；值必须大于 0 |
+| `compute.cpu` | 当批准权限包含该值时，Docker/remote sandbox 会使用对应 CPU 上限；值必须大于 0 |
 | `network` | 仅当批准权限包含非空数组时，sandbox 才会启用网络；批准域名会传入执行策略，用于脚本中显式 URL host 的静态校验，并启动运行期 HTTP/HTTPS egress proxy |
 | `files` | `session-temp` 会创建租户/用户/会话隔离的临时目录，并以 writable mount 暴露为 `/mnt/weknora/session`；其它 scope 会被拒绝 |
 | `credentials` | 仅注入批准列表中的凭据名；凭据由租户管理员单独配置，运行时作为同名环境变量传入 sandbox，响应和审计不回显 secret 值 |
@@ -365,7 +370,7 @@ Content-Type: application/json
 }
 ```
 
-未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb`、`compute.cpu` 与 `files.session-temp` 依赖 Docker sandbox 生效，local fallback 只能提供进程级超时和基础校验，遇到文件挂载权限会拒绝执行。`network` 目前会按 sandbox 级别强制开关，对脚本中静态可见的 URL host 做批准域名校验，并在运行期注入 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 指向本机 egress proxy；proxy 会按批准域名放行 HTTP 和 HTTPS CONNECT。`mcp` 会通过本机 broker 调用服务端 MCP client，不会把 MCP URL、headers、token 或 api key 暴露给脚本。
+未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb`、`compute.cpu` 与 `files.session-temp` 依赖 Docker 或 remote sandbox 生效，local fallback 只能提供进程级超时和基础校验，遇到文件挂载权限会拒绝执行。`network` 会按 sandbox 级别强制开关，对脚本中静态可见的 URL host 做批准域名校验；Docker 模式会在运行期注入 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 指向本机 egress proxy，proxy 按批准域名放行 HTTP 和 HTTPS CONNECT；remote 模式会把相同 allowlist 传给远端调度器，由调度器在网络命名空间、VPC egress gateway 或等价基础设施层禁止未批准直连。`mcp` 会通过本机 broker 调用服务端 MCP client，不会把 MCP URL、headers、token 或 api key 暴露给脚本。
 
 ### 租户级凭据
 

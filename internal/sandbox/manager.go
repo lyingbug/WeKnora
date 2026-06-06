@@ -74,6 +74,20 @@ func (m *DefaultManager) initializeSandbox(ctx context.Context) error {
 		m.sandbox = NewLocalSandbox(m.config)
 		return nil
 
+	case SandboxTypeRemote:
+		remoteSandbox := NewRemoteSandbox(m.config)
+		if remoteSandbox.IsAvailable(ctx) {
+			m.sandbox = remoteSandbox
+			return nil
+		}
+
+		if m.config.FallbackEnabled {
+			m.sandbox = NewLocalSandbox(m.config)
+			return nil
+		}
+
+		return fmt.Errorf("remote sandbox is not available and fallback is disabled")
+
 	default:
 		return fmt.Errorf("unknown sandbox type: %s", m.config.Type)
 	}
@@ -255,6 +269,8 @@ func NewManagerFromType(sandboxType string, fallbackEnabled bool, dockerImage st
 		sType = SandboxTypeDocker
 	case "local":
 		sType = SandboxTypeLocal
+	case "remote":
+		sType = SandboxTypeRemote
 	case "disabled", "":
 		sType = SandboxTypeDisabled
 	default:

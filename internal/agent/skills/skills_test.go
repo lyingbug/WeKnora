@@ -443,7 +443,7 @@ description: A test skill for network execution.
 	}
 }
 
-func TestManagerExecuteScriptWithOptionsRejectsMountsWithoutDocker(t *testing.T) {
+func TestManagerExecuteScriptWithOptionsRejectsMountsWithoutIsolatedSandbox(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "skills-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -484,10 +484,63 @@ description: A test skill for file mounts.
 		},
 	)
 	if err == nil {
-		t.Fatal("Expected mounts to require docker sandbox")
+		t.Fatal("Expected mounts to require docker or remote sandbox")
 	}
-	if !containsString(err.Error(), "require docker sandbox") {
-		t.Fatalf("Expected docker sandbox error, got %v", err)
+	if !containsString(err.Error(), "require docker or remote sandbox") {
+		t.Fatalf("Expected isolated sandbox error, got %v", err)
+	}
+}
+
+func TestManagerExecuteScriptWithOptionsAllowsMountsWithRemoteSandbox(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "skills-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	skillDir := filepath.Join(tmpDir, "remote-file-skill")
+	scriptsDir := filepath.Join(skillDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		t.Fatalf("Failed to create skill dir: %v", err)
+	}
+	skillContent := `---
+name: remote-file-skill
+description: A test skill for remote file mounts.
+---
+# Remote File Skill
+`
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0644); err != nil {
+		t.Fatalf("Failed to write SKILL.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scriptsDir, "run.py"), []byte("print('ok')"), 0644); err != nil {
+		t.Fatalf("Failed to write script: %v", err)
+	}
+
+	fakeSandbox := &capturingSandboxManager{sandboxType: sandbox.SandboxTypeRemote}
+	manager := NewManager(&ManagerConfig{
+		SkillDirs: []string{tmpDir},
+		Enabled:   true,
+	}, fakeSandbox)
+
+	_, err = manager.ExecuteScriptWithOptions(
+		context.Background(),
+		"remote-file-skill",
+		"scripts/run.py",
+		nil,
+		"",
+		ExecuteScriptOptions{
+			Mounts:   []sandbox.Mount{{HostPath: "/tmp/session", ContainerPath: "/mnt/weknora/session"}},
+			Metadata: map[string]string{"tenant_id": "1", "session_id": "s1"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("ExecuteScriptWithOptions failed: %v", err)
+	}
+	if len(fakeSandbox.lastConfig.Mounts) != 1 {
+		t.Fatalf("Expected one mount to be passed to remote sandbox, got %d", len(fakeSandbox.lastConfig.Mounts))
+	}
+	if fakeSandbox.lastConfig.Metadata["tenant_id"] != "1" || fakeSandbox.lastConfig.Metadata["session_id"] != "s1" {
+		t.Fatalf("Expected metadata to be passed to remote sandbox, got %v", fakeSandbox.lastConfig.Metadata)
 	}
 }
 

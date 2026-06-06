@@ -16,6 +16,8 @@ const (
 	SandboxTypeDocker SandboxType = "docker"
 	// SandboxTypeLocal uses local process with restrictions
 	SandboxTypeLocal SandboxType = "local"
+	// SandboxTypeRemote delegates execution to a remote sandbox scheduler
+	SandboxTypeRemote SandboxType = "remote"
 	// SandboxTypeDisabled means script execution is disabled
 	SandboxTypeDisabled SandboxType = "disabled"
 )
@@ -119,6 +121,9 @@ type ExecuteConfig struct {
 
 	// ScriptContent is the script content for validation (optional, will be read from file if not provided)
 	ScriptContent string
+
+	// Metadata contains execution-scoped routing data for remote schedulers.
+	Metadata map[string]string
 }
 
 // Mount describes an additional filesystem mount for sandbox execution.
@@ -187,6 +192,12 @@ type Config struct {
 
 	// MaxCPU is the maximum CPU cores
 	MaxCPU float64
+
+	// RemoteEndpoint is the base URL of the remote sandbox scheduler.
+	RemoteEndpoint string
+
+	// RemoteToken is an optional bearer token for the remote sandbox scheduler.
+	RemoteToken string
 }
 
 // DefaultConfig returns a default sandbox configuration
@@ -235,10 +246,14 @@ func ValidateConfig(config *Config) error {
 	}
 
 	switch config.Type {
-	case SandboxTypeDocker, SandboxTypeLocal, SandboxTypeDisabled:
+	case SandboxTypeDocker, SandboxTypeLocal, SandboxTypeRemote, SandboxTypeDisabled:
 		// Valid types
 	default:
 		return errors.New("invalid sandbox type")
+	}
+
+	if config.Type == SandboxTypeRemote && config.RemoteEndpoint == "" {
+		return errors.New("remote endpoint is required")
 	}
 
 	if config.DefaultTimeout < 0 {

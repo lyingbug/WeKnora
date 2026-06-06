@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/agent/approval"
@@ -280,9 +281,11 @@ func (s *agentService) initializeSkillsManager(
 	toolRegistry *tools.ToolRegistry,
 ) (*skills.Manager, error) {
 	// Initialize sandbox manager based on environment variables
-	// WEKNORA_SANDBOX_MODE: "docker", "local", "disabled" (default: "disabled")
+	// WEKNORA_SANDBOX_MODE: "docker", "local", "remote", "disabled" (default: "disabled")
 	// WEKNORA_SANDBOX_TIMEOUT: timeout in seconds (default: 60)
 	// WEKNORA_SANDBOX_DOCKER_IMAGE: custom Docker image (default: wechatopenai/weknora-sandbox:latest)
+	// WEKNORA_SANDBOX_REMOTE_ENDPOINT: remote sandbox scheduler base URL (remote mode only)
+	// WEKNORA_SANDBOX_REMOTE_TOKEN: bearer token for remote sandbox scheduler (remote mode only)
 	var sandboxMgr sandbox.Manager
 	var err error
 
@@ -294,6 +297,8 @@ func (s *agentService) initializeSkillsManager(
 	if dockerImage == "" {
 		dockerImage = sandbox.DefaultDockerImage
 	}
+	remoteEndpoint := os.Getenv("WEKNORA_SANDBOX_REMOTE_ENDPOINT")
+	remoteToken := os.Getenv("WEKNORA_SANDBOX_REMOTE_TOKEN")
 	sandboxTimeoutStr := os.Getenv("WEKNORA_SANDBOX_TIMEOUT")
 	sandboxTimeout := 60
 	if sandboxTimeoutStr != "" {
@@ -315,10 +320,22 @@ func (s *agentService) initializeSkillsManager(
 			logger.Warnf(ctx, "Failed to initialize local sandbox: %v", err)
 			sandboxMgr = sandbox.NewDisabledManager()
 		}
+	case "remote":
+		sandboxConfig := sandbox.DefaultConfig()
+		sandboxConfig.Type = sandbox.SandboxTypeRemote
+		sandboxConfig.FallbackEnabled = false
+		sandboxConfig.DefaultTimeout = time.Duration(sandboxTimeout) * time.Second
+		sandboxConfig.RemoteEndpoint = remoteEndpoint
+		sandboxConfig.RemoteToken = remoteToken
+		sandboxMgr, err = sandbox.NewManager(sandboxConfig)
+		if err != nil {
+			logger.Warnf(ctx, "Failed to initialize remote sandbox: %v", err)
+			sandboxMgr = sandbox.NewDisabledManager()
+		}
 	default:
 		sandboxMgr = sandbox.NewDisabledManager()
 	}
-	logger.Infof(ctx, "Sandbox configured: mode=%s, timeout=%ds, image=%s", sandboxMode, sandboxTimeout, dockerImage)
+	logger.Infof(ctx, "Sandbox configured: mode=%s, timeout=%ds, image=%s, remote_endpoint_set=%t", sandboxMode, sandboxTimeout, dockerImage, remoteEndpoint != "")
 
 	// Create skills manager
 	skillsConfig := &skills.ManagerConfig{
