@@ -167,6 +167,11 @@
                   <div v-if="currentSection === 'mcp'" class="section">
                     <McpSettings />
                   </div>
+
+                  <!-- Skill 管理 -->
+                  <div v-if="currentSection === 'skills'" class="section">
+                    <SkillSettings />
+                  </div>
                 </template>
               </div>
             </div>
@@ -191,6 +196,7 @@ import GeneralSettings from './GeneralSettings.vue'
 import ModelSettings from './ModelSettings.vue'
 import OllamaSettings from './OllamaSettings.vue'
 import McpSettings from './McpSettings.vue'
+import SkillSettings from './SkillSettings.vue'
 import WebSearchSettings from './WebSearchSettings.vue'
 import ChatHistorySettings from './ChatHistorySettings.vue'
 import VectorStoreSettings from './VectorStoreSettings.vue'
@@ -249,6 +255,7 @@ const SECTION_MIN_ROLE: Record<string, RoleKey> = {
   parser: 'admin',
   storage: 'admin',
   mcp: 'admin',
+  skills: 'admin',
   system: 'viewer',
   userprofile: 'viewer',
   tenant: 'viewer',
@@ -284,6 +291,7 @@ const navItems = computed(() => {
     { key: 'parser', icon: 'file-search', label: t('settings.parserEngine') },
     { key: 'storage', icon: 'cloud', label: t('settings.storageEngine') },
     { key: 'mcp', icon: 'tools', label: t('settings.mcpService') },
+    { key: 'skills', icon: 'layers', label: 'Skills' },
     { key: 'system', icon: 'info-circle', label: t('settings.versionInfo') },
     { key: 'system-global', icon: 'server', label: '系统设置' },
     { key: 'userprofile', icon: 'user', label: t('userProfile.title') },
@@ -326,7 +334,7 @@ const navGroups = computed<NavGroup[]>(() => {
     {
       key: 'data_extensions',
       label: t('settings.navGroups.dataExtensions'),
-      items: pickItems(['vectorstore', 'parser', 'storage', 'websearch', 'mcp']),
+      items: pickItems(['vectorstore', 'parser', 'storage', 'websearch', 'mcp', 'skills']),
     },
     {
       key: 'platform',

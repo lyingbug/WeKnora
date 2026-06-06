@@ -257,6 +257,10 @@ export function put(url: string, data = {}) {
   return instance.put(url, data);
 }
 
+export function patch(url: string, data = {}) {
+  return instance.patch(url, data);
+}
+
 export function del(url: string, data?: any) {
   return instance.delete(url, { data });
 }
