@@ -345,7 +345,7 @@ Content-Type: application/json
 | `compute.timeout_seconds` | 当批准权限包含该值时，脚本执行会使用更短的 context timeout；值必须大于 0 |
 | `compute.memory_mb` | 当批准权限包含该值时，Docker sandbox 会使用对应内存上限；值必须大于 0 |
 | `compute.cpu` | 当批准权限包含该值时，Docker sandbox 会使用对应 CPU 上限；值必须大于 0 |
-| `network` | 仅当批准权限包含非空数组时，sandbox 才会启用网络；批准域名会传入执行策略，并用于脚本中显式 URL host 的静态 allowlist 校验 |
+| `network` | 仅当批准权限包含非空数组时，sandbox 才会启用网络；批准域名会传入执行策略，用于脚本中显式 URL host 的静态校验，并启动运行期 HTTP/HTTPS egress proxy |
 | `files` | `session-temp` 会创建租户/用户/会话隔离的临时目录，并以 writable mount 暴露为 `/mnt/weknora/session`；其它 scope 会被拒绝 |
 | `credentials` | 仅注入批准列表中的凭据名；凭据由租户管理员单独配置，运行时作为同名环境变量传入 sandbox，响应和审计不回显 secret 值 |
 | `mcp` | 仅允许 manifest/批准列表中的 MCP alias；租户管理员需把 alias 绑定到当前租户已启用 MCP service，运行时会校验绑定并注入绑定元数据 |
@@ -365,7 +365,7 @@ Content-Type: application/json
 }
 ```
 
-未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb`、`compute.cpu` 与 `files.session-temp` 依赖 Docker sandbox 生效，local fallback 只能提供进程级超时和基础校验，遇到文件挂载权限会拒绝执行。`network` 目前会按 sandbox 级别强制开关，并对脚本中静态可见的 URL host 做批准域名校验；完整网络层 egress allowlist 还需要后续网络代理/网关适配后继续细化。`mcp` 会通过本机 broker 调用服务端 MCP client，不会把 MCP URL、headers、token 或 api key 暴露给脚本。
+未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb`、`compute.cpu` 与 `files.session-temp` 依赖 Docker sandbox 生效，local fallback 只能提供进程级超时和基础校验，遇到文件挂载权限会拒绝执行。`network` 目前会按 sandbox 级别强制开关，对脚本中静态可见的 URL host 做批准域名校验，并在运行期注入 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 指向本机 egress proxy；proxy 会按批准域名放行 HTTP 和 HTTPS CONNECT。`mcp` 会通过本机 broker 调用服务端 MCP client，不会把 MCP URL、headers、token 或 api key 暴露给脚本。
 
 ### 租户级凭据
 

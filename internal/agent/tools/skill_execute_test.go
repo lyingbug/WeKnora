@@ -161,6 +161,11 @@ func TestApprovedExecutionPolicy(t *testing.T) {
 	assert.Equal(t, 3*time.Second, policy.Timeout)
 	assert.True(t, policy.AllowNetwork)
 	assert.Equal(t, []string{"api.example.com"}, policy.AllowedNetworkDomains)
+	assert.Contains(t, policy.Env["HTTP_PROXY"], "http://host.docker.internal:")
+	assert.Equal(t, policy.Env["HTTP_PROXY"], policy.Env["HTTPS_PROXY"])
+	assert.Equal(t, policy.Env["HTTP_PROXY"], policy.Env["ALL_PROXY"])
+	require.NotNil(t, policy.Cleanup)
+	policy.Cleanup()
 	assert.Equal(t, int64(128*1024*1024), policy.MemoryLimit)
 	assert.Equal(t, 0.75, policy.CPULimit)
 }

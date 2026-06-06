@@ -139,7 +139,9 @@ func (s *DockerSandbox) buildDockerArgs(config *ExecuteConfig) []string {
 	if !config.AllowNetwork {
 		args = append(args, "--network", "none")
 	}
-	if config.Env["WEKNORA_SKILL_MCP_BROKER_URL"] != "" {
+	if config.Env["WEKNORA_SKILL_MCP_BROKER_URL"] != "" ||
+		strings.Contains(config.Env["HTTP_PROXY"], "host.docker.internal") ||
+		strings.Contains(config.Env["HTTPS_PROXY"], "host.docker.internal") {
 		args = append(args, "--add-host", "host.docker.internal:host-gateway")
 	}
 

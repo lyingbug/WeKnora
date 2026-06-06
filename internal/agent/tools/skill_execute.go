@@ -283,6 +283,11 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 	if err != nil {
 		return skillExecutionPolicy{}, err
 	}
+	networkEnv, networkCleanup, err := approvedNetworkProxyEnv(ctx, networkDomains)
+	if err != nil {
+		return skillExecutionPolicy{}, err
+	}
+	env = mergeEnv(env, networkEnv)
 	credentialEnv, err := t.approvedCredentialEnv(ctx, inputTenantID(ctx), skillName, permissions)
 	if err != nil {
 		return skillExecutionPolicy{}, err
@@ -301,7 +306,7 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 		CPULimit:              cpuLimit,
 		Mounts:                mounts,
 		Env:                   env,
-		Cleanup:               cleanup,
+		Cleanup:               mergeCleanup(networkCleanup, cleanup),
 	}, nil
 }
 
@@ -374,6 +379,42 @@ func approvedNetworkAllowed(permissions types.JSON) (bool, error) {
 		return false, err
 	}
 	return len(domains) > 0, nil
+}
+
+func approvedNetworkProxyEnv(ctx context.Context, domains []string) (map[string]string, func(), error) {
+	if len(domains) == 0 {
+		return nil, nil, nil
+	}
+	proxy := sandbox.NewEgressProxy(domains)
+	if err := proxy.Start(ctx); err != nil {
+		return nil, nil, err
+	}
+	proxyURL := dockerHostBrokerURL(proxy.URL())
+	return map[string]string{
+			"HTTP_PROXY":  proxyURL,
+			"HTTPS_PROXY": proxyURL,
+			"ALL_PROXY":   proxyURL,
+			"NO_PROXY":    "localhost,127.0.0.1,host.docker.internal",
+		}, func() {
+			_ = proxy.Shutdown(context.Background())
+		}, nil
+}
+
+func mergeCleanup(cleanups ...func()) func() {
+	active := make([]func(), 0, len(cleanups))
+	for _, cleanup := range cleanups {
+		if cleanup != nil {
+			active = append(active, cleanup)
+		}
+	}
+	if len(active) == 0 {
+		return nil
+	}
+	return func() {
+		for i := len(active) - 1; i >= 0; i-- {
+			active[i]()
+		}
+	}
 }
 
 func approvedNetworkDomains(permissions types.JSON) ([]string, error) {
