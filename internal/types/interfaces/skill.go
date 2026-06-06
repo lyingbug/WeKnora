@@ -57,3 +57,8 @@ type SkillRepository interface {
 	ReplaceAgentSkillBindings(ctx context.Context, tenantID uint64, agentID string, skillIDs []string) error
 	ListAgentSkillBindings(ctx context.Context, tenantID uint64, agentID string) ([]*types.SkillRegistryEntry, error)
 }
+
+type SkillExecutionRunRepository interface {
+	CreateSkillExecutionRun(ctx context.Context, run *types.SkillExecutionRun) error
+	ListSkillExecutionRuns(ctx context.Context, tenantID uint64, limit int) ([]*types.SkillExecutionRun, error)
+}
