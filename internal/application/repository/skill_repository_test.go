@@ -17,8 +17,14 @@ func setupSkillRepositoryTestDB(t *testing.T) *gorm.DB {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&types.SkillRegistryEntry{}))
+	require.NoError(t, db.AutoMigrate(
+		&types.SkillRegistryEntry{},
+		&types.TenantSkillInstall{},
+		&types.AgentSkillBinding{},
+	))
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_version ON skills(name, version)").Error)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_installs_tenant_skill ON tenant_skill_installs(tenant_id, skill_id)").Error)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_skill_bindings_tenant_agent_skill ON agent_skill_bindings(tenant_id, agent_id, skill_id)").Error)
 
 	return db
 }
@@ -121,4 +127,90 @@ func TestSkillRepository_ListActiveSkills_FiltersAndOrders(t *testing.T) {
 	assert.Equal(t, "2.0.0", got[1].Version)
 	assert.Equal(t, "beta", got[2].Name)
 	assert.Equal(t, "2.0.0", got[2].Version)
+}
+
+func TestSkillRepository_TenantInstalls_ListEnabledActiveSkills(t *testing.T) {
+	db := setupSkillRepositoryTestDB(t)
+	repo := NewSkillRepository(db)
+	ctx := context.Background()
+
+	for _, skill := range []*types.SkillRegistryEntry{
+		testSkillEntry("beta", "1.0.0", types.SkillStatusActive),
+		testSkillEntry("alpha", "1.0.0", types.SkillStatusActive),
+		testSkillEntry("disabled-skill", "1.0.0", types.SkillStatusDisabled),
+	} {
+		require.NoError(t, repo.UpsertSkill(ctx, skill))
+	}
+
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:       "tenant-10-alpha",
+		TenantID: 10,
+		SkillID:  "alpha-1.0.0",
+		Enabled:  true,
+	}))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:       "tenant-10-beta",
+		TenantID: 10,
+		SkillID:  "beta-1.0.0",
+		Enabled:  true,
+	}))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:       "tenant-10-disabled-install",
+		TenantID: 10,
+		SkillID:  "disabled-skill-1.0.0",
+		Enabled:  true,
+	}))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:       "tenant-11-alpha",
+		TenantID: 11,
+		SkillID:  "alpha-1.0.0",
+		Enabled:  true,
+	}))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:       "tenant-10-beta-disabled",
+		TenantID: 10,
+		SkillID:  "beta-1.0.0",
+		Enabled:  false,
+	}))
+
+	got, err := repo.ListTenantInstalledSkills(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "alpha", got[0].Name)
+
+	byName, err := repo.ListTenantInstalledSkillNames(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, byName, 1)
+	assert.Equal(t, "alpha-1.0.0", byName["alpha"].ID)
+}
+
+func TestSkillRepository_AgentBindings_ReplaceAndList(t *testing.T) {
+	db := setupSkillRepositoryTestDB(t)
+	repo := NewSkillRepository(db)
+	ctx := context.Background()
+
+	for _, skill := range []*types.SkillRegistryEntry{
+		testSkillEntry("alpha", "1.0.0", types.SkillStatusActive),
+		testSkillEntry("beta", "1.0.0", types.SkillStatusActive),
+		testSkillEntry("disabled-skill", "1.0.0", types.SkillStatusDisabled),
+	} {
+		require.NoError(t, repo.UpsertSkill(ctx, skill))
+	}
+
+	require.NoError(t, repo.ReplaceAgentSkillBindings(ctx, 10, "agent-a", []string{"alpha-1.0.0", "beta-1.0.0"}))
+	got, err := repo.ListAgentSkillBindings(ctx, 10, "agent-a")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "alpha", got[0].Name)
+	assert.Equal(t, "beta", got[1].Name)
+
+	require.NoError(t, repo.ReplaceAgentSkillBindings(ctx, 10, "agent-a", []string{"beta-1.0.0", "disabled-skill-1.0.0"}))
+	got, err = repo.ListAgentSkillBindings(ctx, 10, "agent-a")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "beta", got[0].Name)
+
+	otherTenant, err := repo.ListAgentSkillBindings(ctx, 11, "agent-a")
+	require.NoError(t, err)
+	assert.Empty(t, otherTenant)
 }
