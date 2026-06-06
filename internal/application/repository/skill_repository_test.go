@@ -177,6 +177,68 @@ func TestSkillRepository_TenantInstalls_ListEnabledActiveSkills(t *testing.T) {
 	assert.Equal(t, "alpha-1.0.0", byName["alpha"].ID)
 }
 
+func TestSkillRepository_TenantSkillInstallLifecycle(t *testing.T) {
+	db := setupSkillRepositoryTestDB(t)
+	repo := NewSkillRepository(db)
+	ctx := context.Background()
+
+	for _, skill := range []*types.SkillRegistryEntry{
+		testSkillEntry("alpha", "1.0.0", types.SkillStatusActive),
+		testSkillEntry("beta", "1.0.0", types.SkillStatusActive),
+		testSkillEntry("disabled-skill", "1.0.0", types.SkillStatusDisabled),
+	} {
+		require.NoError(t, repo.UpsertSkill(ctx, skill))
+	}
+
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:                  "tenant-10-alpha",
+		TenantID:            10,
+		SkillID:             "alpha-1.0.0",
+		Enabled:             true,
+		InstalledBy:         "user-a",
+		ApprovedPermissions: types.JSON(`{"network":[]}`),
+	}))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:                  "tenant-10-beta",
+		TenantID:            10,
+		SkillID:             "beta-1.0.0",
+		Enabled:             false,
+		InstalledBy:         "user-b",
+		ApprovedPermissions: types.JSON(`{"files":["session-temp"]}`),
+	}))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:       "tenant-10-disabled",
+		TenantID: 10,
+		SkillID:  "disabled-skill-1.0.0",
+		Enabled:  true,
+	}))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:       "tenant-11-alpha",
+		TenantID: 11,
+		SkillID:  "alpha-1.0.0",
+		Enabled:  true,
+	}))
+
+	installs, err := repo.ListTenantSkillInstallEntries(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, installs, 2)
+	assert.Equal(t, "alpha", installs[0].Name)
+	assert.True(t, installs[0].Enabled)
+	assert.Equal(t, "user-a", installs[0].InstalledBy)
+	assert.JSONEq(t, `{"network":[]}`, installs[0].ApprovedPermissions.ToString())
+	assert.Equal(t, "beta", installs[1].Name)
+	assert.False(t, installs[1].Enabled)
+
+	require.NoError(t, repo.SetTenantSkillInstallEnabled(ctx, 10, "alpha-1.0.0", false))
+	installs, err = repo.ListTenantSkillInstallEntries(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, installs, 2)
+	assert.False(t, installs[0].Enabled)
+
+	err = repo.SetTenantSkillInstallEnabled(ctx, 10, "missing-skill", true)
+	require.Error(t, err)
+}
+
 func TestSkillRepository_AgentBindings_ReplaceAndList(t *testing.T) {
 	db := setupSkillRepositoryTestDB(t)
 	repo := NewSkillRepository(db)

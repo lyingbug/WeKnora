@@ -44,6 +44,8 @@ type SkillRepository interface {
 	GetActiveSkillByNameVersion(ctx context.Context, name, version string) (*types.SkillRegistryEntry, error)
 	CountSkills(ctx context.Context) (int64, error)
 	UpsertTenantSkillInstall(ctx context.Context, install *types.TenantSkillInstall) error
+	ListTenantSkillInstallEntries(ctx context.Context, tenantID uint64) ([]*types.TenantSkillInstallInfo, error)
+	SetTenantSkillInstallEnabled(ctx context.Context, tenantID uint64, skillID string, enabled bool) error
 	ListTenantInstalledSkills(ctx context.Context, tenantID uint64) ([]*types.SkillRegistryEntry, error)
 	ListTenantInstalledSkillNames(ctx context.Context, tenantID uint64) (map[string]*types.SkillRegistryEntry, error)
 	ReplaceAgentSkillBindings(ctx context.Context, tenantID uint64, agentID string, skillIDs []string) error

@@ -44,6 +44,26 @@ func (TenantSkillInstall) TableName() string {
 	return "tenant_skill_installs"
 }
 
+type TenantSkillInstallInfo struct {
+	InstallID           string    `json:"install_id"`
+	TenantID            uint64    `json:"tenant_id"`
+	SkillID             string    `json:"skill_id"`
+	Enabled             bool      `json:"enabled"`
+	InstalledBy         string    `json:"installed_by"`
+	ApprovedPermissions JSON      `json:"approved_permissions"`
+	InstalledAt         time.Time `json:"installed_at"`
+	InstallUpdatedAt    time.Time `json:"install_updated_at"`
+	Name                string    `json:"name"`
+	Version             string    `json:"version"`
+	Description         string    `json:"description"`
+	SourceType          string    `json:"source_type"`
+	SourceURI           string    `json:"source_uri"`
+	Digest              string    `json:"digest"`
+	Manifest            JSON      `json:"manifest"`
+	Status              string    `json:"status"`
+	IsBuiltin           bool      `json:"is_builtin"`
+}
+
 type AgentSkillBinding struct {
 	ID        string    `gorm:"column:id;primaryKey" json:"id"`
 	TenantID  uint64    `gorm:"column:tenant_id" json:"tenant_id"`
