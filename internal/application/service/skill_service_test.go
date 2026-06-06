@@ -164,6 +164,42 @@ func TestSkillService_EnsureTenantPreloadedSkillInstalls_DoesNotReenableDisabled
 	assert.Empty(t, installed)
 }
 
+func TestSkillService_TenantSkillLifecycle_DisableHidesFromCompatibilityAndRuntime(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	writeTestSkill(t, tempDir, "alpha-dir", "alpha", "Alpha skill")
+	writeTestSkill(t, tempDir, "beta-dir", "beta", "Beta skill")
+
+	repo := repository.NewSkillRepository(setupSkillServiceTestDB(t))
+	svc := NewSkillServiceWithRepository(repo, tempDir)
+
+	installs, err := svc.ListTenantSkillInstalls(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, installs, 2)
+	assert.Equal(t, "alpha", installs[0].Name)
+	assert.True(t, installs[0].Enabled)
+	assert.Equal(t, "beta", installs[1].Name)
+	assert.True(t, installs[1].Enabled)
+
+	require.NoError(t, svc.SetTenantSkillEnabled(ctx, 10, "preloaded-alpha-0-0-0", false))
+
+	installs, err = svc.ListTenantSkillInstalls(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, installs, 2)
+	assert.False(t, installs[0].Enabled)
+	assert.True(t, installs[1].Enabled)
+
+	metadata, err := svc.ListTenantSkills(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, metadata, 1)
+	assert.Equal(t, "beta", metadata[0].Name)
+
+	names, dirs, err := svc.ResolveAgentSkillAccess(ctx, 10, "agent-a", "all", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"beta"}, names)
+	assert.Equal(t, []string{tempDir}, dirs)
+}
+
 func TestSkillService_SyncAndResolveAgentSelectedSkills(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()

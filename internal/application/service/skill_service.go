@@ -220,6 +220,32 @@ func (s *skillService) ListTenantSkills(ctx context.Context, tenantID uint64) ([
 	return skillRegistryEntriesToMetadata(entries), nil
 }
 
+func (s *skillService) ListTenantSkillInstalls(ctx context.Context, tenantID uint64) ([]*types.TenantSkillInstallInfo, error) {
+	if tenantID == 0 || s.repo == nil {
+		return nil, nil
+	}
+	if err := s.EnsureTenantPreloadedSkillInstalls(ctx, tenantID); err != nil {
+		return nil, err
+	}
+	return s.repo.ListTenantSkillInstallEntries(ctx, tenantID)
+}
+
+func (s *skillService) SetTenantSkillEnabled(ctx context.Context, tenantID uint64, skillID string, enabled bool) error {
+	if tenantID == 0 {
+		return fmt.Errorf("tenant ID is required")
+	}
+	if strings.TrimSpace(skillID) == "" {
+		return fmt.Errorf("skill ID is required")
+	}
+	if s.repo == nil {
+		return fmt.Errorf("skill repository is required")
+	}
+	if err := s.repo.SetTenantSkillInstallEnabled(ctx, tenantID, skillID, enabled); err != nil {
+		return fmt.Errorf("failed to update tenant skill install: %w", err)
+	}
+	return nil
+}
+
 func (s *skillService) InstallLocalSkillPackage(
 	ctx context.Context,
 	tenantID uint64,

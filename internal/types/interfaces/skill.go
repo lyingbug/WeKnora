@@ -15,6 +15,12 @@ type SkillService interface {
 	// ListTenantSkills returns Skills installed and enabled for a tenant.
 	ListTenantSkills(ctx context.Context, tenantID uint64) ([]*skills.SkillMetadata, error)
 
+	// ListTenantSkillInstalls returns all active registry Skills installed for a tenant, including disabled installs.
+	ListTenantSkillInstalls(ctx context.Context, tenantID uint64) ([]*types.TenantSkillInstallInfo, error)
+
+	// SetTenantSkillEnabled toggles a tenant Skill install without deleting registry or package data.
+	SetTenantSkillEnabled(ctx context.Context, tenantID uint64, skillID string, enabled bool) error
+
 	// ImportPreloadedSkills scans preloaded Skill directories and upserts their metadata into the registry.
 	ImportPreloadedSkills(ctx context.Context) error
 
