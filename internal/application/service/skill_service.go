@@ -351,6 +351,7 @@ func (s *skillService) InstallLocalSkillPackageWithPermissions(
 
 func normalizeApprovedSkillPermissions(approved types.JSON, fallback []byte) (types.JSON, error) {
 	raw := []byte(approved)
+	explicitApproval := len(raw) > 0
 	if len(raw) == 0 {
 		raw = fallback
 	}
@@ -365,11 +366,36 @@ func normalizeApprovedSkillPermissions(approved types.JSON, fallback []byte) (ty
 	if obj == nil {
 		return types.JSON("{}"), nil
 	}
+	if explicitApproval {
+		requested, err := parseSkillPermissionObject(fallback, "requested permissions")
+		if err != nil {
+			return nil, err
+		}
+		for key := range obj {
+			if _, ok := requested[key]; !ok {
+				return nil, fmt.Errorf("approved permission %s was not requested by skill manifest", key)
+			}
+		}
+	}
 	normalized, err := json.Marshal(obj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to normalize approved permissions: %w", err)
 	}
 	return types.JSON(normalized), nil
+}
+
+func parseSkillPermissionObject(raw []byte, label string) (map[string]interface{}, error) {
+	if len(raw) == 0 {
+		return map[string]interface{}{}, nil
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, fmt.Errorf("%s must be a JSON object: %w", label, err)
+	}
+	if obj == nil {
+		return map[string]interface{}{}, nil
+	}
+	return obj, nil
 }
 
 func (s *skillService) SyncAgentSkillBindings(
