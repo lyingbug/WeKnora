@@ -3,6 +3,8 @@ package skills
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/Tencent/WeKnora/internal/sandbox"
@@ -210,6 +212,9 @@ func (m *Manager) ExecuteScriptWithOptions(
 	if len(options.Mounts) > 0 && m.sandboxMgr.GetType() != sandbox.SandboxTypeDocker && m.sandboxMgr.GetType() != sandbox.SandboxTypeRemote {
 		return nil, fmt.Errorf("file permission mounts require docker or remote sandbox")
 	}
+	if options.AllowNetwork && m.sandboxMgr.GetType() == sandbox.SandboxTypeDocker && !allowUnsafeDockerSkillNetwork() {
+		return nil, fmt.Errorf("skill network access with docker sandbox requires remote sandbox for strong egress isolation or WEKNORA_SKILL_DOCKER_UNSAFE_PROXY_EGRESS=true for local development")
+	}
 
 	// Get the skill base path
 	basePath, err := m.loader.GetSkillBasePath(skillName)
@@ -244,6 +249,11 @@ func (m *Manager) ExecuteScriptWithOptions(
 
 	// Execute in sandbox
 	return m.sandboxMgr.Execute(ctx, config)
+}
+
+func allowUnsafeDockerSkillNetwork() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("WEKNORA_SKILL_DOCKER_UNSAFE_PROXY_EGRESS")))
+	return value == "1" || value == "true" || value == "yes"
 }
 
 // GetSkillInfo returns detailed information about a skill

@@ -394,7 +394,7 @@ description: A test skill for network execution.
 		t.Fatalf("Failed to write script: %v", err)
 	}
 
-	fakeSandbox := &capturingSandboxManager{sandboxType: sandbox.SandboxTypeDocker}
+	fakeSandbox := &capturingSandboxManager{sandboxType: sandbox.SandboxTypeRemote}
 	manager := NewManager(&ManagerConfig{
 		SkillDirs: []string{tmpDir},
 		Enabled:   true,
@@ -488,6 +488,107 @@ description: A test skill for file mounts.
 	}
 	if !containsString(err.Error(), "require docker or remote sandbox") {
 		t.Fatalf("Expected isolated sandbox error, got %v", err)
+	}
+}
+
+func TestManagerExecuteScriptWithOptionsRejectsDockerNetworkByDefault(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "skills-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	skillDir := filepath.Join(tmpDir, "docker-web-skill")
+	scriptsDir := filepath.Join(skillDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		t.Fatalf("Failed to create skill dir: %v", err)
+	}
+	skillContent := `---
+name: docker-web-skill
+description: A test skill for docker network rejection.
+---
+# Docker Web Skill
+`
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0644); err != nil {
+		t.Fatalf("Failed to write SKILL.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scriptsDir, "run.py"), []byte("print('ok')"), 0644); err != nil {
+		t.Fatalf("Failed to write script: %v", err)
+	}
+
+	manager := NewManager(&ManagerConfig{
+		SkillDirs: []string{tmpDir},
+		Enabled:   true,
+	}, &capturingSandboxManager{sandboxType: sandbox.SandboxTypeDocker})
+
+	_, err = manager.ExecuteScriptWithOptions(
+		context.Background(),
+		"docker-web-skill",
+		"scripts/run.py",
+		nil,
+		"",
+		ExecuteScriptOptions{
+			AllowNetwork:          true,
+			AllowedNetworkDomains: []string{"api.example.com"},
+		},
+	)
+	if err == nil {
+		t.Fatal("Expected docker network execution to be rejected by default")
+	}
+	if !containsString(err.Error(), "requires remote sandbox for strong egress isolation") {
+		t.Fatalf("Expected strong egress isolation error, got %v", err)
+	}
+}
+
+func TestManagerExecuteScriptWithOptionsAllowsDockerNetworkWithUnsafeOptIn(t *testing.T) {
+	t.Setenv("WEKNORA_SKILL_DOCKER_UNSAFE_PROXY_EGRESS", "true")
+
+	tmpDir, err := os.MkdirTemp("", "skills-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	skillDir := filepath.Join(tmpDir, "docker-web-dev-skill")
+	scriptsDir := filepath.Join(skillDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		t.Fatalf("Failed to create skill dir: %v", err)
+	}
+	skillContent := `---
+name: docker-web-dev-skill
+description: A test skill for docker network dev opt-in.
+---
+# Docker Web Dev Skill
+`
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0644); err != nil {
+		t.Fatalf("Failed to write SKILL.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scriptsDir, "run.py"), []byte("print('ok')"), 0644); err != nil {
+		t.Fatalf("Failed to write script: %v", err)
+	}
+
+	fakeSandbox := &capturingSandboxManager{sandboxType: sandbox.SandboxTypeDocker}
+	manager := NewManager(&ManagerConfig{
+		SkillDirs: []string{tmpDir},
+		Enabled:   true,
+	}, fakeSandbox)
+
+	_, err = manager.ExecuteScriptWithOptions(
+		context.Background(),
+		"docker-web-dev-skill",
+		"scripts/run.py",
+		nil,
+		"",
+		ExecuteScriptOptions{
+			AllowNetwork:          true,
+			AllowedNetworkDomains: []string{"api.example.com"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("ExecuteScriptWithOptions failed: %v", err)
+	}
+	if !fakeSandbox.lastConfig.AllowNetwork {
+		t.Fatal("Expected unsafe opt-in to pass AllowNetwork to docker sandbox")
 	}
 }
 

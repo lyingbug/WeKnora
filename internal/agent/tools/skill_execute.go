@@ -677,6 +677,9 @@ func (t *ExecuteSkillScriptTool) approvedMCPBindingEnv(
 		return nil, nil, fmt.Errorf("failed to register skill mcp broker session: %w", err)
 	}
 	env["WEKNORA_SKILL_MCP_BROKER_URL"] = dockerHostBrokerURL(registration.URL)
+	if publicURL := strings.TrimSpace(os.Getenv("WEKNORA_SKILL_MCP_BROKER_PUBLIC_URL")); publicURL != "" {
+		env["WEKNORA_SKILL_MCP_BROKER_URL"] = publicURL
+	}
 	env["WEKNORA_SKILL_MCP_TOKEN"] = registration.Token
 	return env, registration.Cleanup, nil
 }

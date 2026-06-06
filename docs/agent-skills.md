@@ -133,6 +133,8 @@ Sandbox 相关配置通过环境变量设置：
 | `WEKNORA_SANDBOX_DOCKER_IMAGE` | 自定义 Docker 镜像 | `wechatopenai/weknora-sandbox:latest` |
 | `WEKNORA_SANDBOX_REMOTE_ENDPOINT` | 远端 sandbox 调度器基础 URL，仅 `remote` 模式使用 | 空 |
 | `WEKNORA_SANDBOX_REMOTE_TOKEN` | 远端 sandbox 调度器 Bearer token，仅 `remote` 模式使用 | 空 |
+| `WEKNORA_SKILL_DOCKER_UNSAFE_PROXY_EGRESS` | 允许 Docker sandbox 使用本地 HTTP proxy 处理已批准网络域名；仅建议本地开发使用 | `false` |
+| `WEKNORA_SKILL_MCP_BROKER_PUBLIC_URL` | 覆盖注入给 Skill 的 MCP broker URL，供 remote sandbox 使用集群内/公网可达地址 | 空 |
 
 ### Sandbox 模式
 
@@ -370,7 +372,7 @@ Content-Type: application/json
 }
 ```
 
-未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb`、`compute.cpu` 与 `files.session-temp` 依赖 Docker 或 remote sandbox 生效，local fallback 只能提供进程级超时和基础校验，遇到文件挂载权限会拒绝执行。`network` 会按 sandbox 级别强制开关，对脚本中静态可见的 URL host 做批准域名校验；Docker 模式会在运行期注入 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 指向本机 egress proxy，proxy 按批准域名放行 HTTP 和 HTTPS CONNECT；remote 模式会把相同 allowlist 传给远端调度器，由调度器在网络命名空间、VPC egress gateway 或等价基础设施层禁止未批准直连。`mcp` 会通过本机 broker 调用服务端 MCP client，不会把 MCP URL、headers、token 或 api key 暴露给脚本。
+未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb`、`compute.cpu` 与 `files.session-temp` 依赖 Docker 或 remote sandbox 生效，local fallback 只能提供进程级超时和基础校验，遇到文件挂载权限会拒绝执行。`network` 会按 sandbox 级别强制开关，对脚本中静态可见的 URL host 做批准域名校验；Docker 模式默认拒绝带网络权限的 Skill，因为单纯注入 `HTTP_PROXY` 不能阻止恶意脚本直连外网；仅当 `WEKNORA_SKILL_DOCKER_UNSAFE_PROXY_EGRESS=true` 时，Docker 会启用本地 HTTP/HTTPS egress proxy 作为开发模式。生产强隔离路径是 `remote` sandbox：后端会把相同 allowlist 传给远端调度器，由调度器在网络命名空间、VPC egress gateway 或等价基础设施层禁止未批准直连。`mcp` 会通过 broker 调用服务端 MCP client，不会把 MCP URL、headers、token 或 api key 暴露给脚本；remote sandbox 部署时应设置 `WEKNORA_SKILL_MCP_BROKER_PUBLIC_URL` 为调度器可访问的 broker 地址。
 
 ### 租户级凭据
 
