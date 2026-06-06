@@ -6,6 +6,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 )
@@ -42,7 +43,8 @@ type SkillInfoResponse struct {
 func (h *SkillHandler) ListSkills(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	skillsMetadata, err := h.skillService.ListPreloadedSkills(ctx)
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	skillsMetadata, err := h.skillService.ListTenantSkills(ctx, tenantID)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(errors.NewInternalServerError("Failed to list skills: " + err.Error()))
