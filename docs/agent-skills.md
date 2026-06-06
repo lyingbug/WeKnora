@@ -200,6 +200,8 @@ Skills 功能通过两个工具与 Agent 交互：
 
 这为后续租户级安装、Agent 级绑定、版本管理、权限审批和云端沙箱运行做准备，同时保持现有 Agent 配置兼容。
 
+第二阶段开始，预装 Skill 会为租户生成安装记录，Agent 编辑页仍使用 `skills_selection_mode` 和 `selected_skills` 配置，但后端会同步到 `agent_skill_bindings`。运行时会根据当前 Agent 所属租户的已安装 Skill 过滤可用 Skill，避免 Agent 暴露未安装或已禁用的 Skill。
+
 系统内置了以下 5 个预加载技能，用于增强知识库问答和文档处理能力：
 
 ### 1. citation-generator - 引用生成器
