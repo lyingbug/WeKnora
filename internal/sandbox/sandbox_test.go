@@ -250,6 +250,28 @@ print(requests.get("https://api.example.com").status_code)
 	}
 }
 
+func TestDefaultManagerValidateExecutionNetworkDomainAllowlist(t *testing.T) {
+	manager := &DefaultManager{validator: NewScriptValidator()}
+
+	err := manager.validateExecution(&ExecuteConfig{
+		ScriptContent:         `import requests; print(requests.get("https://api.example.com/v1").text)`,
+		AllowNetwork:          true,
+		AllowedNetworkDomains: []string{"api.example.com"},
+	})
+	if err != nil {
+		t.Fatalf("Expected approved network domain to pass, got %v", err)
+	}
+
+	err = manager.validateExecution(&ExecuteConfig{
+		ScriptContent:         `import requests; print(requests.get("https://evil.example.com/v1").text)`,
+		AllowNetwork:          true,
+		AllowedNetworkDomains: []string{"api.example.com"},
+	})
+	if err == nil {
+		t.Fatal("Expected unapproved network domain to fail validation")
+	}
+}
+
 func TestExecuteResultHelpers(t *testing.T) {
 	// Test IsSuccess
 	successResult := &ExecuteResult{

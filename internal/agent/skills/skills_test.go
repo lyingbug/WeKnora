@@ -407,9 +407,10 @@ description: A test skill for network execution.
 		nil,
 		"",
 		ExecuteScriptOptions{
-			AllowNetwork: true,
-			MemoryLimit:  128 * 1024 * 1024,
-			CPULimit:     0.75,
+			AllowNetwork:          true,
+			AllowedNetworkDomains: []string{"api.example.com"},
+			MemoryLimit:           128 * 1024 * 1024,
+			CPULimit:              0.75,
 			Mounts: []sandbox.Mount{
 				{
 					HostPath:      "/tmp/weknora/session",
@@ -427,6 +428,9 @@ description: A test skill for network execution.
 	}
 	if !fakeSandbox.lastConfig.AllowNetwork {
 		t.Fatal("Expected AllowNetwork to be passed to sandbox")
+	}
+	if len(fakeSandbox.lastConfig.AllowedNetworkDomains) != 1 || fakeSandbox.lastConfig.AllowedNetworkDomains[0] != "api.example.com" {
+		t.Fatalf("Expected AllowedNetworkDomains to be passed to sandbox, got %v", fakeSandbox.lastConfig.AllowedNetworkDomains)
 	}
 	if fakeSandbox.lastConfig.MemoryLimit != 128*1024*1024 {
 		t.Fatalf("Expected MemoryLimit to be passed to sandbox, got %d", fakeSandbox.lastConfig.MemoryLimit)

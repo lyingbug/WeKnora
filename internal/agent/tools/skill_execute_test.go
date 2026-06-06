@@ -140,6 +140,7 @@ func TestApprovedExecutionPolicy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 3*time.Second, policy.Timeout)
 	assert.True(t, policy.AllowNetwork)
+	assert.Equal(t, []string{"api.example.com"}, policy.AllowedNetworkDomains)
 	assert.Equal(t, int64(128*1024*1024), policy.MemoryLimit)
 	assert.Equal(t, 0.75, policy.CPULimit)
 }

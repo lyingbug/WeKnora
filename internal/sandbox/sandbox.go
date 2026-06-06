@@ -96,6 +96,9 @@ type ExecuteConfig struct {
 	// AllowNetwork enables network access (Docker only)
 	AllowNetwork bool
 
+	// AllowedNetworkDomains limits statically-detected network targets.
+	AllowedNetworkDomains []string
+
 	// MemoryLimit is the maximum memory in bytes (Docker only)
 	MemoryLimit int64
 

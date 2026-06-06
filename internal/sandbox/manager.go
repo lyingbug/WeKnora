@@ -130,6 +130,9 @@ func (m *DefaultManager) validateExecution(config *ExecuteConfig) error {
 	if scriptContent != "" {
 		result := m.validator.ValidateScript(scriptContent)
 		if config.AllowNetwork {
+			if domainErr := m.validator.ValidateNetworkDomains(scriptContent, config.AllowedNetworkDomains); domainErr != nil {
+				return domainErr
+			}
 			result = allowNetworkValidation(result)
 		}
 		if !result.Valid {

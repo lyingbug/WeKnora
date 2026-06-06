@@ -33,11 +33,12 @@ type ManagerConfig struct {
 
 // ExecuteScriptOptions controls sandbox behavior for a skill script execution.
 type ExecuteScriptOptions struct {
-	AllowNetwork bool
-	MemoryLimit  int64
-	CPULimit     float64
-	Mounts       []sandbox.Mount
-	Env          map[string]string
+	AllowNetwork          bool
+	AllowedNetworkDomains []string
+	MemoryLimit           int64
+	CPULimit              float64
+	Mounts                []sandbox.Mount
+	Env                   map[string]string
 }
 
 // NewManager creates a new skill manager with the given configuration
@@ -227,15 +228,16 @@ func (m *Manager) ExecuteScriptWithOptions(
 
 	// Prepare execution config
 	config := &sandbox.ExecuteConfig{
-		Script:       file.Path,
-		Args:         args,
-		WorkDir:      basePath,
-		Stdin:        stdin,
-		AllowNetwork: options.AllowNetwork,
-		MemoryLimit:  options.MemoryLimit,
-		CPULimit:     options.CPULimit,
-		Mounts:       options.Mounts,
-		Env:          options.Env,
+		Script:                file.Path,
+		Args:                  args,
+		WorkDir:               basePath,
+		Stdin:                 stdin,
+		AllowNetwork:          options.AllowNetwork,
+		AllowedNetworkDomains: options.AllowedNetworkDomains,
+		MemoryLimit:           options.MemoryLimit,
+		CPULimit:              options.CPULimit,
+		Mounts:                options.Mounts,
+		Env:                   options.Env,
 	}
 
 	// Execute in sandbox

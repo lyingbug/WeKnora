@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -188,6 +189,58 @@ func (v *ScriptValidator) ValidateAll(scriptContent string, args []string, stdin
 	}
 
 	return result
+}
+
+// ValidateNetworkDomains blocks statically-detected URL hosts that are outside the approved domain list.
+func (v *ScriptValidator) ValidateNetworkDomains(content string, allowedDomains []string) error {
+	if len(allowedDomains) == 0 {
+		return nil
+	}
+	allowed := make(map[string]struct{}, len(allowedDomains))
+	for _, domain := range allowedDomains {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if domain != "" {
+			allowed[domain] = struct{}{}
+		}
+	}
+	for _, host := range extractURLHosts(content) {
+		if !domainAllowed(host, allowed) {
+			return &ValidationError{
+				Type:    "network_domain",
+				Pattern: host,
+				Context: extractContext(content, host),
+				Message: fmt.Sprintf("Network domain is not approved: %s", host),
+			}
+		}
+	}
+	return nil
+}
+
+func extractURLHosts(content string) []string {
+	re := regexp.MustCompile(`https?://[^\s'"` + "`" + `)>,]+`)
+	matches := re.FindAllString(content, -1)
+	hosts := make([]string, 0, len(matches))
+	for _, match := range matches {
+		parsed, err := url.Parse(match)
+		if err != nil || parsed.Hostname() == "" {
+			continue
+		}
+		hosts = append(hosts, strings.ToLower(parsed.Hostname()))
+	}
+	return hosts
+}
+
+func domainAllowed(host string, allowed map[string]struct{}) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if _, ok := allowed[host]; ok {
+		return true
+	}
+	for domain := range allowed {
+		if strings.HasSuffix(host, "."+domain) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasShellOperators checks for shell command chaining operators

@@ -137,11 +137,12 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 		input.Args,
 		input.Input,
 		skills.ExecuteScriptOptions{
-			AllowNetwork: policy.AllowNetwork,
-			MemoryLimit:  policy.MemoryLimit,
-			CPULimit:     policy.CPULimit,
-			Mounts:       policy.Mounts,
-			Env:          policy.Env,
+			AllowNetwork:          policy.AllowNetwork,
+			AllowedNetworkDomains: policy.AllowedNetworkDomains,
+			MemoryLimit:           policy.MemoryLimit,
+			CPULimit:              policy.CPULimit,
+			Mounts:                policy.Mounts,
+			Env:                   policy.Env,
 		},
 	)
 	if err != nil {
@@ -226,12 +227,13 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 }
 
 type skillExecutionPolicy struct {
-	Timeout      time.Duration
-	AllowNetwork bool
-	MemoryLimit  int64
-	CPULimit     float64
-	Mounts       []sandbox.Mount
-	Env          map[string]string
+	Timeout               time.Duration
+	AllowNetwork          bool
+	AllowedNetworkDomains []string
+	MemoryLimit           int64
+	CPULimit              float64
+	Mounts                []sandbox.Mount
+	Env                   map[string]string
 }
 
 func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, skillName string) (skillExecutionPolicy, error) {
@@ -259,7 +261,7 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 	if err != nil {
 		return skillExecutionPolicy{}, err
 	}
-	allowNetwork, err := approvedNetworkAllowed(permissions)
+	networkDomains, err := approvedNetworkDomains(permissions)
 	if err != nil {
 		return skillExecutionPolicy{}, err
 	}
@@ -271,12 +273,13 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 		return skillExecutionPolicy{}, err
 	}
 	return skillExecutionPolicy{
-		Timeout:      timeout,
-		AllowNetwork: allowNetwork,
-		MemoryLimit:  memoryLimit,
-		CPULimit:     cpuLimit,
-		Mounts:       mounts,
-		Env:          env,
+		Timeout:               timeout,
+		AllowNetwork:          len(networkDomains) > 0,
+		AllowedNetworkDomains: networkDomains,
+		MemoryLimit:           memoryLimit,
+		CPULimit:              cpuLimit,
+		Mounts:                mounts,
+		Env:                   env,
 	}, nil
 }
 
@@ -344,28 +347,38 @@ func approvedComputeNumber(permissions types.JSON, key string) (float64, bool, e
 }
 
 func approvedNetworkAllowed(permissions types.JSON) (bool, error) {
+	domains, err := approvedNetworkDomains(permissions)
+	if err != nil {
+		return false, err
+	}
+	return len(domains) > 0, nil
+}
+
+func approvedNetworkDomains(permissions types.JSON) ([]string, error) {
 	permissionsMap, err := permissions.Map()
 	if err != nil {
-		return false, fmt.Errorf("approved permissions are invalid JSON: %w", err)
+		return nil, fmt.Errorf("approved permissions are invalid JSON: %w", err)
 	}
 	networkRaw, ok := permissionsMap["network"]
 	if !ok || networkRaw == nil {
-		return false, nil
+		return nil, nil
 	}
 	network, ok := networkRaw.([]interface{})
 	if !ok {
-		return false, fmt.Errorf("approved permissions network must be an array")
+		return nil, fmt.Errorf("approved permissions network must be an array")
 	}
+	domains := make([]string, 0, len(network))
 	for _, rawDomain := range network {
 		domain, ok := rawDomain.(string)
 		if !ok {
-			return false, fmt.Errorf("approved permissions network entries must be strings")
+			return nil, fmt.Errorf("approved permissions network entries must be strings")
 		}
-		if strings.TrimSpace(domain) != "" {
-			return true, nil
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if domain != "" {
+			domains = append(domains, domain)
 		}
 	}
-	return false, nil
+	return domains, nil
 }
 
 func rejectUnsupportedRuntimePermissions(permissions types.JSON) error {
