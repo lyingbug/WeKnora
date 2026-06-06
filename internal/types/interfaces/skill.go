@@ -39,6 +39,9 @@ type SkillService interface {
 	// UpdateTenantSkillCredentials stores tenant-scoped credentials for an installed Skill.
 	UpdateTenantSkillCredentials(ctx context.Context, tenantID uint64, skillID string, updatedBy string, credentials map[string]string) error
 
+	// UpdateTenantSkillMCPBindings stores tenant-scoped MCP alias bindings for an installed Skill.
+	UpdateTenantSkillMCPBindings(ctx context.Context, tenantID uint64, skillID string, updatedBy string, bindings map[string]string) error
+
 	// SyncAgentSkillBindings synchronizes explicit Agent binding rows from the Agent config.
 	SyncAgentSkillBindings(ctx context.Context, tenantID uint64, agentID string, mode string, selectedSkillNames []string) error
 
@@ -68,6 +71,9 @@ type SkillRepository interface {
 	ListAgentSkillBindings(ctx context.Context, tenantID uint64, agentID string) ([]*types.SkillRegistryEntry, error)
 	UpsertTenantSkillCredential(ctx context.Context, credential *types.TenantSkillCredential) error
 	GetTenantSkillCredentialByName(ctx context.Context, tenantID uint64, skillName string) (*types.TenantSkillCredential, error)
+	ReplaceTenantSkillMCPBindings(ctx context.Context, tenantID uint64, skillID string, bindings []*types.TenantSkillMCPBinding) error
+	ListTenantSkillMCPBindingsByName(ctx context.Context, tenantID uint64, skillName string) ([]*types.TenantSkillMCPBinding, error)
+	ListEnabledTenantMCPServiceIDs(ctx context.Context, tenantID uint64, serviceIDs []string) (map[string]struct{}, error)
 }
 
 type SkillExecutionRunRepository interface {

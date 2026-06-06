@@ -750,6 +750,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_credentials_tenant_skill ON t
 CREATE INDEX IF NOT EXISTS idx_tenant_skill_credentials_tenant ON tenant_skill_credentials(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_tenant_skill_credentials_skill ON tenant_skill_credentials(skill_id);
 
+CREATE TABLE IF NOT EXISTS tenant_skill_mcp_bindings (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    skill_id VARCHAR(64) NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    mcp_name VARCHAR(128) NOT NULL,
+    service_id VARCHAR(36) NOT NULL REFERENCES mcp_services(id) ON DELETE CASCADE,
+    updated_by VARCHAR(64) NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_mcp_bindings_tenant_skill_name ON tenant_skill_mcp_bindings(tenant_id, skill_id, mcp_name);
+CREATE INDEX IF NOT EXISTS idx_tenant_skill_mcp_bindings_tenant ON tenant_skill_mcp_bindings(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_skill_mcp_bindings_skill ON tenant_skill_mcp_bindings(skill_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_skill_mcp_bindings_service ON tenant_skill_mcp_bindings(service_id);
+
 CREATE TABLE IF NOT EXISTS skill_execution_runs (
     id VARCHAR(64) PRIMARY KEY,
     tenant_id INTEGER NOT NULL DEFAULT 0,

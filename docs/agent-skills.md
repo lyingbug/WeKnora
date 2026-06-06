@@ -286,7 +286,7 @@ Content-Type: application/json
 | `network` | 仅当批准权限包含非空数组时，sandbox 才会启用网络；批准域名会传入执行策略，并用于脚本中显式 URL host 的静态 allowlist 校验 |
 | `files` | `session-temp` 会创建租户/用户/会话隔离的临时目录，并以 writable mount 暴露为 `/mnt/weknora/session`；其它 scope 会被拒绝 |
 | `credentials` | 仅注入批准列表中的凭据名；凭据由租户管理员单独配置，运行时作为同名环境变量传入 sandbox，响应和审计不回显 secret 值 |
-| `mcp` | 非空权限会被运行时拒绝，直到 Skill 与租户 MCP 服务绑定实现 |
+| `mcp` | 仅允许 manifest/批准列表中的 MCP alias；租户管理员需把 alias 绑定到当前租户已启用 MCP service，运行时会校验绑定并注入绑定元数据 |
 
 示例：
 
@@ -303,7 +303,7 @@ Content-Type: application/json
 }
 ```
 
-未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb`、`compute.cpu` 与 `files.session-temp` 依赖 Docker sandbox 生效，local fallback 只能提供进程级超时和基础校验，遇到文件挂载权限会拒绝执行。`network` 目前会按 sandbox 级别强制开关，并对脚本中静态可见的 URL host 做批准域名校验；完整网络层 egress allowlist 还需要后续网络代理/网关适配后继续细化。`mcp` 当前采用 fail-closed 策略，避免批准后却缺少真实隔离或绑定。
+未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb`、`compute.cpu` 与 `files.session-temp` 依赖 Docker sandbox 生效，local fallback 只能提供进程级超时和基础校验，遇到文件挂载权限会拒绝执行。`network` 目前会按 sandbox 级别强制开关，并对脚本中静态可见的 URL host 做批准域名校验；完整网络层 egress allowlist 还需要后续网络代理/网关适配后继续细化。`mcp` 目前完成控制面绑定和运行时绑定校验，脚本内直接调用 MCP 的 broker/proxy 仍是后续运行时能力。
 
 ### 租户级凭据
 
@@ -321,6 +321,33 @@ Content-Type: application/json
 ```
 
 凭据名必须是环境变量形式：首字符为大写字母或 `_`，后续字符为大写字母、数字或 `_`。后端会把凭据保存在 `tenant_skill_credentials` 中；当 `SYSTEM_AES_KEY` 为 32 字节时，按现有 AES-256-GCM 机制加密保存。运行时只会从当前租户、当前已安装且已启用的 Skill 中读取凭据，并且只注入批准列表中的名称；缺失已批准凭据会拒绝执行，避免脚本在半配置状态下运行。
+
+### 租户级 MCP 绑定
+
+Skill manifest 中的 `permissions.mcp` 表示 Skill 需要的逻辑 MCP alias，例如：
+
+```json
+{
+  "permissions": {
+    "mcp": ["github"]
+  }
+}
+```
+
+安装时管理员仍需在 `approved_permissions.mcp` 中批准 alias。随后通过单独接口把 alias 绑定到当前租户已有的 MCP service id：
+
+```http
+PUT /api/v1/skills/{skill_id}/mcp-bindings
+Content-Type: application/json
+
+{
+  "bindings": {
+    "github": "mcp-service-id"
+  }
+}
+```
+
+后端只接受已批准 alias，并要求目标 MCP service 属于当前租户且处于启用状态。绑定保存在 `tenant_skill_mcp_bindings`，不会复制 MCP 的 URL、headers、token 或 api key。运行时会把有效绑定注入为 `WEKNORA_SKILL_MCP_BINDINGS`，内容是 alias 到 service id 的 JSON；如果批准的 alias 缺少绑定，脚本执行会被拒绝。
 
 ### 租户级启停
 

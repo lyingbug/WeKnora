@@ -971,6 +971,7 @@ func RegisterSkillRoutes(r *gin.RouterGroup, skillHandler *handler.SkillHandler,
 		skills.POST("/preview-local", g.Admin(), skillHandler.PreviewLocalSkillPackage)
 		skills.POST("/install-local", g.Admin(), skillHandler.InstallLocalSkillPackage)
 		skills.PUT("/:skill_id/credentials", g.Admin(), skillHandler.UpdateTenantSkillCredentials)
+		skills.PUT("/:skill_id/mcp-bindings", g.Admin(), skillHandler.UpdateTenantSkillMCPBindings)
 		skills.PATCH("/:skill_id", g.Admin(), skillHandler.UpdateTenantSkillInstall)
 	}
 }

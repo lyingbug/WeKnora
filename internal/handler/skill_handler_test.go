@@ -32,6 +32,10 @@ type mockSkillService struct {
 	credentialSkillID  string
 	credentialUserID   string
 	credentials        map[string]string
+	mcpBindingTenantID uint64
+	mcpBindingSkillID  string
+	mcpBindingUserID   string
+	mcpBindings        map[string]string
 }
 
 type mockSkillExecutionRunRepo struct {
@@ -116,6 +120,20 @@ func (m *mockSkillService) UpdateTenantSkillCredentials(
 	m.credentialSkillID = skillID
 	m.credentialUserID = updatedBy
 	m.credentials = credentials
+	return nil
+}
+
+func (m *mockSkillService) UpdateTenantSkillMCPBindings(
+	_ context.Context,
+	tenantID uint64,
+	skillID string,
+	updatedBy string,
+	bindings map[string]string,
+) error {
+	m.mcpBindingTenantID = tenantID
+	m.mcpBindingSkillID = skillID
+	m.mcpBindingUserID = updatedBy
+	m.mcpBindings = bindings
 	return nil
 }
 
@@ -345,6 +363,51 @@ func TestSkillHandler_UpdateTenantSkillCredentials_RequiresCredentials(t *testin
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "credentials is required")
+}
+
+func TestSkillHandler_UpdateTenantSkillMCPBindings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &mockSkillService{}
+	h := NewSkillHandler(svc, nil)
+	r := gin.New()
+	r.PUT("/skills/:skill_id/mcp-bindings", func(c *gin.Context) {
+		c.Set(types.TenantIDContextKey.String(), uint64(10))
+		c.Set(types.UserIDContextKey.String(), "user-a")
+		h.UpdateTenantSkillMCPBindings(c)
+	})
+
+	body := bytes.NewBufferString(`{"bindings":{"github":"mcp-service-1","jira":"mcp-service-2"}}`)
+	req := httptest.NewRequest(http.MethodPut, "/skills/local-sample-1-0-0/mcp-bindings", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, uint64(10), svc.mcpBindingTenantID)
+	assert.Equal(t, "local-sample-1-0-0", svc.mcpBindingSkillID)
+	assert.Equal(t, "user-a", svc.mcpBindingUserID)
+	assert.Equal(t, "mcp-service-1", svc.mcpBindings["github"])
+	assert.Contains(t, w.Body.String(), `"configured":["github","jira"]`)
+	assert.NotContains(t, w.Body.String(), "mcp-service-1")
+}
+
+func TestSkillHandler_UpdateTenantSkillMCPBindings_RequiresBindings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := NewSkillHandler(&mockSkillService{}, nil)
+	r := gin.New()
+	r.PUT("/skills/:skill_id/mcp-bindings", h.UpdateTenantSkillMCPBindings)
+
+	req := httptest.NewRequest(http.MethodPut, "/skills/local-sample-1-0-0/mcp-bindings", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "bindings is required")
 }
 
 func TestSkillHandler_ListSkillExecutionRuns(t *testing.T) {

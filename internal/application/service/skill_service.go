@@ -439,6 +439,127 @@ func isSkillCredentialName(name string) bool {
 	return true
 }
 
+func (s *skillService) UpdateTenantSkillMCPBindings(
+	ctx context.Context,
+	tenantID uint64,
+	skillID string,
+	updatedBy string,
+	bindings map[string]string,
+) error {
+	if tenantID == 0 {
+		return fmt.Errorf("tenant ID is required")
+	}
+	skillID = strings.TrimSpace(skillID)
+	if skillID == "" {
+		return fmt.Errorf("skill ID is required")
+	}
+	if s.repo == nil {
+		return fmt.Errorf("skill repository is required")
+	}
+
+	install, err := s.findTenantSkillInstall(ctx, tenantID, skillID)
+	if err != nil {
+		return err
+	}
+	approvedAliases, err := approvedMCPAliases(install.ApprovedPermissions)
+	if err != nil {
+		return err
+	}
+	normalized, serviceIDs, err := normalizeTenantSkillMCPBindings(bindings, approvedAliases)
+	if err != nil {
+		return err
+	}
+	enabledServices, err := s.repo.ListEnabledTenantMCPServiceIDs(ctx, tenantID, serviceIDs)
+	if err != nil {
+		return fmt.Errorf("failed to validate MCP services: %w", err)
+	}
+
+	rows := make([]*types.TenantSkillMCPBinding, 0, len(normalized))
+	for alias, serviceID := range normalized {
+		if _, ok := enabledServices[serviceID]; !ok {
+			return fmt.Errorf("mcp service %s is not enabled for tenant", serviceID)
+		}
+		rows = append(rows, &types.TenantSkillMCPBinding{
+			ID:        tenantSkillMCPBindingID(tenantID, skillID, alias),
+			TenantID:  tenantID,
+			SkillID:   skillID,
+			MCPName:   alias,
+			ServiceID: serviceID,
+			UpdatedBy: updatedBy,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].MCPName < rows[j].MCPName
+	})
+	return s.repo.ReplaceTenantSkillMCPBindings(ctx, tenantID, skillID, rows)
+}
+
+func (s *skillService) findTenantSkillInstall(
+	ctx context.Context,
+	tenantID uint64,
+	skillID string,
+) (*types.TenantSkillInstallInfo, error) {
+	installs, err := s.repo.ListTenantSkillInstallEntries(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tenant skill installs: %w", err)
+	}
+	for _, install := range installs {
+		if install.SkillID == skillID {
+			return install, nil
+		}
+	}
+	return nil, fmt.Errorf("skill is not installed for tenant: %s", skillID)
+}
+
+func approvedMCPAliases(permissions types.JSON) (map[string]struct{}, error) {
+	values, err := approvedStringArrayPermission("mcp", permissions)
+	if err != nil {
+		return nil, err
+	}
+	aliases := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		aliases[value] = struct{}{}
+	}
+	return aliases, nil
+}
+
+func approvedStringArrayPermission(key string, permissions types.JSON) ([]string, error) {
+	permissionsMap, err := permissions.Map()
+	if err != nil {
+		return nil, fmt.Errorf("approved permissions are invalid JSON: %w", err)
+	}
+	raw, ok := permissionsMap[key]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	return stringArrayPermission(raw, "approved "+key)
+}
+
+func normalizeTenantSkillMCPBindings(
+	bindings map[string]string,
+	approvedAliases map[string]struct{},
+) (map[string]string, []string, error) {
+	normalized := make(map[string]string, len(bindings))
+	serviceIDs := make([]string, 0, len(bindings))
+	for alias, serviceID := range bindings {
+		alias = strings.TrimSpace(alias)
+		serviceID = strings.TrimSpace(serviceID)
+		if alias == "" {
+			return nil, nil, fmt.Errorf("mcp binding alias is required")
+		}
+		if _, ok := approvedAliases[alias]; !ok {
+			return nil, nil, fmt.Errorf("mcp binding alias %s was not approved for skill", alias)
+		}
+		if serviceID == "" {
+			return nil, nil, fmt.Errorf("mcp service id is required for alias %s", alias)
+		}
+		normalized[alias] = serviceID
+		serviceIDs = append(serviceIDs, serviceID)
+	}
+	sort.Strings(serviceIDs)
+	return normalized, serviceIDs, nil
+}
+
 func normalizeApprovedSkillPermissions(approved types.JSON, fallback []byte) (types.JSON, error) {
 	raw := []byte(approved)
 	explicitApproval := len(raw) > 0
@@ -467,6 +588,15 @@ func normalizeApprovedSkillPermissions(approved types.JSON, fallback []byte) (ty
 			}
 		}
 		if err := validateApprovedStringArraySubset("network", obj, requested); err != nil {
+			return nil, err
+		}
+		if err := validateApprovedStringArraySubset("files", obj, requested); err != nil {
+			return nil, err
+		}
+		if err := validateApprovedStringArraySubset("credentials", obj, requested); err != nil {
+			return nil, err
+		}
+		if err := validateApprovedStringArraySubset("mcp", obj, requested); err != nil {
 			return nil, err
 		}
 		if err := validateApprovedComputeSubset(obj, requested); err != nil {
@@ -840,6 +970,10 @@ func tenantSkillInstallID(tenantID uint64, skillID string) string {
 
 func tenantSkillCredentialID(tenantID uint64, skillID string) string {
 	return skillRegistryID("tenant-credential", fmt.Sprintf("%d", tenantID), skillID)
+}
+
+func tenantSkillMCPBindingID(tenantID uint64, skillID, alias string) string {
+	return skillRegistryID("tenant-mcp-binding", fmt.Sprintf("%d-%s", tenantID, alias), skillID)
 }
 
 func skillRegistryDigest(parts ...string) string {

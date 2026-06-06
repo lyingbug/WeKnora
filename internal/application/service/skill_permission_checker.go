@@ -53,3 +53,23 @@ func (c skillPermissionChecker) ApprovedCredentials(
 	}
 	return types.JSON(raw), nil
 }
+
+func (c skillPermissionChecker) ApprovedMCPBindings(
+	ctx context.Context,
+	tenantID uint64,
+	skillName string,
+) (types.JSON, error) {
+	bindings, err := c.repo.ListTenantSkillMCPBindingsByName(ctx, tenantID, skillName)
+	if err != nil {
+		return nil, err
+	}
+	bindingMap := make(map[string]string, len(bindings))
+	for _, binding := range bindings {
+		bindingMap[binding.MCPName] = binding.ServiceID
+	}
+	raw, err := json.Marshal(bindingMap)
+	if err != nil {
+		return nil, err
+	}
+	return types.JSON(raw), nil
+}

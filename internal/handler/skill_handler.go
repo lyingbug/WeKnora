@@ -66,6 +66,10 @@ type UpdateTenantSkillCredentialsRequest struct {
 	Credentials map[string]string `json:"credentials" binding:"required"`
 }
 
+type UpdateTenantSkillMCPBindingsRequest struct {
+	Bindings map[string]string `json:"bindings" binding:"required"`
+}
+
 type SkillExecutionRunResponse struct {
 	ID            string     `json:"id"`
 	TenantID      uint64     `json:"tenant_id"`
@@ -346,6 +350,59 @@ func (h *SkillHandler) UpdateTenantSkillCredentials(c *gin.Context) {
 
 	configured := make([]string, 0, len(req.Credentials))
 	for name := range req.Credentials {
+		configured = append(configured, name)
+	}
+	sort.Strings(configured)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"configured": configured,
+		},
+	})
+}
+
+// UpdateTenantSkillMCPBindings godoc
+// @Summary      配置租户 Skill MCP 绑定
+// @Description  为当前租户已安装 Skill 把 manifest 中的 MCP alias 绑定到租户 MCP service id。
+// @Tags         Skills
+// @Accept       json
+// @Produce      json
+// @Param        skill_id  path      string                              true  "Skill ID"
+// @Param        request   body      UpdateTenantSkillMCPBindingsRequest true  "MCP alias 绑定"
+// @Success      200       {object}  map[string]interface{}              "更新结果"
+// @Failure      400       {object}  map[string]interface{}              "请求参数错误"
+// @Failure      500       {object}  errors.AppError                     "服务器错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /skills/{skill_id}/mcp-bindings [put]
+func (h *SkillHandler) UpdateTenantSkillMCPBindings(c *gin.Context) {
+	ctx := c.Request.Context()
+	skillID := c.Param("skill_id")
+
+	var req UpdateTenantSkillMCPBindingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Bindings == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "bindings is required",
+		})
+		return
+	}
+
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	userID := c.GetString(types.UserIDContextKey.String())
+	if userID == "" {
+		userID, _ = types.UserIDFromContext(ctx)
+	}
+
+	if err := h.skillService.UpdateTenantSkillMCPBindings(ctx, tenantID, skillID, userID, req.Bindings); err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(errors.NewInternalServerError("Failed to update tenant skill MCP bindings: " + err.Error()))
+		return
+	}
+
+	configured := make([]string, 0, len(req.Bindings))
+	for name := range req.Bindings {
 		configured = append(configured, name)
 	}
 	sort.Strings(configured)

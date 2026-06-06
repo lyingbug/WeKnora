@@ -22,11 +22,14 @@ func setupSkillRepositoryTestDB(t *testing.T) *gorm.DB {
 		&types.TenantSkillInstall{},
 		&types.AgentSkillBinding{},
 		&types.TenantSkillCredential{},
+		&types.TenantSkillMCPBinding{},
+		&types.MCPService{},
 	))
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_version ON skills(name, version)").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_installs_tenant_skill ON tenant_skill_installs(tenant_id, skill_id)").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_skill_bindings_tenant_agent_skill ON agent_skill_bindings(tenant_id, agent_id, skill_id)").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_credentials_tenant_skill ON tenant_skill_credentials(tenant_id, skill_id)").Error)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_skill_mcp_bindings_tenant_skill_name ON tenant_skill_mcp_bindings(tenant_id, skill_id, mcp_name)").Error)
 
 	return db
 }
@@ -311,6 +314,48 @@ func TestSkillRepository_TenantSkillCredentialsByName(t *testing.T) {
 
 	_, err = repo.GetTenantSkillCredentialByName(ctx, 10, "beta")
 	require.Error(t, err)
+}
+
+func TestSkillRepository_TenantSkillMCPBindingsByName(t *testing.T) {
+	ctx := context.Background()
+	db := setupSkillRepositoryTestDB(t)
+	repo := NewSkillRepository(db)
+
+	require.NoError(t, repo.UpsertSkill(ctx, testSkillEntry("alpha", "1.0.0", types.SkillStatusActive)))
+	require.NoError(t, repo.UpsertTenantSkillInstall(ctx, &types.TenantSkillInstall{
+		ID:                  "install-alpha",
+		TenantID:            10,
+		SkillID:             "alpha-1.0.0",
+		Enabled:             true,
+		ApprovedPermissions: types.JSON(`{"mcp":["github"]}`),
+	}))
+	require.NoError(t, db.Create(&types.MCPService{
+		ID:            "mcp-service-1",
+		TenantID:      10,
+		Name:          "github",
+		Enabled:       true,
+		TransportType: types.MCPTransportSSE,
+	}).Error)
+	require.NoError(t, repo.ReplaceTenantSkillMCPBindings(ctx, 10, "alpha-1.0.0", []*types.TenantSkillMCPBinding{
+		{
+			ID:        "binding-alpha-github",
+			TenantID:  10,
+			SkillID:   "alpha-1.0.0",
+			MCPName:   "github",
+			ServiceID: "mcp-service-1",
+		},
+	}))
+
+	got, err := repo.ListTenantSkillMCPBindingsByName(ctx, 10, "alpha")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "github", got[0].MCPName)
+	assert.Equal(t, "mcp-service-1", got[0].ServiceID)
+
+	enabled, err := repo.ListEnabledTenantMCPServiceIDs(ctx, 10, []string{"mcp-service-1", "missing"})
+	require.NoError(t, err)
+	assert.Contains(t, enabled, "mcp-service-1")
+	assert.NotContains(t, enabled, "missing")
 }
 
 func TestSkillRepository_AgentBindings_ReplaceAndList(t *testing.T) {

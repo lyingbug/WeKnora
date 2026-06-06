@@ -93,11 +93,10 @@ func TestRejectUnsupportedRuntimePermissions(t *testing.T) {
 	require.NoError(t, err)
 
 	err = rejectUnsupportedRuntimePermissions(types.JSON(`{"mcp":{"services":["weather"]}}`))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mcp permissions are not supported at runtime")
+	require.NoError(t, err)
 }
 
-func TestApprovedExecutionPolicyRejectsUnsupportedRuntimePermissions(t *testing.T) {
+func TestApprovedExecutionPolicyRejectsUnconfiguredMCPBindings(t *testing.T) {
 	tests := []struct {
 		name        string
 		permissions types.JSON
@@ -106,7 +105,7 @@ func TestApprovedExecutionPolicyRejectsUnsupportedRuntimePermissions(t *testing.
 		{
 			name:        "mcp",
 			permissions: types.JSON(`{"mcp":["weather"]}`),
-			want:        "mcp permissions are not supported at runtime",
+			want:        "approved mcp binding weather is not configured",
 		},
 	}
 
@@ -198,9 +197,36 @@ func TestApprovedExecutionPolicyRejectsUnsupportedFileScope(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported files permission scope")
 }
 
+func TestApprovedExecutionPolicyInjectsApprovedMCPBindings(t *testing.T) {
+	tool := NewExecuteSkillScriptTool(nil)
+	tool.SetPermissionChecker(fakeSkillPermissionChecker{
+		permissions: types.JSON(`{"mcp":["github"]}`),
+		mcpBindings: types.JSON(`{"github":"mcp-service-1","other":"hidden"}`),
+	})
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+
+	policy, err := tool.approvedExecutionPolicy(ctx, "mcp-skill")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"github":"mcp-service-1"}`, policy.Env["WEKNORA_SKILL_MCP_BINDINGS"])
+}
+
+func TestApprovedExecutionPolicyRejectsMissingApprovedMCPBinding(t *testing.T) {
+	tool := NewExecuteSkillScriptTool(nil)
+	tool.SetPermissionChecker(fakeSkillPermissionChecker{
+		permissions: types.JSON(`{"mcp":["github"]}`),
+		mcpBindings: types.JSON(`{}`),
+	})
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+
+	_, err := tool.approvedExecutionPolicy(ctx, "mcp-skill")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "approved mcp binding github is not configured")
+}
+
 type fakeSkillPermissionChecker struct {
 	permissions types.JSON
 	credentials types.JSON
+	mcpBindings types.JSON
 }
 
 func (f fakeSkillPermissionChecker) ApprovedPermissions(context.Context, uint64, string) (types.JSON, error) {
@@ -209,4 +235,8 @@ func (f fakeSkillPermissionChecker) ApprovedPermissions(context.Context, uint64,
 
 func (f fakeSkillPermissionChecker) ApprovedCredentials(context.Context, uint64, string) (types.JSON, error) {
 	return f.credentials, nil
+}
+
+func (f fakeSkillPermissionChecker) ApprovedMCPBindings(context.Context, uint64, string) (types.JSON, error) {
+	return f.mcpBindings, nil
 }

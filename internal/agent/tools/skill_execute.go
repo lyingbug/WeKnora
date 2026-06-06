@@ -61,6 +61,7 @@ type ExecuteSkillScriptTool struct {
 type SkillPermissionChecker interface {
 	ApprovedPermissions(ctx context.Context, tenantID uint64, skillName string) (types.JSON, error)
 	ApprovedCredentials(ctx context.Context, tenantID uint64, skillName string) (types.JSON, error)
+	ApprovedMCPBindings(ctx context.Context, tenantID uint64, skillName string) (types.JSON, error)
 }
 
 // NewExecuteSkillScriptTool creates a new execute_skill_script tool instance
@@ -278,6 +279,11 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 		return skillExecutionPolicy{}, err
 	}
 	env = mergeEnv(env, credentialEnv)
+	mcpEnv, err := t.approvedMCPBindingEnv(ctx, inputTenantID(ctx), skillName, permissions)
+	if err != nil {
+		return skillExecutionPolicy{}, err
+	}
+	env = mergeEnv(env, mcpEnv)
 	return skillExecutionPolicy{
 		Timeout:               timeout,
 		AllowNetwork:          len(networkDomains) > 0,
@@ -392,11 +398,7 @@ func rejectUnsupportedRuntimePermissions(permissions types.JSON) error {
 	if err != nil {
 		return fmt.Errorf("approved permissions are invalid JSON: %w", err)
 	}
-	for _, key := range []string{"mcp"} {
-		if err := rejectUnsupportedRuntimePermission(permissionsMap, key); err != nil {
-			return err
-		}
-	}
+	_ = permissionsMap
 	return nil
 }
 
@@ -531,6 +533,75 @@ func isSafeEnvName(name string) bool {
 		}
 	}
 	return true
+}
+
+func (t *ExecuteSkillScriptTool) approvedMCPBindingEnv(
+	ctx context.Context,
+	tenantID uint64,
+	skillName string,
+	permissions types.JSON,
+) (map[string]string, error) {
+	names, err := approvedMCPNames(permissions)
+	if err != nil || len(names) == 0 {
+		return nil, err
+	}
+	if t.permissionChecker == nil || tenantID == 0 {
+		return nil, fmt.Errorf("approved mcp bindings require tenant context")
+	}
+	bindings, err := t.permissionChecker.ApprovedMCPBindings(ctx, tenantID, skillName)
+	if err != nil {
+		return nil, fmt.Errorf("approved mcp bindings are not configured for skill: %s", skillName)
+	}
+	bindingMap, err := bindings.Map()
+	if err != nil {
+		return nil, fmt.Errorf("approved mcp bindings are invalid JSON: %w", err)
+	}
+	approved := make(map[string]string, len(names))
+	for _, name := range names {
+		rawServiceID, ok := bindingMap[name]
+		if !ok || rawServiceID == nil {
+			return nil, fmt.Errorf("approved mcp binding %s is not configured", name)
+		}
+		serviceID, ok := rawServiceID.(string)
+		if !ok || strings.TrimSpace(serviceID) == "" {
+			return nil, fmt.Errorf("approved mcp binding %s must be a non-empty service id", name)
+		}
+		approved[name] = serviceID
+	}
+	raw, err := json.Marshal(approved)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode approved mcp bindings: %w", err)
+	}
+	return map[string]string{
+		"WEKNORA_SKILL_MCP_BINDINGS": string(raw),
+	}, nil
+}
+
+func approvedMCPNames(permissions types.JSON) ([]string, error) {
+	permissionsMap, err := permissions.Map()
+	if err != nil {
+		return nil, fmt.Errorf("approved permissions are invalid JSON: %w", err)
+	}
+	raw, ok := permissionsMap["mcp"]
+	if !ok || raw == nil || permissionValueIsEmpty(raw) {
+		return nil, nil
+	}
+	values, ok := raw.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("approved permissions mcp must be an array")
+	}
+	names := make([]string, 0, len(values))
+	for _, rawName := range values {
+		name, ok := rawName.(string)
+		if !ok {
+			return nil, fmt.Errorf("approved permissions mcp entries must be strings")
+		}
+		name = strings.TrimSpace(name)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
 const skillSessionMountPath = "/mnt/weknora/session"

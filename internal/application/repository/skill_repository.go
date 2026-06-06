@@ -291,6 +291,75 @@ func (r *skillRepository) GetTenantSkillCredentialByName(
 	return &credential, nil
 }
 
+func (r *skillRepository) ReplaceTenantSkillMCPBindings(
+	ctx context.Context,
+	tenantID uint64,
+	skillID string,
+	bindings []*types.TenantSkillMCPBinding,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.
+			Where("tenant_id = ? AND skill_id = ?", tenantID, skillID).
+			Delete(&types.TenantSkillMCPBinding{}).Error; err != nil {
+			return err
+		}
+		if len(bindings) == 0 {
+			return nil
+		}
+		return tx.Create(&bindings).Error
+	})
+}
+
+func (r *skillRepository) ListTenantSkillMCPBindingsByName(
+	ctx context.Context,
+	tenantID uint64,
+	skillName string,
+) ([]*types.TenantSkillMCPBinding, error) {
+	var bindings []*types.TenantSkillMCPBinding
+	err := r.db.WithContext(ctx).
+		Table("tenant_skill_mcp_bindings AS tsmb").
+		Select("tsmb.*").
+		Joins("JOIN skills ON skills.id = tsmb.skill_id").
+		Joins("JOIN tenant_skill_installs tsi ON tsi.tenant_id = tsmb.tenant_id AND tsi.skill_id = tsmb.skill_id").
+		Joins("JOIN mcp_services ms ON ms.id = tsmb.service_id AND ms.tenant_id = tsmb.tenant_id").
+		Where(
+			"tsmb.tenant_id = ? AND tsi.enabled = ? AND skills.name = ? AND skills.status = ? AND ms.enabled = ? AND ms.deleted_at IS NULL",
+			tenantID,
+			true,
+			skillName,
+			types.SkillStatusActive,
+			true,
+		).
+		Order("tsmb.mcp_name ASC").
+		Find(&bindings).Error
+	if err != nil {
+		return nil, err
+	}
+	return bindings, nil
+}
+
+func (r *skillRepository) ListEnabledTenantMCPServiceIDs(
+	ctx context.Context,
+	tenantID uint64,
+	serviceIDs []string,
+) (map[string]struct{}, error) {
+	result := make(map[string]struct{}, len(serviceIDs))
+	if len(serviceIDs) == 0 {
+		return result, nil
+	}
+	var ids []string
+	if err := r.db.WithContext(ctx).
+		Table("mcp_services").
+		Where("tenant_id = ? AND enabled = ? AND deleted_at IS NULL AND id IN ?", tenantID, true, serviceIDs).
+		Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		result[id] = struct{}{}
+	}
+	return result, nil
+}
+
 func skillBindingID(tenantID uint64, agentID, skillID string) string {
 	raw := fmt.Sprintf("%d-%s-%s", tenantID, agentID, skillID)
 	sum := sha256.Sum256([]byte(raw))

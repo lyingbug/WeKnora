@@ -104,6 +104,21 @@ func (TenantSkillCredential) TableName() string {
 	return "tenant_skill_credentials"
 }
 
+type TenantSkillMCPBinding struct {
+	ID        string    `gorm:"column:id;primaryKey" json:"id"`
+	TenantID  uint64    `gorm:"column:tenant_id" json:"tenant_id"`
+	SkillID   string    `gorm:"column:skill_id" json:"skill_id"`
+	MCPName   string    `gorm:"column:mcp_name" json:"mcp_name"`
+	ServiceID string    `gorm:"column:service_id" json:"service_id"`
+	UpdatedBy string    `gorm:"column:updated_by" json:"updated_by"`
+	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt time.Time `gorm:"column:updated_at" json:"updated_at"`
+}
+
+func (TenantSkillMCPBinding) TableName() string {
+	return "tenant_skill_mcp_bindings"
+}
+
 type SkillExecutionRun struct {
 	ID            string    `gorm:"column:id;primaryKey" json:"id"`
 	TenantID      uint64    `gorm:"column:tenant_id" json:"tenant_id"`
