@@ -406,7 +406,11 @@ description: A test skill for network execution.
 		"scripts/fetch.py",
 		nil,
 		"",
-		ExecuteScriptOptions{AllowNetwork: true},
+		ExecuteScriptOptions{
+			AllowNetwork: true,
+			MemoryLimit:  128 * 1024 * 1024,
+			CPULimit:     0.75,
+		},
 	)
 	if err != nil {
 		t.Fatalf("ExecuteScriptWithOptions failed: %v", err)
@@ -416,6 +420,12 @@ description: A test skill for network execution.
 	}
 	if !fakeSandbox.lastConfig.AllowNetwork {
 		t.Fatal("Expected AllowNetwork to be passed to sandbox")
+	}
+	if fakeSandbox.lastConfig.MemoryLimit != 128*1024*1024 {
+		t.Fatalf("Expected MemoryLimit to be passed to sandbox, got %d", fakeSandbox.lastConfig.MemoryLimit)
+	}
+	if fakeSandbox.lastConfig.CPULimit != 0.75 {
+		t.Fatalf("Expected CPULimit to be passed to sandbox, got %f", fakeSandbox.lastConfig.CPULimit)
 	}
 }
 

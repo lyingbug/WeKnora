@@ -135,6 +135,8 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 		input.Input,
 		skills.ExecuteScriptOptions{
 			AllowNetwork: policy.AllowNetwork,
+			MemoryLimit:  policy.MemoryLimit,
+			CPULimit:     policy.CPULimit,
 		},
 	)
 	if err != nil {
@@ -221,6 +223,8 @@ func (t *ExecuteSkillScriptTool) Execute(ctx context.Context, args json.RawMessa
 type skillExecutionPolicy struct {
 	Timeout      time.Duration
 	AllowNetwork bool
+	MemoryLimit  int64
+	CPULimit     float64
 }
 
 func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, skillName string) (skillExecutionPolicy, error) {
@@ -240,6 +244,14 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 	if err != nil {
 		return skillExecutionPolicy{}, err
 	}
+	memoryLimit, err := approvedComputeMemoryLimit(permissions)
+	if err != nil {
+		return skillExecutionPolicy{}, err
+	}
+	cpuLimit, err := approvedComputeCPULimit(permissions)
+	if err != nil {
+		return skillExecutionPolicy{}, err
+	}
 	allowNetwork, err := approvedNetworkAllowed(permissions)
 	if err != nil {
 		return skillExecutionPolicy{}, err
@@ -247,46 +259,72 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 	return skillExecutionPolicy{
 		Timeout:      timeout,
 		AllowNetwork: allowNetwork,
+		MemoryLimit:  memoryLimit,
+		CPULimit:     cpuLimit,
 	}, nil
 }
 
 func approvedComputeTimeout(permissions types.JSON) (time.Duration, error) {
+	seconds, ok, err := approvedComputeNumber(permissions, "timeout_seconds")
+	if err != nil || !ok {
+		return 0, err
+	}
+	return time.Duration(seconds * float64(time.Second)), nil
+}
+
+func approvedComputeMemoryLimit(permissions types.JSON) (int64, error) {
+	megabytes, ok, err := approvedComputeNumber(permissions, "memory_mb")
+	if err != nil || !ok {
+		return 0, err
+	}
+	return int64(megabytes * 1024 * 1024), nil
+}
+
+func approvedComputeCPULimit(permissions types.JSON) (float64, error) {
+	cpu, ok, err := approvedComputeNumber(permissions, "cpu")
+	if err != nil || !ok {
+		return 0, err
+	}
+	return cpu, nil
+}
+
+func approvedComputeNumber(permissions types.JSON, key string) (float64, bool, error) {
 	permissionsMap, err := permissions.Map()
 	if err != nil {
-		return 0, fmt.Errorf("approved permissions are invalid JSON: %w", err)
+		return 0, false, fmt.Errorf("approved permissions are invalid JSON: %w", err)
 	}
 	computeRaw, ok := permissionsMap["compute"]
 	if !ok {
-		return 0, nil
+		return 0, false, nil
 	}
 	compute, ok := computeRaw.(map[string]interface{})
 	if !ok {
-		return 0, fmt.Errorf("approved permissions compute must be an object")
+		return 0, false, fmt.Errorf("approved permissions compute must be an object")
 	}
-	rawTimeout, ok := compute["timeout_seconds"]
+	rawValue, ok := compute[key]
 	if !ok {
-		return 0, nil
+		return 0, false, nil
 	}
 
-	var seconds float64
-	switch value := rawTimeout.(type) {
+	var number float64
+	switch value := rawValue.(type) {
 	case float64:
-		seconds = value
+		number = value
 	case int:
-		seconds = float64(value)
+		number = float64(value)
 	case json.Number:
 		parsed, err := value.Float64()
 		if err != nil {
-			return 0, fmt.Errorf("compute.timeout_seconds must be a number")
+			return 0, false, fmt.Errorf("compute.%s must be a number", key)
 		}
-		seconds = parsed
+		number = parsed
 	default:
-		return 0, fmt.Errorf("compute.timeout_seconds must be a number")
+		return 0, false, fmt.Errorf("compute.%s must be a number", key)
 	}
-	if seconds <= 0 {
-		return 0, fmt.Errorf("compute.timeout_seconds must be greater than zero")
+	if number <= 0 {
+		return 0, false, fmt.Errorf("compute.%s must be greater than zero", key)
 	}
-	return time.Duration(seconds * float64(time.Second)), nil
+	return number, true, nil
 }
 
 func approvedNetworkAllowed(permissions types.JSON) (bool, error) {
