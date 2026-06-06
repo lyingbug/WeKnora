@@ -80,3 +80,52 @@ func TestLoadSkillPackageManifest_RejectsEscapingEntrypoint(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "within package")
 }
+
+func TestLoadSkillPackageManifest_RejectsInvalidPermissions(t *testing.T) {
+	tests := []struct {
+		name        string
+		permissions string
+		want        string
+	}{
+		{
+			name:        "network not array",
+			permissions: `"network": "api.example.com"`,
+			want:        "permissions.network must be an array",
+		},
+		{
+			name:        "files entry not string",
+			permissions: `"files": [123]`,
+			want:        "permissions.files entries must be strings",
+		},
+		{
+			name:        "compute not object",
+			permissions: `"compute": 30`,
+			want:        "permissions.compute must be an object",
+		},
+		{
+			name:        "compute invalid timeout",
+			permissions: `"compute": {"timeout_seconds": 0}`,
+			want:        "permissions.compute.timeout_seconds must be greater than zero",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writePackageSkill(t, dir, "sample-skill", "Sample skill")
+			writePackageManifest(t, dir, `{
+				"name": "sample-skill",
+				"version": "1.0.0",
+				"description": "Sample skill",
+				"permissions": {
+					`+tt.permissions+`
+				}
+			}`)
+
+			_, err := LoadSkillPackageManifest(dir)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}

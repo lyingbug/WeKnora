@@ -65,6 +65,9 @@ func LoadSkillPackageManifest(packageDir string) (*LoadedSkillPackageManifest, e
 	if err := validateSkillPackageManifest(&manifest); err != nil {
 		return nil, err
 	}
+	if err := validateSkillPackagePermissions(manifest.Permissions); err != nil {
+		return nil, err
+	}
 
 	instructions := manifest.Entrypoints.Instructions
 	if instructions == "" {
@@ -127,6 +130,54 @@ func validateSkillPackageManifest(manifest *SkillPackageManifest) error {
 	probe := &Skill{Name: manifest.Name, Description: manifest.Description}
 	if err := probe.Validate(); err != nil {
 		return fmt.Errorf("skill manifest validation failed: %w", err)
+	}
+	return nil
+}
+
+func validateSkillPackagePermissions(permissions map[string]any) error {
+	for _, key := range []string{"network", "files", "credentials", "mcp"} {
+		if raw, ok := permissions[key]; ok {
+			if err := validateStringArrayPermission(key, raw); err != nil {
+				return err
+			}
+		}
+	}
+	if raw, ok := permissions["compute"]; ok {
+		return validateComputePermission(raw)
+	}
+	return nil
+}
+
+func validateStringArrayPermission(key string, raw any) error {
+	values, ok := raw.([]any)
+	if !ok {
+		return fmt.Errorf("permissions.%s must be an array", key)
+	}
+	for _, rawValue := range values {
+		if _, ok := rawValue.(string); !ok {
+			return fmt.Errorf("permissions.%s entries must be strings", key)
+		}
+	}
+	return nil
+}
+
+func validateComputePermission(raw any) error {
+	compute, ok := raw.(map[string]any)
+	if !ok {
+		return errors.New("permissions.compute must be an object")
+	}
+	for _, key := range []string{"timeout_seconds", "memory_mb", "cpu"} {
+		rawValue, ok := compute[key]
+		if !ok {
+			continue
+		}
+		value, ok := rawValue.(float64)
+		if !ok {
+			return fmt.Errorf("permissions.compute.%s must be a number", key)
+		}
+		if value <= 0 {
+			return fmt.Errorf("permissions.compute.%s must be greater than zero", key)
+		}
 	}
 	return nil
 }

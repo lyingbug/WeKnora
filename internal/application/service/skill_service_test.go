@@ -414,6 +414,22 @@ func TestSkillService_PreviewLocalSkillPackage_ValidatesWithoutInstalling(t *tes
 	assert.Zero(t, count)
 }
 
+func TestSkillService_PreviewLocalSkillPackage_RejectsInvalidPermissionShape(t *testing.T) {
+	ctx := context.Background()
+	packagesRoot := t.TempDir()
+	t.Setenv("WEKNORA_SKILL_PACKAGES_DIR", packagesRoot)
+	writeTestSkillPackage(t, packagesRoot, "sample-skill", "sample-skill", "1.2.3", "Sample skill", map[string]any{
+		"network": "api.example.com",
+	})
+
+	repo := repository.NewSkillRepository(setupSkillServiceTestDB(t))
+	svc := NewSkillServiceWithRepository(repo, t.TempDir())
+
+	_, err := svc.PreviewLocalSkillPackage(ctx, "sample-skill")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "permissions.network must be an array")
+}
+
 func TestSkillService_ResolveAgentSkillAccess(t *testing.T) {
 	ctx := context.Background()
 	preloadedRoot := t.TempDir()
