@@ -5,7 +5,9 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -1128,6 +1130,10 @@ func downloadSkillHubPackage(ctx context.Context, sourceURL string) (string, fun
 		cleanup()
 		return "", nil, err
 	}
+	if err := verifySkillHubArchiveSignature(ctx, parsed.String(), archivePath); err != nil {
+		cleanup()
+		return "", nil, err
+	}
 	extractRoot := filepath.Join(tmpDir, "extract")
 	if err := os.MkdirAll(extractRoot, 0755); err != nil {
 		cleanup()
@@ -1208,6 +1214,86 @@ func downloadSkillHubArchive(ctx context.Context, sourceURL, archivePath string)
 		return fmt.Errorf("skill hub package exceeds max size of %d bytes", maxBytes)
 	}
 	return nil
+}
+
+type skillHubSignature struct {
+	Publisher string `json:"publisher"`
+	Algorithm string `json:"algorithm"`
+	Signature string `json:"signature"`
+}
+
+func verifySkillHubArchiveSignature(ctx context.Context, sourceURL, archivePath string) error {
+	trustedPublishers, err := trustedSkillHubPublishers()
+	if err != nil {
+		return err
+	}
+	signatureURL := sourceURL + ".sig"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, signatureURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create skill hub signature request: %w", err)
+	}
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to download skill hub signature: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("failed to download skill hub signature: status %d", resp.StatusCode)
+	}
+	var signature skillHubSignature
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&signature); err != nil {
+		return fmt.Errorf("failed to parse skill hub signature: %w", err)
+	}
+	if signature.Algorithm != "ed25519-sha256" {
+		return fmt.Errorf("unsupported skill hub signature algorithm: %s", signature.Algorithm)
+	}
+	publicKey, ok := trustedPublishers[signature.Publisher]
+	if !ok {
+		return fmt.Errorf("skill hub publisher %s is not trusted", signature.Publisher)
+	}
+	rawSignature, err := base64.StdEncoding.DecodeString(signature.Signature)
+	if err != nil {
+		return fmt.Errorf("invalid skill hub signature encoding: %w", err)
+	}
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to read skill hub archive for signature verification: %w", err)
+	}
+	digest := sha256.Sum256(archive)
+	if !ed25519.Verify(publicKey, digest[:], rawSignature) {
+		return fmt.Errorf("skill hub signature verification failed")
+	}
+	return nil
+}
+
+func trustedSkillHubPublishers() (map[string]ed25519.PublicKey, error) {
+	raw := strings.TrimSpace(os.Getenv("WEKNORA_SKILL_HUB_TRUSTED_PUBLISHERS"))
+	if raw == "" {
+		return nil, fmt.Errorf("WEKNORA_SKILL_HUB_TRUSTED_PUBLISHERS is required")
+	}
+	result := make(map[string]ed25519.PublicKey)
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		parts := strings.SplitN(item, ":", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return nil, fmt.Errorf("invalid trusted skill hub publisher entry")
+		}
+		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(parts[1]))
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted skill hub publisher key: %w", err)
+		}
+		if len(key) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("trusted skill hub publisher key has invalid length")
+		}
+		result[strings.TrimSpace(parts[0])] = ed25519.PublicKey(key)
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("WEKNORA_SKILL_HUB_TRUSTED_PUBLISHERS is required")
+	}
+	return result, nil
 }
 
 func skillHubMaxBytes() int64 {

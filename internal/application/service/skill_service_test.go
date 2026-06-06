@@ -4,6 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -106,6 +110,21 @@ func buildTestSkillPackageZip(t *testing.T, name, version string, permissions ma
 	}
 	require.NoError(t, writer.Close())
 	return buf.Bytes()
+}
+
+func signTestSkillHubArchive(t *testing.T, archive []byte) (string, []byte) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	digest := sha256.Sum256(archive)
+	signature := ed25519.Sign(priv, digest[:])
+	raw, err := json.Marshal(map[string]string{
+		"publisher": "test-publisher",
+		"algorithm": "ed25519-sha256",
+		"signature": base64.StdEncoding.EncodeToString(signature),
+	})
+	require.NoError(t, err)
+	return "test-publisher:" + base64.StdEncoding.EncodeToString(pub), raw
 }
 
 func TestSkillService_ImportPreloadedSkills_ImportsIntoRegistryAndListsRegistryEntries(t *testing.T) {
@@ -460,7 +479,13 @@ func TestSkillService_InstallSkillHubPackageWithPermissions_DownloadsAndInstalls
 	archive := buildTestSkillPackageZip(t, "hub-skill", "1.2.3", map[string]any{
 		"network": []string{"api.example.com"},
 	})
+	publisher, sig := signTestSkillHubArchive(t, archive)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/hub-skill.zip.sig" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(sig)
+			return
+		}
 		w.Header().Set("Content-Type", "application/zip")
 		_, _ = w.Write(archive)
 	}))
@@ -468,6 +493,7 @@ func TestSkillService_InstallSkillHubPackageWithPermissions_DownloadsAndInstalls
 	parsed, err := url.Parse(server.URL)
 	require.NoError(t, err)
 	t.Setenv("WEKNORA_SKILL_HUB_ALLOWED_HOSTS", parsed.Hostname())
+	t.Setenv("WEKNORA_SKILL_HUB_TRUSTED_PUBLISHERS", publisher)
 
 	db := setupSkillServiceTestDB(t)
 	repo := repository.NewSkillRepository(db)
@@ -497,6 +523,29 @@ func TestSkillService_PreviewSkillHubPackage_RejectsUnallowedHost(t *testing.T) 
 	_, err := svc.PreviewSkillHubPackage(context.Background(), "https://example.com/hub-skill.zip")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "skill hub host example.com is not allowed")
+}
+
+func TestSkillService_PreviewSkillHubPackage_RejectsUnsignedArchive(t *testing.T) {
+	archive := buildTestSkillPackageZip(t, "hub-skill", "1.2.3", nil)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/hub-skill.zip.sig" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(archive)
+	}))
+	defer server.Close()
+	parsed, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	t.Setenv("WEKNORA_SKILL_HUB_ALLOWED_HOSTS", parsed.Hostname())
+	publisher, _ := signTestSkillHubArchive(t, archive)
+	t.Setenv("WEKNORA_SKILL_HUB_TRUSTED_PUBLISHERS", publisher)
+
+	svc := NewSkillServiceWithRepository(repository.NewSkillRepository(setupSkillServiceTestDB(t)), t.TempDir())
+	_, err = svc.PreviewSkillHubPackage(context.Background(), server.URL+"/hub-skill.zip")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to download skill hub signature")
 }
 
 func TestExtractZipArchiveRejectsUnsafePath(t *testing.T) {

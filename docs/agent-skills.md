@@ -284,6 +284,12 @@ Content-Type: application/json
 WEKNORA_SKILL_HUB_ALLOWED_HOSTS=hub.example.com,internal-skill-hub.example.com
 ```
 
+同时必须配置可信发布者 Ed25519 公钥，格式为 `publisher:base64_public_key`，多个发布者用逗号分隔：
+
+```bash
+WEKNORA_SKILL_HUB_TRUSTED_PUBLISHERS=official:BASE64_ED25519_PUBLIC_KEY
+```
+
 可选下载大小上限：
 
 ```bash
@@ -316,7 +322,19 @@ Content-Type: application/json
 }
 ```
 
-当前支持 `.zip`、`.tar.gz`、`.tgz`。服务端会拒绝未在 allowlist 中的 host、带 userinfo 的 URL、超过大小限制的响应、包含路径穿越或符号链接等不支持条目的归档包，以及包含多个 `skill.json` 的归档包。当前实现尚未包含包签名/发布者信任链，生产 Hub 应在网络层和发布流程中配合使用可信源、TLS 和审计。
+当前支持 `.zip`、`.tar.gz`、`.tgz`。服务端会拒绝未在 allowlist 中的 host、带 userinfo 的 URL、超过大小限制的响应、包含路径穿越或符号链接等不支持条目的归档包，以及包含多个 `skill.json` 的归档包。
+
+每个归档包必须有同 URL 的 `.sig` sidecar，例如 `my-skill.zip.sig`。签名文件格式：
+
+```json
+{
+  "publisher": "official",
+  "algorithm": "ed25519-sha256",
+  "signature": "BASE64_SIGNATURE"
+}
+```
+
+签名内容是归档包字节的 SHA-256 digest。后端会先下载归档包和 `.sig`，用 `WEKNORA_SKILL_HUB_TRUSTED_PUBLISHERS` 中对应 publisher 的公钥验签，验签通过后才会解压和读取 manifest。
 
 ### 运行时权限强制
 
