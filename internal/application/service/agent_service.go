@@ -61,6 +61,7 @@ type agentService struct {
 	wikiPageService       interfaces.WikiPageService
 	tenantService         interfaces.TenantService
 	toolApprovalGate      approval.MCPApproval
+	skillRunRepo          interfaces.SkillExecutionRunRepository
 }
 
 // NewAgentService creates a new agent service
@@ -81,6 +82,7 @@ func NewAgentService(
 	wikiPageService interfaces.WikiPageService,
 	tenantService interfaces.TenantService,
 	toolApprovalGate approval.MCPApproval,
+	skillRunRepo interfaces.SkillExecutionRunRepository,
 ) interfaces.AgentService {
 	return &agentService{
 		cfg:                   cfg,
@@ -99,6 +101,7 @@ func NewAgentService(
 		wikiPageService:       wikiPageService,
 		tenantService:         tenantService,
 		toolApprovalGate:      toolApprovalGate,
+		skillRunRepo:          skillRunRepo,
 	}
 }
 
@@ -148,6 +151,9 @@ func (s *agentService) CreateAgentEngine(
 		kbInfos, selectedDocs, sessionID,
 		systemPromptTemplate,
 	)
+	if s.skillRunRepo != nil {
+		engine.SetSkillExecutionRecorder(skillExecutionRecorder{repo: s.skillRunRepo})
+	}
 	engine.SetAppConfig(s.cfg)
 
 	// Set VLM image describer for MCP tool result image analysis.
