@@ -310,6 +310,25 @@ Content-Type: application/json
 
 该接口会同步更新 `custom_agents.config.skills_selection_mode`、`custom_agents.config.selected_skills` 和 `agent_skill_bindings`，避免 Agent 编辑页与运行时绑定表出现两套状态。
 
+### 执行审计
+
+`execute_skill_script` 每次执行完成后，后端会 best-effort 写入一条 `skill_execution_runs` 记录。记录包含：
+
+| 字段 | 说明 |
+|------|------|
+| `tenant_id` | 当前租户 |
+| `user_id` | 发起会话的用户 |
+| `agent_id` | 当前运行的 Agent |
+| `session_id` / `message_id` / `tool_call_id` | 对话和工具调用定位信息 |
+| `skill_id` | 当前执行的 Skill 名称 |
+| `script_path` | Skill 包内脚本相对路径 |
+| `status` | `success` 或 `failed` |
+| `duration_ms` | 脚本执行耗时 |
+| `resource_usage` | 当前包含 `exit_code`、`duration_ms`、`killed` 等工具返回结构 |
+| `error_summary` | 失败摘要 |
+
+审计写入失败不会中断用户对话或脚本执行结果返回；它只会记录 warning 日志。管理端查询 API 和更完整的资源用量统计可以在后续运行时沙箱阶段继续补齐。
+
 系统内置了以下 5 个预加载技能，用于增强知识库问答和文档处理能力：
 
 ### 1. citation-generator - 引用生成器
