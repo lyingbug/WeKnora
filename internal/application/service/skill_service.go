@@ -218,7 +218,15 @@ func newPreloadedSkillRegistryEntry(preloadedDir string, meta *skills.SkillMetad
 func skillRegistryID(sourceType, name, version string) string {
 	rawID := sourceType + "-" + name + "-" + version
 	cleanID := regexp.MustCompile(`[^a-zA-Z0-9_-]+`).ReplaceAllString(rawID, "-")
-	return strings.Trim(cleanID, "-")
+	cleanID = strings.Trim(cleanID, "-")
+	if len(cleanID) <= 64 {
+		return cleanID
+	}
+
+	sum := sha256.Sum256([]byte(rawID))
+	suffix := hex.EncodeToString(sum[:])[:12]
+	prefix := strings.Trim(cleanID[:64-len(suffix)-1], "-")
+	return prefix + "-" + suffix
 }
 
 func skillRegistryDigest(parts ...string) string {

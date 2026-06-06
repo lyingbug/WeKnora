@@ -78,3 +78,14 @@ func TestSkillService_ListPreloadedSkills_FallsBackToFilesystemWhenRegistryIsEmp
 	assert.Equal(t, "beta", got[0].Name)
 	assert.Equal(t, "Beta skill", got[0].Description)
 }
+
+func TestSkillRegistryID_FitsDatabaseColumn(t *testing.T) {
+	id := skillRegistryID(
+		types.SkillSourceTypePreloaded,
+		"very-long-skill-name-that-can-still-be-valid-but-would-overflow-the-id-column",
+		types.DefaultSkillVersion,
+	)
+
+	require.LessOrEqual(t, len(id), 64)
+	assert.Contains(t, id, "-")
+}
