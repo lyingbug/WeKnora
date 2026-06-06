@@ -47,6 +47,11 @@ type AgentEngine struct {
 	memoryConsolidator   *agentmemory.Consolidator // Memory consolidator for LLM-powered summarization (optional)
 	lastUsage            types.TokenUsage          // Token usage from the most recent LLM call
 	lastSentMsgCount     int                       // Number of messages sent in the most recent LLM call
+	skillRecorder        SkillExecutionRecorder    // Optional recorder for execute_skill_script audit rows
+}
+
+type SkillExecutionRecorder interface {
+	RecordSkillExecution(ctx context.Context, run *types.SkillExecutionRun) error
 }
 
 // ImageDescriberFunc generates a text description of an image.
@@ -131,6 +136,10 @@ func (e *AgentEngine) SetAppConfig(cfg *appconfig.Config) {
 // This follows the same pattern as Handler.analyzeImageAttachments() in the handler layer.
 func (e *AgentEngine) SetImageDescriber(fn ImageDescriberFunc) {
 	e.imageDescriber = fn
+}
+
+func (e *AgentEngine) SetSkillExecutionRecorder(recorder SkillExecutionRecorder) {
+	e.skillRecorder = recorder
 }
 
 // SetSkillsManager sets the skills manager for the engine

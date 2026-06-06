@@ -15,6 +15,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -470,5 +471,123 @@ func (e *AgentEngine) runToolCall(
 		logger.Debugf(ctx, "%s Tool error: %s", toolTag, toolCall.Result.Error)
 	}
 
+	e.recordSkillExecutionRun(ctx, tc, toolCall, duration, sessionID, assistantMessageID)
+
 	return toolCall
+}
+
+func (e *AgentEngine) recordSkillExecutionRun(
+	ctx context.Context,
+	tc types.LLMToolCall,
+	toolCall types.ToolCall,
+	duration int64,
+	sessionID string,
+	assistantMessageID string,
+) {
+	if e.skillRecorder == nil || tc.Function.Name != agenttools.ToolExecuteSkillScript {
+		return
+	}
+
+	skillName := stringArg(toolCall.Args, "skill_name")
+	scriptPath := stringArg(toolCall.Args, "script_path")
+	if toolCall.Result != nil && toolCall.Result.Data != nil {
+		skillName = stringData(toolCall.Result.Data, "skill_name", skillName)
+		scriptPath = stringData(toolCall.Result.Data, "script_path", scriptPath)
+	}
+
+	status := "failed"
+	errorSummary := ""
+	resourceUsage := map[string]interface{}{}
+	if toolCall.Result != nil {
+		if toolCall.Result.Success {
+			status = "success"
+		}
+		errorSummary = toolCall.Result.Error
+		for key, value := range toolCall.Result.Data {
+			resourceUsage[key] = value
+		}
+	}
+	if durationFromData, ok := int64Data(resourceUsage, "duration_ms"); ok {
+		duration = durationFromData
+	}
+
+	tenantID, _ := types.TenantIDFromContext(ctx)
+	userID, _ := types.UserIDFromContext(ctx)
+	agentID := ""
+	if e.config != nil {
+		agentID = e.config.AgentID
+	}
+	now := time.Now()
+
+	run := &types.SkillExecutionRun{
+		ID:            uuid.NewString(),
+		TenantID:      tenantID,
+		UserID:        userID,
+		AgentID:       agentID,
+		SessionID:     sessionID,
+		MessageID:     assistantMessageID,
+		ToolCallID:    tc.ID,
+		SkillID:       skillName,
+		ScriptPath:    scriptPath,
+		Status:        status,
+		DurationMS:    duration,
+		ResourceUsage: jsonMap(resourceUsage),
+		ErrorSummary:  truncateString(errorSummary, 1024),
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := e.skillRecorder.RecordSkillExecution(ctx, run); err != nil {
+		logger.Warnf(ctx, "Failed to record skill execution run: %v", err)
+	}
+}
+
+func stringArg(args map[string]interface{}, key string) string {
+	if args == nil {
+		return ""
+	}
+	value, _ := args[key].(string)
+	return value
+}
+
+func stringData(data map[string]interface{}, key, fallback string) string {
+	if value, ok := data[key].(string); ok {
+		return value
+	}
+	return fallback
+}
+
+func int64Data(data map[string]interface{}, key string) (int64, bool) {
+	switch value := data[key].(type) {
+	case int64:
+		return value, true
+	case int:
+		return int64(value), true
+	case int32:
+		return int64(value), true
+	case float64:
+		return int64(value), true
+	case json.Number:
+		parsed, err := value.Int64()
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func jsonMap(data map[string]interface{}) types.JSON {
+	if len(data) == 0 {
+		return types.JSON("{}")
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return types.JSON("{}")
+	}
+	return types.JSON(raw)
+}
+
+func truncateString(value string, maxLen int) string {
+	if len(value) <= maxLen {
+		return value
+	}
+	return value[:maxLen]
 }

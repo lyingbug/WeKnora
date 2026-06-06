@@ -46,6 +46,7 @@ type AgentConfig struct {
 	AllowedSkills []string `json:"allowed_skills"` // Skill names whitelist (empty = allow all)
 
 	// Runtime-only fields (not persisted)
+	AgentID    string `json:"-"` // Custom agent ID for runtime audit records
 	VLMModelID string `json:"-"` // VLM model ID for tool result image analysis (set from CustomAgent config)
 	// LLM call timeout in seconds (default: 120). Controls the maximum time for a single LLM call.
 	LLMCallTimeout int `json:"llm_call_timeout,omitempty"`
