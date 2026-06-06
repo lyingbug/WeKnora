@@ -42,8 +42,17 @@ type InstallLocalSkillPackageRequest struct {
 	ApprovedPermissions json.RawMessage `json:"approved_permissions,omitempty"`
 }
 
+type InstallSkillHubPackageRequest struct {
+	SourceURL           string          `json:"source_url" binding:"required"`
+	ApprovedPermissions json.RawMessage `json:"approved_permissions,omitempty"`
+}
+
 type PreviewLocalSkillPackageRequest struct {
 	PackagePath string `json:"package_path" binding:"required"`
+}
+
+type PreviewSkillHubPackageRequest struct {
+	SourceURL string `json:"source_url" binding:"required"`
 }
 
 type InstalledSkillResponse struct {
@@ -189,6 +198,64 @@ func (h *SkillHandler) InstallLocalSkillPackage(c *gin.Context) {
 	})
 }
 
+// InstallSkillHubPackage godoc
+// @Summary      从 Skill Hub 安装 Skill 包
+// @Description  从允许的远端 Skill Hub URL 下载归档包，校验后安装到当前租户。
+// @Tags         Skills
+// @Accept       json
+// @Produce      json
+// @Param        request  body      InstallSkillHubPackageRequest  true  "Skill Hub 包 URL"
+// @Success      200      {object}  map[string]interface{}         "安装结果"
+// @Failure      400      {object}  map[string]interface{}         "请求参数错误"
+// @Failure      500      {object}  errors.AppError                "服务器错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /skills/install-hub [post]
+func (h *SkillHandler) InstallSkillHubPackage(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var req InstallSkillHubPackageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "source_url is required",
+		})
+		return
+	}
+
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	userID := c.GetString(types.UserIDContextKey.String())
+	if userID == "" {
+		userID, _ = types.UserIDFromContext(ctx)
+	}
+
+	entry, err := h.skillService.InstallSkillHubPackageWithPermissions(
+		ctx,
+		tenantID,
+		req.SourceURL,
+		userID,
+		types.JSON(req.ApprovedPermissions),
+	)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(errors.NewInternalServerError("Failed to install Skill Hub package: " + err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": InstalledSkillResponse{
+			ID:          entry.ID,
+			Name:        entry.Name,
+			Version:     entry.Version,
+			Description: entry.Description,
+			SourceType:  entry.SourceType,
+			Enabled:     true,
+			IsBuiltin:   entry.IsBuiltin,
+		},
+	})
+}
+
 // PreviewLocalSkillPackage godoc
 // @Summary      预览本地 Skill 包
 // @Description  校验本地 Skill 包并返回 manifest、digest 和请求权限，不安装到租户。
@@ -218,6 +285,44 @@ func (h *SkillHandler) PreviewLocalSkillPackage(c *gin.Context) {
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(errors.NewInternalServerError("Failed to preview local skill package: " + err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    preview,
+	})
+}
+
+// PreviewSkillHubPackage godoc
+// @Summary      预览 Skill Hub 包
+// @Description  从允许的远端 Skill Hub URL 下载归档包并返回 manifest、digest 和请求权限，不安装到租户。
+// @Tags         Skills
+// @Accept       json
+// @Produce      json
+// @Param        request  body      PreviewSkillHubPackageRequest  true  "Skill Hub 包 URL"
+// @Success      200      {object}  map[string]interface{}         "预览结果"
+// @Failure      400      {object}  map[string]interface{}         "请求参数错误"
+// @Failure      500      {object}  errors.AppError                "服务器错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /skills/preview-hub [post]
+func (h *SkillHandler) PreviewSkillHubPackage(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var req PreviewSkillHubPackageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "source_url is required",
+		})
+		return
+	}
+
+	preview, err := h.skillService.PreviewSkillHubPackage(ctx, req.SourceURL)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(errors.NewInternalServerError("Failed to preview Skill Hub package: " + err.Error()))
 		return
 	}
 

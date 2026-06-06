@@ -1,8 +1,13 @@
 package service
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,6 +75,37 @@ func writeTestSkillPackage(t *testing.T, root, dir, name, version, description s
 	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "skill.json"), raw, 0644))
 
 	return skillDir
+}
+
+func buildTestSkillPackageZip(t *testing.T, name, version string, permissions map[string]any) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	manifest := map[string]any{
+		"name":        name,
+		"version":     version,
+		"description": "Sample skill",
+		"entrypoints": map[string]any{
+			"instructions": "SKILL.md",
+		},
+		"permissions": permissions,
+	}
+	rawManifest, err := json.Marshal(manifest)
+	require.NoError(t, err)
+
+	files := map[string]string{
+		filepath.ToSlash(filepath.Join(name, "skill.json")): string(rawManifest),
+		filepath.ToSlash(filepath.Join(name, "SKILL.md")):   "---\nname: " + name + "\ndescription: Sample skill\n---\n\n# " + name + "\n",
+	}
+	for path, content := range files {
+		file, err := writer.Create(path)
+		require.NoError(t, err)
+		_, err = file.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+	return buf.Bytes()
 }
 
 func TestSkillService_ImportPreloadedSkills_ImportsIntoRegistryAndListsRegistryEntries(t *testing.T) {
@@ -415,6 +451,69 @@ func TestSkillService_UpdateTenantSkillCredentials_StoresCredentials(t *testing.
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"API_KEY":"secret"}`, got.Credentials.ToString())
 	assert.Equal(t, "user-a", got.UpdatedBy)
+}
+
+func TestSkillService_InstallSkillHubPackageWithPermissions_DownloadsAndInstalls(t *testing.T) {
+	ctx := context.Background()
+	packagesRoot := t.TempDir()
+	t.Setenv("WEKNORA_SKILL_PACKAGES_DIR", packagesRoot)
+	archive := buildTestSkillPackageZip(t, "hub-skill", "1.2.3", map[string]any{
+		"network": []string{"api.example.com"},
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(archive)
+	}))
+	defer server.Close()
+	parsed, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	t.Setenv("WEKNORA_SKILL_HUB_ALLOWED_HOSTS", parsed.Hostname())
+
+	db := setupSkillServiceTestDB(t)
+	repo := repository.NewSkillRepository(db)
+	svc := NewSkillServiceWithRepository(repo, t.TempDir())
+	entry, err := svc.InstallSkillHubPackageWithPermissions(
+		ctx,
+		10,
+		server.URL+"/hub-skill.zip",
+		"user-a",
+		types.JSON(`{"network":["api.example.com"]}`),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, types.SkillSourceTypeHub, entry.SourceType)
+	assert.Contains(t, entry.SourceURI, filepath.Join(packagesRoot, "hub"))
+	require.DirExists(t, entry.SourceURI)
+
+	installs, err := repo.ListTenantSkillInstallEntries(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, installs, 1)
+	assert.Equal(t, entry.ID, installs[0].SkillID)
+	assert.JSONEq(t, `{"network":["api.example.com"]}`, installs[0].ApprovedPermissions.ToString())
+}
+
+func TestSkillService_PreviewSkillHubPackage_RejectsUnallowedHost(t *testing.T) {
+	svc := NewSkillServiceWithRepository(repository.NewSkillRepository(setupSkillServiceTestDB(t)), t.TempDir())
+
+	_, err := svc.PreviewSkillHubPackage(context.Background(), "https://example.com/hub-skill.zip")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "skill hub host example.com is not allowed")
+}
+
+func TestExtractZipArchiveRejectsUnsafePath(t *testing.T) {
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	file, err := writer.Create("../skill.json")
+	require.NoError(t, err)
+	_, err = file.Write([]byte(`{}`))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	archivePath := filepath.Join(t.TempDir(), "unsafe.zip")
+	require.NoError(t, os.WriteFile(archivePath, buf.Bytes(), 0644))
+
+	err = extractZipArchive(archivePath, t.TempDir())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsafe path")
 }
 
 func TestSkillService_UpdateTenantSkillMCPBindings_StoresApprovedBindings(t *testing.T) {

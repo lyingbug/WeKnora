@@ -33,8 +33,14 @@ type SkillService interface {
 	// PreviewLocalSkillPackage validates a local Skill package without installing it.
 	PreviewLocalSkillPackage(ctx context.Context, packagePath string) (*types.LocalSkillPackagePreview, error)
 
+	// PreviewSkillHubPackage downloads and validates a Skill Hub package without installing it.
+	PreviewSkillHubPackage(ctx context.Context, sourceURL string) (*types.LocalSkillPackagePreview, error)
+
 	// InstallLocalSkillPackageWithPermissions validates and installs a local Skill package with approved permissions.
 	InstallLocalSkillPackageWithPermissions(ctx context.Context, tenantID uint64, packagePath string, installedBy string, approvedPermissions types.JSON) (*types.SkillRegistryEntry, error)
+
+	// InstallSkillHubPackageWithPermissions downloads, validates, and installs a Skill Hub package with approved permissions.
+	InstallSkillHubPackageWithPermissions(ctx context.Context, tenantID uint64, sourceURL string, installedBy string, approvedPermissions types.JSON) (*types.SkillRegistryEntry, error)
 
 	// UpdateTenantSkillCredentials stores tenant-scoped credentials for an installed Skill.
 	UpdateTenantSkillCredentials(ctx context.Context, tenantID uint64, skillID string, updatedBy string, credentials map[string]string) error

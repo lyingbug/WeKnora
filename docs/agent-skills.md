@@ -202,7 +202,7 @@ Skills 功能通过两个工具与 Agent 交互：
 
 第二阶段开始，预装 Skill 会为租户生成安装记录，Agent 编辑页仍使用 `skills_selection_mode` 和 `selected_skills` 配置，但后端会同步到 `agent_skill_bindings`。运行时会根据当前 Agent 所属租户的已安装 Skill 过滤可用 Skill，避免 Agent 暴露未安装或已禁用的 Skill。
 
-第三阶段开始，后端支持从服务端本地 packages 目录安装租户级 Skill 包。该能力用于承接后续 Skill Hub/在线安装流程：当前版本只做本地目录校验、manifest 入库、租户安装和运行时目录解析，不包含远端下载、签名校验、权限审批流 UI 或独立云端沙箱调度。
+第三阶段开始，后端支持从服务端本地 packages 目录安装租户级 Skill 包，并支持从允许的 Skill Hub host 下载归档包后缓存为本地包。当前版本包含 manifest 入库、租户安装、权限审批承载、运行时目录解析和基础下载安全校验；包签名校验、发布者信任链、权限审批流 UI 和独立云端沙箱调度仍是后续演进项。
 
 ### 本地 Skill 包安装
 
@@ -273,6 +273,50 @@ Content-Type: application/json
 - 运行时根据 Agent 的 `skills_selection_mode` 和已安装 Skill 解析 `AllowedSkills` 与 `SkillDirs`。
 
 `approved_permissions` 可以省略；省略时后端会兼容旧行为，使用 manifest 中声明的 `permissions` 作为批准权限。显式提交时，批准权限的 top-level key 必须来自 manifest requested permissions；`network` 数组中的域名也必须来自 manifest 请求范围；`compute.timeout_seconds`、`compute.memory_mb`、`compute.cpu` 只能小于或等于 manifest 请求值。生产管理界面应展示 manifest requested permissions，并由租户管理员明确提交批准后的权限对象。
+
+### Skill Hub 在线安装
+
+在线安装使用远端归档包作为来源，但安装完成后会把包安全解压并缓存到本地 `WEKNORA_SKILL_PACKAGES_DIR/hub` 下；注册表中的 `source_type=hub`，运行时仍按本地目录读取，不会在每次执行时访问远端 Hub。
+
+启用在线安装前必须配置允许下载的 Hub host：
+
+```bash
+WEKNORA_SKILL_HUB_ALLOWED_HOSTS=hub.example.com,internal-skill-hub.example.com
+```
+
+可选下载大小上限：
+
+```bash
+WEKNORA_SKILL_HUB_MAX_BYTES=20971520
+```
+
+预览远端包：
+
+```http
+POST /api/v1/skills/preview-hub
+Content-Type: application/json
+
+{
+  "source_url": "https://hub.example.com/packages/my-skill.zip"
+}
+```
+
+安装远端包：
+
+```http
+POST /api/v1/skills/install-hub
+Content-Type: application/json
+
+{
+  "source_url": "https://hub.example.com/packages/my-skill.zip",
+  "approved_permissions": {
+    "network": ["api.example.com"],
+    "files": ["session-temp"]
+  }
+}
+```
+
+当前支持 `.zip`、`.tar.gz`、`.tgz`。服务端会拒绝未在 allowlist 中的 host、带 userinfo 的 URL、超过大小限制的响应、包含路径穿越或符号链接等不支持条目的归档包，以及包含多个 `skill.json` 的归档包。当前实现尚未包含包签名/发布者信任链，生产 Hub 应在网络层和发布流程中配合使用可信源、TLS 和审计。
 
 ### 运行时权限强制
 

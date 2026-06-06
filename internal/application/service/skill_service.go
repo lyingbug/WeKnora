@@ -1,18 +1,25 @@
 package service
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -26,6 +33,8 @@ const DefaultPreloadedSkillsDir = "skills/preloaded"
 
 // DefaultSkillPackagesDir is the default directory for local skill packages.
 const DefaultSkillPackagesDir = "skills/packages"
+
+const defaultSkillHubMaxBytes = int64(20 << 20)
 
 // skillService implements SkillService interface
 type skillService struct {
@@ -286,6 +295,38 @@ func (s *skillService) PreviewLocalSkillPackage(
 	}, nil
 }
 
+func (s *skillService) PreviewSkillHubPackage(
+	ctx context.Context,
+	sourceURL string,
+) (*types.LocalSkillPackagePreview, error) {
+	packageDir, cleanup, err := downloadSkillHubPackage(ctx, sourceURL)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return nil, err
+	}
+	loaded, err := skills.LoadSkillPackageManifest(packageDir)
+	if err != nil {
+		return nil, err
+	}
+	digest, err := skillPackageDigest(packageDir)
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.LocalSkillPackagePreview{
+		Name:                 loaded.Manifest.Name,
+		Version:              loaded.Manifest.Version,
+		Description:          loaded.Manifest.Description,
+		SourceType:           types.SkillSourceTypeHub,
+		SourceURI:            sourceURL,
+		Digest:               digest,
+		Manifest:             types.JSON(loaded.RawJSON),
+		RequestedPermissions: types.JSON(loaded.PermissionsJSON),
+	}, nil
+}
+
 func (s *skillService) InstallLocalSkillPackageWithPermissions(
 	ctx context.Context,
 	tenantID uint64,
@@ -304,6 +345,53 @@ func (s *skillService) InstallLocalSkillPackageWithPermissions(
 	if err != nil {
 		return nil, err
 	}
+	return s.installSkillPackageDir(ctx, tenantID, packageDir, types.SkillSourceTypeLocal, packageDir, installedBy, approvedPermissions)
+}
+
+func (s *skillService) InstallSkillHubPackageWithPermissions(
+	ctx context.Context,
+	tenantID uint64,
+	sourceURL string,
+	installedBy string,
+	approvedPermissions types.JSON,
+) (*types.SkillRegistryEntry, error) {
+	if tenantID == 0 {
+		return nil, fmt.Errorf("tenant ID is required")
+	}
+	if s.repo == nil {
+		return nil, fmt.Errorf("skill repository is required")
+	}
+	packageDir, cleanup, err := downloadSkillHubPackage(ctx, sourceURL)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return nil, err
+	}
+	loaded, err := skills.LoadSkillPackageManifest(packageDir)
+	if err != nil {
+		return nil, err
+	}
+	digest, err := skillPackageDigest(packageDir)
+	if err != nil {
+		return nil, err
+	}
+	storedDir, err := storeHubSkillPackage(packageDir, loaded.Manifest.Name, loaded.Manifest.Version, digest)
+	if err != nil {
+		return nil, err
+	}
+	return s.installSkillPackageDir(ctx, tenantID, storedDir, types.SkillSourceTypeHub, sourceURL, installedBy, approvedPermissions)
+}
+
+func (s *skillService) installSkillPackageDir(
+	ctx context.Context,
+	tenantID uint64,
+	packageDir string,
+	sourceType string,
+	sourceURI string,
+	installedBy string,
+	approvedPermissions types.JSON,
+) (*types.SkillRegistryEntry, error) {
 	loaded, err := skills.LoadSkillPackageManifest(packageDir)
 	if err != nil {
 		return nil, err
@@ -318,19 +406,19 @@ func (s *skillService) InstallLocalSkillPackageWithPermissions(
 	}
 
 	entry := &types.SkillRegistryEntry{
-		ID:          skillRegistryID(types.SkillSourceTypeLocal, loaded.Manifest.Name, loaded.Manifest.Version),
+		ID:          skillRegistryID(sourceType, loaded.Manifest.Name, loaded.Manifest.Version),
 		Name:        loaded.Manifest.Name,
 		Version:     loaded.Manifest.Version,
 		Description: loaded.Manifest.Description,
-		SourceType:  types.SkillSourceTypeLocal,
-		SourceURI:   packageDir,
+		SourceType:  sourceType,
+		SourceURI:   sourceURIForRuntime(sourceType, sourceURI, packageDir),
 		Digest:      digest,
 		Manifest:    types.JSON(loaded.RawJSON),
 		Status:      types.SkillStatusActive,
 		IsBuiltin:   false,
 	}
 	if err := s.repo.UpsertSkill(ctx, entry); err != nil {
-		return nil, fmt.Errorf("failed to upsert local skill package: %w", err)
+		return nil, fmt.Errorf("failed to upsert skill package: %w", err)
 	}
 
 	install := &types.TenantSkillInstall{
@@ -342,12 +430,18 @@ func (s *skillService) InstallLocalSkillPackageWithPermissions(
 		ApprovedPermissions: permissions,
 	}
 	if err := s.repo.UpsertTenantSkillInstall(ctx, install); err != nil {
-		return nil, fmt.Errorf("failed to install local skill package for tenant: %w", err)
+		return nil, fmt.Errorf("failed to install skill package for tenant: %w", err)
 	}
 
-	logger.Infof(ctx, "Installed local skill package %s@%s for tenant %d", entry.Name, entry.Version, tenantID)
-
+	logger.Infof(ctx, "Installed %s skill package %s@%s for tenant %d", sourceType, entry.Name, entry.Version, tenantID)
 	return entry, nil
+}
+
+func sourceURIForRuntime(sourceType, sourceURI, packageDir string) string {
+	if sourceType == types.SkillSourceTypeHub {
+		return packageDir
+	}
+	return sourceURI
 }
 
 func (s *skillService) UpdateTenantSkillCredentials(
@@ -1016,6 +1110,302 @@ func resolveLocalSkillPackageDir(packagesRoot, packagePath string) (string, erro
 		return "", fmt.Errorf("skill package path must be a directory")
 	}
 	return candidate, nil
+}
+
+func downloadSkillHubPackage(ctx context.Context, sourceURL string) (string, func(), error) {
+	parsed, err := validateSkillHubURL(sourceURL)
+	if err != nil {
+		return "", nil, err
+	}
+	tmpDir, err := os.MkdirTemp("", "weknora-skill-hub-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create skill hub temp directory: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(tmpDir) }
+
+	archivePath := filepath.Join(tmpDir, "package.archive")
+	if err := downloadSkillHubArchive(ctx, parsed.String(), archivePath); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	extractRoot := filepath.Join(tmpDir, "extract")
+	if err := os.MkdirAll(extractRoot, 0755); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("failed to create skill hub extraction directory: %w", err)
+	}
+	if err := extractSkillHubArchive(archivePath, parsed.Path, extractRoot); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	packageDir, err := locateExtractedSkillPackage(extractRoot)
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return packageDir, cleanup, nil
+}
+
+func validateSkillHubURL(rawURL string) (*url.URL, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return nil, fmt.Errorf("skill hub source_url is required")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid skill hub source_url: %w", err)
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return nil, fmt.Errorf("skill hub source_url must use http or https")
+	}
+	if parsed.User != nil {
+		return nil, fmt.Errorf("skill hub source_url must not include user info")
+	}
+	if parsed.Hostname() == "" {
+		return nil, fmt.Errorf("skill hub source_url host is required")
+	}
+	if !skillHubHostAllowed(parsed.Hostname()) {
+		return nil, fmt.Errorf("skill hub host %s is not allowed", parsed.Hostname())
+	}
+	return parsed, nil
+}
+
+func skillHubHostAllowed(host string) bool {
+	for _, value := range strings.Split(os.Getenv("WEKNORA_SKILL_HUB_ALLOWED_HOSTS"), ",") {
+		value = strings.TrimSpace(value)
+		if value != "" && strings.EqualFold(host, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func downloadSkillHubArchive(ctx context.Context, sourceURL, archivePath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create skill hub request: %w", err)
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to download skill hub package: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("failed to download skill hub package: status %d", resp.StatusCode)
+	}
+
+	maxBytes := skillHubMaxBytes()
+	out, err := os.Create(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to create skill hub archive: %w", err)
+	}
+	defer out.Close()
+	written, err := io.Copy(out, io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return fmt.Errorf("failed to save skill hub archive: %w", err)
+	}
+	if written > maxBytes {
+		return fmt.Errorf("skill hub package exceeds max size of %d bytes", maxBytes)
+	}
+	return nil
+}
+
+func skillHubMaxBytes() int64 {
+	if raw := strings.TrimSpace(os.Getenv("WEKNORA_SKILL_HUB_MAX_BYTES")); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err == nil && value > 0 {
+			return value
+		}
+	}
+	return defaultSkillHubMaxBytes
+}
+
+func extractSkillHubArchive(archivePath, sourcePath, destination string) error {
+	lowerPath := strings.ToLower(sourcePath)
+	switch {
+	case strings.HasSuffix(lowerPath, ".zip"):
+		return extractZipArchive(archivePath, destination)
+	case strings.HasSuffix(lowerPath, ".tar.gz"), strings.HasSuffix(lowerPath, ".tgz"):
+		return extractTarGzArchive(archivePath, destination)
+	default:
+		return fmt.Errorf("skill hub package must be a .zip, .tar.gz, or .tgz archive")
+	}
+}
+
+func extractZipArchive(archivePath, destination string) error {
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open skill hub zip archive: %w", err)
+	}
+	defer reader.Close()
+	for _, file := range reader.File {
+		target, err := safeArchiveTarget(destination, file.Name)
+		if err != nil {
+			return err
+		}
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return fmt.Errorf("failed to create archive directory: %w", err)
+			}
+			continue
+		}
+		if !file.FileInfo().Mode().IsRegular() {
+			return fmt.Errorf("skill hub archive contains unsupported entry: %s", file.Name)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return fmt.Errorf("failed to create archive parent directory: %w", err)
+		}
+		src, err := file.Open()
+		if err != nil {
+			return fmt.Errorf("failed to open archive file: %w", err)
+		}
+		if err := writeArchiveFile(target, src, file.FileInfo().Mode()); err != nil {
+			_ = src.Close()
+			return err
+		}
+		if err := src.Close(); err != nil {
+			return fmt.Errorf("failed to close archive file: %w", err)
+		}
+	}
+	return nil
+}
+
+func extractTarGzArchive(archivePath, destination string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open skill hub tar archive: %w", err)
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("failed to open skill hub gzip archive: %w", err)
+	}
+	defer gz.Close()
+	reader := tar.NewReader(gz)
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read tar archive: %w", err)
+		}
+		target, err := safeArchiveTarget(destination, header.Name)
+		if err != nil {
+			return err
+		}
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return fmt.Errorf("failed to create archive directory: %w", err)
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return fmt.Errorf("failed to create archive parent directory: %w", err)
+			}
+			if err := writeArchiveFile(target, reader, os.FileMode(header.Mode)); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("skill hub archive contains unsupported entry: %s", header.Name)
+		}
+	}
+}
+
+func safeArchiveTarget(destination, name string) (string, error) {
+	cleanName := filepath.Clean(name)
+	if cleanName == "." || cleanName == ".." || filepath.IsAbs(cleanName) || strings.HasPrefix(cleanName, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("skill hub archive contains unsafe path: %s", name)
+	}
+	target := filepath.Join(destination, cleanName)
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve archive target: %w", err)
+	}
+	destinationAbs, err := filepath.Abs(destination)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve archive destination: %w", err)
+	}
+	if targetAbs != destinationAbs && !strings.HasPrefix(targetAbs, destinationAbs+string(os.PathSeparator)) {
+		return "", fmt.Errorf("skill hub archive contains unsafe path: %s", name)
+	}
+	return targetAbs, nil
+}
+
+func writeArchiveFile(path string, reader io.Reader, mode os.FileMode) error {
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode.Perm())
+	if err != nil {
+		return fmt.Errorf("failed to create archive file: %w", err)
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, reader); err != nil {
+		return fmt.Errorf("failed to write archive file: %w", err)
+	}
+	return nil
+}
+
+func locateExtractedSkillPackage(root string) (string, error) {
+	var matches []string
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if entry.Name() == "skill.json" {
+			matches = append(matches, filepath.Dir(path))
+		}
+		return nil
+	}); err != nil {
+		return "", fmt.Errorf("failed to inspect extracted skill package: %w", err)
+	}
+	if len(matches) != 1 {
+		return "", fmt.Errorf("skill hub package must contain exactly one skill.json")
+	}
+	return matches[0], nil
+}
+
+func storeHubSkillPackage(sourceDir, name, version, digest string) (string, error) {
+	root, err := filepath.Abs(filepath.Join(getSkillPackagesDir(), "hub"))
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve skill hub package directory: %w", err)
+	}
+	dirName := skillRegistryID(types.SkillSourceTypeHub, name, version+"-"+digest[:12])
+	target := filepath.Join(root, dirName)
+	if err := os.RemoveAll(target); err != nil {
+		return "", fmt.Errorf("failed to replace existing skill hub package: %w", err)
+	}
+	if err := copySkillPackageDir(sourceDir, target); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func copySkillPackageDir(sourceDir, targetDir string) error {
+	return filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(sourceDir, path)
+		if err != nil {
+			return fmt.Errorf("failed to copy skill package: %w", err)
+		}
+		target := filepath.Join(targetDir, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("failed to read skill package file info: %w", err)
+		}
+		src, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("failed to open skill package file: %w", err)
+		}
+		defer src.Close()
+		return writeArchiveFile(target, src, info.Mode())
+	})
 }
 
 func skillPackageDigest(packageDir string) (string, error) {

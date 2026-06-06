@@ -19,10 +19,12 @@ import (
 type mockSkillService struct {
 	installTenantID    uint64
 	installPackagePath string
+	installSourceURL   string
 	installUserID      string
 	installPermissions types.JSON
 	installEntry       *types.SkillRegistryEntry
 	previewPackagePath string
+	previewSourceURL   string
 	preview            *types.LocalSkillPackagePreview
 	installs           []*types.TenantSkillInstallInfo
 	setEnabledTenantID uint64
@@ -95,6 +97,11 @@ func (m *mockSkillService) PreviewLocalSkillPackage(_ context.Context, packagePa
 	return m.preview, nil
 }
 
+func (m *mockSkillService) PreviewSkillHubPackage(_ context.Context, sourceURL string) (*types.LocalSkillPackagePreview, error) {
+	m.previewSourceURL = sourceURL
+	return m.preview, nil
+}
+
 func (m *mockSkillService) InstallLocalSkillPackageWithPermissions(
 	_ context.Context,
 	tenantID uint64,
@@ -104,6 +111,20 @@ func (m *mockSkillService) InstallLocalSkillPackageWithPermissions(
 ) (*types.SkillRegistryEntry, error) {
 	m.installTenantID = tenantID
 	m.installPackagePath = packagePath
+	m.installUserID = installedBy
+	m.installPermissions = approvedPermissions
+	return m.installEntry, nil
+}
+
+func (m *mockSkillService) InstallSkillHubPackageWithPermissions(
+	_ context.Context,
+	tenantID uint64,
+	sourceURL string,
+	installedBy string,
+	approvedPermissions types.JSON,
+) (*types.SkillRegistryEntry, error) {
+	m.installTenantID = tenantID
+	m.installSourceURL = sourceURL
 	m.installUserID = installedBy
 	m.installPermissions = approvedPermissions
 	return m.installEntry, nil
@@ -212,6 +233,58 @@ func TestSkillHandler_InstallLocalSkillPackage_RequiresPackagePath(t *testing.T)
 	assert.Contains(t, w.Body.String(), "package_path is required")
 }
 
+func TestSkillHandler_InstallSkillHubPackage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &mockSkillService{
+		installEntry: &types.SkillRegistryEntry{
+			ID:          "hub-sample-skill-1-0-0",
+			Name:        "sample-skill",
+			Version:     "1.0.0",
+			Description: "Sample skill",
+			SourceType:  types.SkillSourceTypeHub,
+		},
+	}
+	h := NewSkillHandler(svc, nil)
+	r := gin.New()
+	r.POST("/skills/install-hub", func(c *gin.Context) {
+		c.Set(types.TenantIDContextKey.String(), uint64(10))
+		c.Set(types.UserIDContextKey.String(), "user-a")
+		h.InstallSkillHubPackage(c)
+	})
+
+	body := bytes.NewBufferString(`{"source_url":"https://hub.example.com/sample.zip","approved_permissions":{"network":[]}}`)
+	req := httptest.NewRequest(http.MethodPost, "/skills/install-hub", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, uint64(10), svc.installTenantID)
+	assert.Equal(t, "https://hub.example.com/sample.zip", svc.installSourceURL)
+	assert.Equal(t, "user-a", svc.installUserID)
+	assert.JSONEq(t, `{"network":[]}`, svc.installPermissions.ToString())
+	assert.Contains(t, w.Body.String(), `"source_type":"hub"`)
+}
+
+func TestSkillHandler_InstallSkillHubPackage_RequiresSourceURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	h := NewSkillHandler(&mockSkillService{}, nil)
+	r := gin.New()
+	r.POST("/skills/install-hub", h.InstallSkillHubPackage)
+
+	req := httptest.NewRequest(http.MethodPost, "/skills/install-hub", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "source_url is required")
+}
+
 func TestSkillHandler_PreviewLocalSkillPackage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -239,6 +312,33 @@ func TestSkillHandler_PreviewLocalSkillPackage(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "sample-skill", svc.previewPackagePath)
 	assert.Contains(t, w.Body.String(), `"requested_permissions":{"network":[]}`)
+}
+
+func TestSkillHandler_PreviewSkillHubPackage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &mockSkillService{
+		preview: &types.LocalSkillPackagePreview{
+			Name:        "sample-skill",
+			Version:     "1.0.0",
+			Description: "Sample skill",
+			SourceType:  types.SkillSourceTypeHub,
+		},
+	}
+	h := NewSkillHandler(svc, nil)
+	r := gin.New()
+	r.POST("/skills/preview-hub", h.PreviewSkillHubPackage)
+
+	body := bytes.NewBufferString(`{"source_url":"https://hub.example.com/sample.zip"}`)
+	req := httptest.NewRequest(http.MethodPost, "/skills/preview-hub", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "https://hub.example.com/sample.zip", svc.previewSourceURL)
+	assert.Contains(t, w.Body.String(), `"source_type":"hub"`)
 }
 
 func TestSkillHandler_ListInstalledSkills(t *testing.T) {
