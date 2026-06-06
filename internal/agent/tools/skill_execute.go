@@ -256,7 +256,7 @@ func (t *ExecuteSkillScriptTool) approvedExecutionPolicy(ctx context.Context, sk
 	if err != nil {
 		return skillExecutionPolicy{}, err
 	}
-	if err := rejectUnsupportedFilePermissions(permissions); err != nil {
+	if err := rejectUnsupportedRuntimePermissions(permissions); err != nil {
 		return skillExecutionPolicy{}, err
 	}
 	return skillExecutionPolicy{
@@ -355,29 +355,51 @@ func approvedNetworkAllowed(permissions types.JSON) (bool, error) {
 	return false, nil
 }
 
-func rejectUnsupportedFilePermissions(permissions types.JSON) error {
+func rejectUnsupportedRuntimePermissions(permissions types.JSON) error {
 	permissionsMap, err := permissions.Map()
 	if err != nil {
 		return fmt.Errorf("approved permissions are invalid JSON: %w", err)
 	}
-	filesRaw, ok := permissionsMap["files"]
-	if !ok || filesRaw == nil {
-		return nil
-	}
-	files, ok := filesRaw.([]interface{})
-	if !ok {
-		return fmt.Errorf("approved permissions files must be an array")
-	}
-	for _, rawScope := range files {
-		scope, ok := rawScope.(string)
-		if !ok {
-			return fmt.Errorf("approved permissions files entries must be strings")
-		}
-		if strings.TrimSpace(scope) != "" {
-			return fmt.Errorf("files permissions are not supported at runtime until sandbox file mounts are implemented")
+	for _, key := range []string{"files", "credentials", "mcp"} {
+		if err := rejectUnsupportedRuntimePermission(permissionsMap, key); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func rejectUnsupportedRuntimePermission(permissionsMap map[string]interface{}, key string) error {
+	raw, ok := permissionsMap[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	if permissionValueIsEmpty(raw) {
+		return nil
+	}
+	return fmt.Errorf("%s permissions are not supported at runtime until sandbox/runtime binding is implemented", key)
+}
+
+func permissionValueIsEmpty(raw interface{}) bool {
+	switch value := raw.(type) {
+	case []interface{}:
+		for _, item := range value {
+			if !permissionValueIsEmpty(item) {
+				return false
+			}
+		}
+		return true
+	case map[string]interface{}:
+		for _, item := range value {
+			if !permissionValueIsEmpty(item) {
+				return false
+			}
+		}
+		return true
+	case string:
+		return strings.TrimSpace(value) == ""
+	default:
+		return false
+	}
 }
 
 // Cleanup releases any resources

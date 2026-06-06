@@ -76,27 +76,58 @@ func TestApprovedNetworkAllowed(t *testing.T) {
 	assert.Contains(t, err.Error(), "network entries must be strings")
 }
 
-func TestRejectUnsupportedFilePermissions(t *testing.T) {
-	err := rejectUnsupportedFilePermissions(types.JSON(`{"files":[]}`))
+func TestRejectUnsupportedRuntimePermissions(t *testing.T) {
+	err := rejectUnsupportedRuntimePermissions(types.JSON(`{"files":[]}`))
 	require.NoError(t, err)
 
-	err = rejectUnsupportedFilePermissions(types.JSON(`{"files":["   "]}`))
+	err = rejectUnsupportedRuntimePermissions(types.JSON(`{"files":["   "]}`))
 	require.NoError(t, err)
 
-	err = rejectUnsupportedFilePermissions(types.JSON(`{"compute":{"timeout_seconds":2}}`))
+	err = rejectUnsupportedRuntimePermissions(types.JSON(`{"compute":{"timeout_seconds":2}}`))
 	require.NoError(t, err)
 
-	err = rejectUnsupportedFilePermissions(types.JSON(`{"files":["session-temp"]}`))
+	err = rejectUnsupportedRuntimePermissions(types.JSON(`{"files":["session-temp"]}`))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "files permissions are not supported at runtime")
 
-	err = rejectUnsupportedFilePermissions(types.JSON(`{"files":"session-temp"}`))
+	err = rejectUnsupportedRuntimePermissions(types.JSON(`{"credentials":{"api_key":"secret"}}`))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "files must be an array")
+	assert.Contains(t, err.Error(), "credentials permissions are not supported at runtime")
 
-	err = rejectUnsupportedFilePermissions(types.JSON(`{"files":[123]}`))
+	err = rejectUnsupportedRuntimePermissions(types.JSON(`{"mcp":{"services":["weather"]}}`))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "files entries must be strings")
+	assert.Contains(t, err.Error(), "mcp permissions are not supported at runtime")
+}
+
+func TestApprovedExecutionPolicyRejectsUnsupportedRuntimePermissions(t *testing.T) {
+	tests := []struct {
+		name        string
+		permissions types.JSON
+		want        string
+	}{
+		{
+			name:        "credentials",
+			permissions: types.JSON(`{"credentials":["OPENAI_API_KEY"]}`),
+			want:        "credentials permissions are not supported at runtime",
+		},
+		{
+			name:        "mcp",
+			permissions: types.JSON(`{"mcp":["weather"]}`),
+			want:        "mcp permissions are not supported at runtime",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := NewExecuteSkillScriptTool(nil)
+			tool.SetPermissionChecker(fakeSkillPermissionChecker{permissions: tt.permissions})
+			ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+
+			_, err := tool.approvedExecutionPolicy(ctx, "runtime-bound-skill")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
 }
 
 func TestApprovedExecutionPolicy(t *testing.T) {

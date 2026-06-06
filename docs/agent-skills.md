@@ -285,6 +285,8 @@ Content-Type: application/json
 | `compute.cpu` | 当批准权限包含该值时，Docker sandbox 会使用对应 CPU 上限；值必须大于 0 |
 | `network` | 仅当批准权限包含非空数组时，sandbox 才会启用网络；为空或缺省时保持禁用网络 |
 | `files` | 非空数组会被运行时拒绝，直到 session/user 级文件挂载与路径隔离实现 |
+| `credentials` | 非空权限会被运行时拒绝，直到凭证注入与脱敏审计实现 |
+| `mcp` | 非空权限会被运行时拒绝，直到 Skill 与租户 MCP 服务绑定实现 |
 
 示例：
 
@@ -299,7 +301,7 @@ Content-Type: application/json
 }
 ```
 
-未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb` 与 `compute.cpu` 依赖 Docker sandbox 生效，local fallback 只能提供进程级超时和基础校验。`network` 目前按 sandbox 级别强制开关执行，域名级 egress allowlist 还需要后续网络代理/网关适配后继续细化；`files` 当前采用 fail-closed 策略，避免批准后却缺少真实隔离。`credentials`、`mcp` 等权限目前已能保存为批准权限，但还需要后续 sandbox/runtime 适配后继续强制。
+未安装、未启用或找不到当前租户安装记录的 Skill 会被拒绝执行。`compute.memory_mb` 与 `compute.cpu` 依赖 Docker sandbox 生效，local fallback 只能提供进程级超时和基础校验。`network` 目前按 sandbox 级别强制开关执行，域名级 egress allowlist 还需要后续网络代理/网关适配后继续细化；`files`、`credentials`、`mcp` 当前采用 fail-closed 策略，避免批准后却缺少真实隔离或绑定。
 
 ### 租户级启停
 
