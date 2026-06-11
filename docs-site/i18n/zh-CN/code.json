@@ -1,0 +1,20 @@
+{
+  "theme.NotFound.title": {
+    "message": "页面不存在"
+  },
+  "theme.NotFound.p1": {
+    "message": "我们找不到你要访问的页面。"
+  },
+  "theme.navbar.docs": {
+    "message": "文档"
+  },
+  "theme.navbar.github": {
+    "message": "GitHub"
+  },
+  "theme.footer.docs": {
+    "message": "文档"
+  },
+  "theme.footer.community": {
+    "message": "社区"
+  }
+}

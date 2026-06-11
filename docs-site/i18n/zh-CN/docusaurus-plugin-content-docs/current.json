@@ -1,0 +1,26 @@
+{
+  "sidebar.docsSidebar.category.Get Started": {
+    "message": "开始使用"
+  },
+  "sidebar.docsSidebar.category.User Guide": {
+    "message": "用户指南"
+  },
+  "sidebar.docsSidebar.category.Deployment": {
+    "message": "部署指南"
+  },
+  "sidebar.docsSidebar.category.Architecture": {
+    "message": "架构"
+  },
+  "sidebar.docsSidebar.category.Integrations": {
+    "message": "集成与扩展"
+  },
+  "sidebar.docsSidebar.category.API Reference": {
+    "message": "API 参考"
+  },
+  "sidebar.docsSidebar.category.Developer Guide": {
+    "message": "开发者指南"
+  },
+  "sidebar.docsSidebar.category.Troubleshooting": {
+    "message": "运维排障"
+  }
+}
