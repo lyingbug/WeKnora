@@ -1,5 +1,5 @@
 <template>
-  <div ref="rootElement" class="agent-stream-display">
+  <div ref="rootElement" class="agent-stream-display" :class="{ 'is-embedded': embeddedMode }">
     
     <!-- Collapsed intermediate steps (tree root) -->
     <div v-if="shouldShowCollapsedSteps" class="tree-container">
@@ -247,7 +247,7 @@
           >
                <div v-html="renderAnswerContent(event.content)"></div>
           </div>
-          <div v-if="event.done && event.content && event.content.trim()" class="answer-toolbar">
+          <div v-if="event.done && event.content && event.content.trim() && !embeddedMode" class="answer-toolbar">
             <t-button size="small" variant="outline" shape="round" @click.stop="handleCopyAnswer(event)" :title="$t('agent.copy')">
               <t-icon name="copy" />
             </t-button>
@@ -425,6 +425,7 @@ import ToolApprovalCard from './ToolApprovalCard.vue';
 import ChatRequestInfoButton from '@/components/ChatRequestInfoButton.vue';
 import picturePreview from '@/components/picture-preview.vue';
 import { getChunkByIdOnly } from '@/api/knowledge-base';
+import { getEmbedChunkById } from '@/api/embed';
 import { getRootZoom, rectToCssPx } from '@/utils/zoom';
 import { getWikiPage, type WikiPage } from '@/api/wiki';
 import { MessagePlugin } from 'tdesign-vue-next';
@@ -790,9 +791,14 @@ const props = defineProps<{
   session: SessionData;
   sessionId?: string;
   userQuery?: string;
+  embeddedMode?: boolean;
+  embedChannelId?: string;
+  embedToken?: string;
 }>();
 
-const showRequestInfo = computed(() => !!(props.session?.request_id || props.session?.id));
+const showRequestInfo = computed(
+  () => !props.embeddedMode && !!(props.session?.request_id || props.session?.id),
+);
 
 // Configure marked for security
 marked.use({});
@@ -1526,7 +1532,9 @@ const loadChunkDetails = async (chunkId: string) => {
   setKbCacheState(chunkId, { loading: true });
 
   try {
-    const response = await getChunkByIdOnly(chunkId);
+    const response = props.embeddedMode && props.embedChannelId && props.embedToken
+      ? await getEmbedChunkById(props.embedChannelId, props.embedToken, chunkId)
+      : await getChunkByIdOnly(chunkId);
     const content = response.data?.content;
     if (content) {
       const html = buildKbTooltipContent(content);
@@ -2517,6 +2525,24 @@ const handleAddToKnowledge = (answerEvent: any) => {
   gap: 0;
   margin-bottom: 10px;
   position: relative;
+
+  &.is-embedded {
+    margin-bottom: 0;
+
+    /* 与 EmbedChatCore 等待首包时的三点 loading 对齐 */
+    .loading-indicator {
+      height: 41px;
+      padding: 0 0 0 4px;
+      margin-top: 0;
+      animation: none;
+
+      .loading-typing span {
+        width: 6px;
+        height: 6px;
+        background: var(--embed-primary, var(--td-brand-color));
+      }
+    }
+  }
 }
 
 // Streaming steps container

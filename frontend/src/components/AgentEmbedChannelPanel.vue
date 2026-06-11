@@ -1,0 +1,1153 @@
+<template>
+  <div class="embed-panel">
+    <div class="channels-section">
+      <div class="channels-header">
+        <span class="channels-title">{{ $t('embedPublish.channelsTitle') }}</span>
+        <span class="channels-count">{{ channels.length }}</span>
+      </div>
+
+      <t-loading :loading="loading" size="small" class="channels-loading-wrap">
+        <div v-if="!loading && channels.length === 0 && !authStore.hasRole('admin')" class="channels-empty">
+          <t-empty :description="$t('embedPublish.empty')" />
+        </div>
+
+        <div v-else-if="!loading" class="channel-grid">
+          <button
+            v-for="ch in channels"
+            :key="ch.id"
+            type="button"
+            class="channel-card channel-card--clickable"
+            @click="openDrawer(ch)"
+          >
+            <div class="channel-card__badge">
+              <t-icon name="internet" size="18px" />
+            </div>
+            <div class="channel-card__body">
+              <div class="channel-card__header">
+                <h3 class="channel-card__title">{{ ch.name || $t('embedPublish.unnamed') }}</h3>
+                <t-tag v-if="!ch.enabled" size="small" variant="light" theme="warning">
+                  {{ $t('embedPublish.disabled') }}
+                </t-tag>
+              </div>
+              <p class="channel-card__subtitle">{{ channelSummary(ch) }}</p>
+            </div>
+            <div v-if="authStore.hasRole('admin')" class="channel-card__actions" @click.stop>
+              <t-switch
+                :value="ch.enabled"
+                size="small"
+                @change="(v: boolean) => toggleEnabled(ch, v)"
+              />
+              <t-dropdown
+                trigger="click"
+                placement="bottom-right"
+                :options="channelMenuOptions"
+                @click="(data) => data.value === 'delete' && confirmRemoveChannel(ch.id)"
+              >
+                <t-button
+                  variant="text"
+                  shape="square"
+                  size="small"
+                  class="channel-card__more"
+                  @click.stop
+                >
+                  <template #icon><t-icon name="ellipsis" /></template>
+                </t-button>
+              </t-dropdown>
+            </div>
+          </button>
+
+          <button
+            v-if="authStore.hasRole('admin')"
+            type="button"
+            class="channel-card channel-card--add"
+            @click="openCreate"
+          >
+            <span class="channel-card--add__icon" aria-hidden="true">
+              <t-icon name="add" />
+            </span>
+            <span class="channel-card--add__label">{{ $t('embedPublish.create') }}</span>
+          </button>
+        </div>
+      </t-loading>
+    </div>
+
+    <SettingDrawer
+      v-model:visible="showDrawer"
+      :title="drawerTitle"
+      :description="drawerDescription"
+      icon="internet"
+      storage-key="setting-drawer:embed-channel"
+      :confirm-loading="saving"
+      :hide-footer="!isAdmin"
+      @confirm="saveForm"
+      @cancel="closeDrawer"
+    >
+      <section class="setting-drawer__section embed-drawer__section">
+        <h4 class="setting-drawer__section-title">{{ $t('embedPublish.sectionChannel') }}</h4>
+
+        <div v-if="editingId && isAdmin" class="form-item">
+          <div class="enable-row">
+            <span class="form-label form-label--inline">{{ $t('embedPublish.enabled') }}</span>
+            <t-switch v-model="editingEnabled" size="small" />
+          </div>
+        </div>
+
+        <div class="form-item">
+          <label class="form-label">{{ $t('embedPublish.name') }}</label>
+          <t-input
+            v-model="form.name"
+            :disabled="!isAdmin"
+            :placeholder="$t('embedPublish.namePlaceholder')"
+          />
+          <p class="form-desc">{{ $t('embedPublish.nameDesc') }}</p>
+        </div>
+
+        <div class="form-item">
+          <label class="form-label">{{ $t('embedPublish.welcomeMessage') }}</label>
+          <t-textarea
+            v-model="form.welcome_message"
+            :disabled="!isAdmin"
+            :placeholder="$t('embedPublish.welcomePlaceholder')"
+            :autosize="{ minRows: 2, maxRows: 4 }"
+          />
+        </div>
+
+        <div class="form-item">
+          <div class="enable-row">
+            <div>
+              <span class="form-label form-label--inline">{{ $t('embedPublish.showSuggestedQuestions') }}</span>
+              <p class="form-desc">{{ $t('embedPublish.showSuggestedQuestionsDesc') }}</p>
+            </div>
+            <t-switch
+              v-model="form.show_suggested_questions"
+              :disabled="!isAdmin"
+              size="small"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section class="setting-drawer__section embed-drawer__section">
+        <h4 class="setting-drawer__section-title">{{ $t('embedPublish.sectionSecurity') }}</h4>
+
+        <div class="form-item">
+          <label class="form-label">{{ $t('embedPublish.allowedOrigins') }}</label>
+          <t-textarea
+            v-model="originsText"
+            :disabled="!isAdmin"
+            :placeholder="$t('embedPublish.originsPlaceholder')"
+            :autosize="{ minRows: 2, maxRows: 4 }"
+          />
+          <p class="form-desc">{{ $t('embedPublish.originsHint') }}</p>
+        </div>
+
+        <div class="form-item">
+          <label class="form-label">{{ $t('embedPublish.rateLimitLabel') }}</label>
+          <t-input-number
+            v-model="form.rate_limit_per_minute"
+            :disabled="!isAdmin"
+            :min="1"
+            :max="600"
+            theme="column"
+            style="width: 160px"
+          />
+          <p class="form-desc">{{ $t('embedPublish.rateLimitDesc') }}</p>
+        </div>
+      </section>
+
+      <section class="setting-drawer__section embed-drawer__section">
+        <h4 class="setting-drawer__section-title">{{ $t('embedPublish.sectionAppearance') }}</h4>
+
+        <div class="form-item">
+          <label class="form-label">{{ $t('embedPublish.pageTitle') }}</label>
+          <t-input
+            v-model="form.page_title"
+            :disabled="!isAdmin"
+            :placeholder="$t('embedPublish.pageTitlePlaceholder')"
+          />
+          <p class="form-desc">{{ $t('embedPublish.pageTitleDesc') }}</p>
+        </div>
+
+        <div class="form-item">
+          <label class="form-label">{{ $t('embedPublish.headerTitleMode') }}</label>
+          <t-select
+            v-model="form.header_title_mode"
+            :disabled="!isAdmin"
+            :options="headerTitleModeOptions"
+          />
+          <p class="form-desc">{{ $t('embedPublish.headerTitleModeDesc') }}</p>
+        </div>
+
+        <div class="form-item">
+          <label class="form-label">{{ $t('embedPublish.primaryColor') }}</label>
+          <t-color-picker
+            v-model="form.primary_color"
+            :disabled="!isAdmin"
+            format="HEX"
+            :color-modes="['monochrome']"
+          />
+        </div>
+
+        <div class="form-item">
+          <label class="form-label">{{ $t('embedPublish.widgetPosition') }}</label>
+          <t-select
+            v-model="form.widget_position"
+            :disabled="!isAdmin"
+            :options="positionOptions"
+          />
+        </div>
+
+        <div class="form-item">
+          <label class="form-label">{{ $t('embedPublish.widgetPreview') }}</label>
+          <div class="widget-preview" :class="`pos-${form.widget_position}`">
+            <div class="preview-surface">
+              <button
+                type="button"
+                class="preview-launcher"
+                :style="{ background: form.primary_color || defaultPrimaryColor }"
+                aria-hidden="true"
+              >
+                <t-icon name="chat" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div v-if="!editingId" class="deploy-hint" role="note">
+        <t-icon name="info-circle" class="deploy-hint__icon" />
+        <p>{{ $t('embedPublish.deployAfterSaveHint') }}</p>
+      </div>
+
+      <section v-if="editingId" class="setting-drawer__section embed-drawer__section">
+        <h4 class="setting-drawer__section-title">{{ $t('embedPublish.sectionDeploy') }}</h4>
+        <p class="form-desc form-desc--block">{{ $t('embedPublish.deployIntro') }}</p>
+
+        <div class="deploy-step">
+          <span class="deploy-step__index" aria-hidden="true">1</span>
+          <div class="deploy-step__content">
+            <h5 class="deploy-step__title">{{ $t('embedPublish.channelKey') }}</h5>
+            <p class="deploy-step__desc">{{ $t('embedPublish.channelKeyDesc') }}</p>
+
+            <div v-if="drawerChannel" class="channel-key-control">
+              <t-input
+                :model-value="displayChannelKey(editingId)"
+                readonly
+                type="text"
+                class="mono-text-input channel-key-input"
+                :placeholder="tokenFor(drawerChannel) ? '' : $t('embedPublish.channelKeyUnavailable')"
+              />
+              <template v-if="tokenFor(drawerChannel)">
+                <t-button
+                  size="small"
+                  variant="text"
+                  :title="revealedTokens[editingId] ? $t('embedPublish.hideKey') : $t('embedPublish.revealKey')"
+                  @click="toggleReveal(editingId)"
+                >
+                  <t-icon :name="revealedTokens[editingId] ? 'browse-off' : 'browse'" />
+                </t-button>
+                <t-button
+                  size="small"
+                  variant="text"
+                  :title="$t('embedPublish.copyChannelKeyTitle')"
+                  @click="copyToken(drawerChannel)"
+                >
+                  <t-icon name="file-copy" />
+                </t-button>
+              </template>
+              <t-popconfirm
+                v-if="isAdmin"
+                theme="warning"
+                :content="$t('embedPublish.resetKeyConfirmBody')"
+                :confirm-btn="{ content: $t('embedPublish.resetKeyConfirmOk'), theme: 'danger' }"
+                :cancel-btn="{ content: $t('common.cancel') }"
+                @confirm="performRotate(editingId)"
+              >
+                <t-button
+                  size="small"
+                  variant="text"
+                  theme="danger"
+                  :loading="rotating"
+                  :title="$t('embedPublish.resetKeyTitle')"
+                >
+                  <t-icon name="refresh" />
+                </t-button>
+              </t-popconfirm>
+            </div>
+            <p v-if="drawerChannel && !tokenFor(drawerChannel)" class="form-desc">
+              {{ $t('embedPublish.channelKeyHint') }}
+            </p>
+          </div>
+        </div>
+
+        <div class="deploy-step">
+          <span class="deploy-step__index" aria-hidden="true">2</span>
+          <div class="deploy-step__content">
+            <h5 class="deploy-step__title">{{ $t('embedPublish.deployStepEmbed') }}</h5>
+            <p class="deploy-step__desc">{{ $t('embedPublish.deployStepEmbedDesc') }}</p>
+
+            <t-tabs v-model="drawerSnippetTab" class="snippet-tabs">
+              <t-tab-panel value="iframe" :label="$t('embedPublish.tabIframe')" />
+              <t-tab-panel value="widget" :label="$t('embedPublish.tabWidget')" />
+            </t-tabs>
+            <p class="snippet-scenario">{{ snippetScenarioHint }}</p>
+            <p v-if="drawerSnippetTab === 'widget'" class="snippet-note">
+              {{ $t('embedPublish.widgetTokenNote') }}
+            </p>
+
+            <div class="code-panel">
+              <div class="code-panel__toolbar">
+                <span class="code-panel__label">
+                  {{ drawerSnippetTab === 'iframe' ? $t('embedPublish.embedCode') : $t('embedPublish.widgetCode') }}
+                </span>
+                <div class="code-panel__actions">
+                  <t-button
+                    size="small"
+                    variant="text"
+                    :loading="previewLoading"
+                    @click="openPreviewFromDrawer"
+                  >
+                    <template #icon><t-icon name="browse" /></template>
+                    {{ $t('embedPublish.preview') }}
+                  </t-button>
+                  <t-button size="small" variant="outline" @click="copyDrawerSnippet">
+                    <template #icon><t-icon name="file-copy" /></template>
+                    {{ $t('embedPublish.copyCode') }}
+                  </t-button>
+                </div>
+              </div>
+              <pre class="code-panel__pre">{{ drawerSnippet }}</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+    </SettingDrawer>
+
+    <EmbedChannelPreview
+      v-model:visible="previewVisible"
+      :channel-id="previewChannel?.id || ''"
+      :token="previewToken"
+      :title="previewChannel?.name || $t('embedPublish.preview')"
+      :primary-color="previewChannel?.primary_color"
+      :position="previewPosition"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
+import { useAuthStore } from '@/stores/auth'
+import SettingDrawer from '@/components/settings/SettingDrawer.vue'
+import EmbedChannelPreview from '@/components/EmbedChannelPreview.vue'
+import {
+  listEmbedChannels,
+  createEmbedChannel,
+  updateEmbedChannel,
+  deleteEmbedChannel,
+  rotateEmbedToken,
+  issueEmbedPreviewSession,
+  buildEmbedSnippet,
+  buildWidgetSnippet,
+  type EmbedChannel,
+  type HeaderTitleMode,
+  type WidgetPosition,
+} from '@/api/embed'
+
+const props = defineProps<{ agentId: string }>()
+
+const { t } = useI18n()
+const authStore = useAuthStore()
+const isAdmin = computed(() => authStore.hasRole('admin'))
+
+const loading = ref(false)
+const saving = ref(false)
+const channels = ref<EmbedChannel[]>([])
+const tokenByChannel = ref<Record<string, string>>({})
+const revealedTokens = reactive<Record<string, boolean>>({})
+const previewVisible = ref(false)
+const previewChannel = ref<EmbedChannel | null>(null)
+const previewToken = ref('')
+const previewLoading = ref(false)
+const rotating = ref(false)
+const showDrawer = ref(false)
+const editingId = ref('')
+const editingEnabled = ref(true)
+const originsText = ref('')
+const drawerSnippetTab = ref<'iframe' | 'widget'>('iframe')
+
+const EMBED_TOKEN_STORAGE = 'weknora_embed_publish_tokens'
+const WEKNORA_BRAND_COLOR = '#07C05F'
+
+function getDefaultEmbedPrimaryColor(): string {
+  if (typeof window === 'undefined') return WEKNORA_BRAND_COLOR
+  const css = getComputedStyle(document.documentElement).getPropertyValue('--td-brand-color').trim()
+  return css || WEKNORA_BRAND_COLOR
+}
+
+const defaultPrimaryColor = getDefaultEmbedPrimaryColor()
+
+const defaultForm = () => ({
+  name: '',
+  welcome_message: '',
+  rate_limit_per_minute: 30,
+  primary_color: getDefaultEmbedPrimaryColor(),
+  page_title: '',
+  header_title_mode: 'channel' as HeaderTitleMode,
+  show_suggested_questions: true,
+  widget_position: 'bottom-right' as WidgetPosition,
+})
+const form = ref(defaultForm())
+
+const positionOptions = computed(() => ([
+  { label: t('embedPublish.positionBottomRight'), value: 'bottom-right' },
+  { label: t('embedPublish.positionBottomLeft'), value: 'bottom-left' },
+  { label: t('embedPublish.positionTopRight'), value: 'top-right' },
+  { label: t('embedPublish.positionTopLeft'), value: 'top-left' },
+]))
+
+const headerTitleModeOptions = computed(() => ([
+  { label: t('embedPublish.headerTitleModeChannel'), value: 'channel' },
+  { label: t('embedPublish.headerTitleModeSession'), value: 'session' },
+]))
+
+const channelMenuOptions = computed(() => ([
+  { content: t('common.delete'), value: 'delete', theme: 'error' },
+]))
+
+const drawerChannel = computed(() =>
+  editingId.value ? channels.value.find((ch) => ch.id === editingId.value) : null)
+
+const drawerTitle = computed(() => {
+  if (!editingId.value) return t('embedPublish.createTitle')
+  return form.value.name?.trim() || t('embedPublish.unnamed')
+})
+
+const drawerDescription = computed(() => {
+  if (!editingId.value) return ''
+  const ch = drawerChannel.value
+  if (!ch) return ''
+  const parts: string[] = []
+  if (!ch.enabled) parts.push(t('embedPublish.disabled'))
+  const limit = ch.rate_limit_per_minute || 30
+  parts.push(`${t('embedPublish.rateLimit')} ${limit}${t('embedPublish.rateLimitUnit')}`)
+  return parts.join(' · ')
+})
+
+const previewPosition = computed((): WidgetPosition =>
+  (previewChannel.value?.widget_position as WidgetPosition) || 'bottom-right')
+
+const channelSummary = (ch: EmbedChannel) => {
+  const parts = [
+    `${t('embedPublish.rateLimit')} ${ch.rate_limit_per_minute || 30}${t('embedPublish.rateLimitUnit')}`,
+  ]
+  if (ch.allowed_origins?.length) {
+    parts.push(t('embedPublish.originsCount', { n: ch.allowed_origins.length }))
+  }
+  return parts.join(' · ')
+}
+
+const loadStoredTokens = (): Record<string, string> => {
+  try {
+    return JSON.parse(sessionStorage.getItem(EMBED_TOKEN_STORAGE) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+const storeToken = (channelId: string, token: string) => {
+  const map = loadStoredTokens()
+  map[channelId] = token
+  sessionStorage.setItem(EMBED_TOKEN_STORAGE, JSON.stringify(map))
+  tokenByChannel.value = { ...tokenByChannel.value, [channelId]: token }
+}
+
+const load = async () => {
+  if (!props.agentId) return
+  loading.value = true
+  try {
+    const res = await listEmbedChannels(props.agentId)
+    channels.value = res?.data || []
+    tokenByChannel.value = { ...loadStoredTokens(), ...tokenByChannel.value }
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(() => props.agentId, () => {
+  if (props.agentId) load()
+}, { immediate: true })
+
+const tokenFor = (ch: EmbedChannel) => tokenByChannel.value[ch.id] || ch.publish_token
+
+const displayChannelKey = (channelId: string) => {
+  const ch = channels.value.find((c) => c.id === channelId)
+  const token = ch ? tokenFor(ch) : ''
+  if (!token) return ''
+  if (revealedTokens[channelId]) return token
+  let masked = ''
+  for (let i = 0; i < token.length; i++) masked += '•'
+  return masked
+}
+
+const toggleReveal = (channelId: string) => {
+  revealedTokens[channelId] = !revealedTokens[channelId]
+}
+
+const copyToken = async (ch: EmbedChannel) => {
+  const token = tokenFor(ch)
+  if (!token) {
+    MessagePlugin.warning(t('embedPublish.tokenHint'))
+    return
+  }
+  await navigator.clipboard.writeText(token)
+  MessagePlugin.success(t('embedPublish.tokenCopied'))
+}
+
+const iframeSnippet = (ch: EmbedChannel) => buildEmbedSnippet(ch.id)
+
+const widgetSnippet = (ch: EmbedChannel) => {
+  const token = tokenFor(ch)
+  if (!token) return `<!-- ${t('embedPublish.tokenHint')} -->`
+  const position = (ch.widget_position as WidgetPosition) || 'bottom-right'
+  return buildWidgetSnippet(ch.id, token, {
+    primaryColor: ch.primary_color,
+    title: ch.page_title || ch.name,
+    position,
+  })
+}
+
+const drawerSnippet = computed(() => {
+  const ch = drawerChannel.value
+  if (!ch) return ''
+  return drawerSnippetTab.value === 'widget' ? widgetSnippet(ch) : iframeSnippet(ch)
+})
+
+const snippetScenarioHint = computed(() =>
+  drawerSnippetTab.value === 'widget'
+    ? t('embedPublish.embedWidgetDesc')
+    : t('embedPublish.embedIframeDesc'))
+
+const fillFormFromChannel = (ch: EmbedChannel) => {
+  editingId.value = ch.id
+  editingEnabled.value = ch.enabled
+  form.value = {
+    name: ch.name,
+    welcome_message: ch.welcome_message,
+    rate_limit_per_minute: ch.rate_limit_per_minute || 30,
+    primary_color: ch.primary_color || getDefaultEmbedPrimaryColor(),
+    page_title: ch.page_title || '',
+    header_title_mode: (ch.header_title_mode as HeaderTitleMode) || 'channel',
+    show_suggested_questions: ch.show_suggested_questions !== false,
+    widget_position: (ch.widget_position as WidgetPosition) || 'bottom-right',
+  }
+  originsText.value = (ch.allowed_origins || []).join('\n')
+  drawerSnippetTab.value = 'iframe'
+}
+
+const openCreate = () => {
+  editingId.value = ''
+  editingEnabled.value = true
+  form.value = defaultForm()
+  originsText.value = ''
+  drawerSnippetTab.value = 'iframe'
+  showDrawer.value = true
+}
+
+const openDrawer = (ch: EmbedChannel) => {
+  fillFormFromChannel(ch)
+  showDrawer.value = true
+}
+
+const closeDrawer = () => {
+  showDrawer.value = false
+}
+
+const parseOrigins = () => originsText.value.split('\n').map((s) => s.trim()).filter(Boolean)
+
+const saveForm = async () => {
+  if (!isAdmin.value) return
+  saving.value = true
+  try {
+    const payload = {
+      name: form.value.name,
+      welcome_message: form.value.welcome_message,
+      allowed_origins: parseOrigins(),
+      rate_limit_per_minute: form.value.rate_limit_per_minute,
+      primary_color: form.value.primary_color,
+      page_title: form.value.page_title,
+      header_title_mode: form.value.header_title_mode,
+      show_suggested_questions: form.value.show_suggested_questions,
+      widget_position: form.value.widget_position,
+      enabled: editingId.value ? editingEnabled.value : true,
+    }
+    if (editingId.value) {
+      await updateEmbedChannel(editingId.value, payload)
+      MessagePlugin.success(t('embedPublish.updated'))
+      await load()
+      const updated = channels.value.find((ch) => ch.id === editingId.value)
+      if (updated) fillFormFromChannel(updated)
+    } else {
+      const res = await createEmbedChannel(props.agentId, payload)
+      if (res?.data?.publish_token) {
+        storeToken(res.data.id, res.data.publish_token)
+        revealedTokens[res.data.id] = true
+        MessagePlugin.success(t('embedPublish.createdWithToken'))
+      } else {
+        MessagePlugin.success(t('embedPublish.created'))
+      }
+      await load()
+      if (res?.data?.id) {
+        const created = channels.value.find((ch) => ch.id === res.data.id)
+        if (created) fillFormFromChannel(created)
+      }
+    }
+  } finally {
+    saving.value = false
+  }
+}
+
+const openPreviewFromDrawer = async () => {
+  const ch = drawerChannel.value
+  if (!ch) return
+  previewLoading.value = true
+  try {
+    let token = tokenFor(ch)
+    if (!token) {
+      const res = await issueEmbedPreviewSession(ch.id)
+      token = res?.data?.session_token || ''
+      if (!token) {
+        MessagePlugin.warning(t('embedPublish.previewUnavailable'))
+        return
+      }
+    }
+    previewChannel.value = ch
+    previewToken.value = token
+    previewVisible.value = true
+  } catch {
+    MessagePlugin.error(t('embedPublish.previewUnavailable'))
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+const copyDrawerSnippet = async () => {
+  if (!drawerSnippet.value) return
+  await navigator.clipboard.writeText(drawerSnippet.value)
+  MessagePlugin.success(t('embedPublish.copied'))
+}
+
+const performRotate = async (id: string) => {
+  rotating.value = true
+  try {
+    const res = await rotateEmbedToken(id)
+    if (res?.data?.publish_token) {
+      storeToken(id, res.data.publish_token)
+      revealedTokens[id] = true
+      MessagePlugin.success(t('embedPublish.resetKeySuccess'))
+    } else {
+      MessagePlugin.error(t('embedPublish.resetKeyFailed'))
+    }
+    await load()
+  } catch {
+    MessagePlugin.error(t('embedPublish.resetKeyFailed'))
+  } finally {
+    rotating.value = false
+  }
+}
+
+const confirmRemoveChannel = (id: string) => {
+  const dialog = DialogPlugin.confirm({
+    header: t('common.delete'),
+    body: t('embedPublish.deleteConfirm'),
+    confirmBtn: { content: t('common.delete'), theme: 'danger' },
+    cancelBtn: t('common.cancel'),
+    onConfirm: async () => {
+      dialog.destroy()
+      await removeChannel(id)
+    },
+    onClose: () => dialog.destroy(),
+  })
+}
+
+const removeChannel = async (id: string) => {
+  await deleteEmbedChannel(id)
+  const map = loadStoredTokens()
+  delete map[id]
+  sessionStorage.setItem(EMBED_TOKEN_STORAGE, JSON.stringify(map))
+  if (editingId.value === id) closeDrawer()
+  await load()
+  MessagePlugin.success(t('embedPublish.deleted'))
+}
+
+const toggleEnabled = async (ch: EmbedChannel, enabled: boolean) => {
+  await updateEmbedChannel(ch.id, {
+    name: ch.name,
+    welcome_message: ch.welcome_message,
+    allowed_origins: ch.allowed_origins,
+    rate_limit_per_minute: ch.rate_limit_per_minute,
+    primary_color: ch.primary_color,
+    page_title: ch.page_title,
+    header_title_mode: ch.header_title_mode || 'channel',
+    show_suggested_questions: ch.show_suggested_questions !== false,
+    widget_position: ch.widget_position,
+    enabled,
+  })
+  await load()
+}
+</script>
+
+<style scoped lang="less">
+.embed-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.channels-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+
+  .channels-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--td-text-color-primary);
+  }
+
+  .channels-count {
+    padding: 2px 8px;
+    background: var(--td-bg-color-secondarycontainer);
+    border-radius: 10px;
+    font-size: 12px;
+    color: var(--td-text-color-disabled);
+  }
+}
+
+.channels-loading-wrap {
+  min-height: 80px;
+}
+
+.channels-empty {
+  padding: 32px 0;
+}
+
+.channel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.channel-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 10px;
+  background: var(--td-bg-color-container);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+
+  &--clickable {
+    cursor: pointer;
+    width: 100%;
+
+    &:hover,
+    &:focus-visible {
+      border-color: var(--td-brand-color-3, var(--td-brand-color));
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+      outline: none;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--td-brand-color);
+      outline-offset: 2px;
+    }
+  }
+
+  &--add {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 68px;
+    border-style: dashed;
+    background: transparent;
+    color: var(--td-text-color-placeholder);
+    cursor: pointer;
+    width: 100%;
+
+    &:hover,
+    &:focus-visible {
+      color: var(--td-brand-color);
+      border-color: var(--td-brand-color);
+      background: color-mix(in srgb, var(--td-brand-color) 6%, transparent);
+      box-shadow: none;
+    }
+
+    &__icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
+      color: var(--td-brand-color);
+      font-size: 18px;
+    }
+
+    &__label {
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+  }
+
+  &__badge {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
+    color: var(--td-brand-color);
+  }
+
+  &__body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  &__title {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--td-text-color-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__subtitle {
+    margin: 2px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--td-text-color-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__actions {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding-top: 2px;
+  }
+
+  &__more {
+    flex-shrink: 0;
+    padding: 2px;
+    opacity: 0;
+    color: var(--td-text-color-placeholder);
+    transition: opacity 0.15s ease;
+
+    &:hover,
+    &:focus-visible {
+      background: var(--td-bg-color-secondarycontainer);
+      color: var(--td-text-color-primary);
+    }
+  }
+
+  &:hover .channel-card__more,
+  &:focus-within .channel-card__more,
+  &__actions:focus-within .channel-card__more {
+    opacity: 1;
+  }
+}
+
+/* ---------- Drawer form (matches ModelEditorDialog rhythm) ---------- */
+:deep(.embed-drawer__section.setting-drawer__section) {
+  gap: 10px;
+  padding: 10px 0 14px;
+}
+
+.form-item {
+  margin-bottom: 0;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--td-text-color-primary);
+  line-height: 1.4;
+
+  &--inline {
+    margin-bottom: 0;
+  }
+}
+
+.form-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--td-text-color-placeholder);
+
+  &--block {
+    margin: -2px 0 0;
+    color: var(--td-text-color-secondary);
+  }
+}
+
+.form-grid {
+  display: grid;
+  gap: 10px;
+
+  &--2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @media (max-width: 520px) {
+    &--2 {
+      grid-template-columns: 1fr;
+    }
+  }
+}
+
+.enable-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+
+  .form-desc {
+    margin-top: 4px;
+  }
+}
+
+.deploy-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--td-bg-color-secondarycontainer);
+  border: 1px dashed var(--td-component-stroke);
+
+  &__icon {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: var(--td-brand-color);
+    font-size: 16px;
+  }
+
+  p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--td-text-color-secondary);
+  }
+}
+
+.deploy-step {
+  display: flex;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--td-component-stroke);
+
+  &:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  &__index {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--td-brand-color);
+    background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
+  }
+
+  &__content {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__title {
+    margin: 0 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+
+  &__desc {
+    margin: 0 0 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--td-text-color-secondary);
+  }
+}
+
+.channel-key-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.channel-key-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.mono-text-input :deep(input) {
+  font-family: var(--app-font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+}
+
+.snippet-tabs {
+  margin-bottom: 4px;
+
+  :deep(.t-tabs__nav) {
+    min-height: 36px;
+  }
+
+  :deep(.t-tabs__nav-item) {
+    font-size: 13px;
+    height: 36px;
+    line-height: 36px;
+  }
+}
+
+.snippet-scenario {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--td-text-color-secondary);
+}
+
+.snippet-note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--td-text-color-secondary);
+  background: color-mix(in srgb, var(--td-warning-color, #ed7b2f) 8%, var(--td-bg-color-container));
+  border: 1px solid color-mix(in srgb, var(--td-warning-color, #ed7b2f) 20%, transparent);
+}
+
+.code-panel {
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  background: var(--td-bg-color-secondarycontainer);
+  overflow: hidden;
+
+  &__toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--td-component-stroke);
+    background: var(--td-bg-color-container);
+  }
+
+  &__label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--td-text-color-secondary);
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  &__pre {
+    margin: 0;
+    padding: 10px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--td-text-color-primary);
+    max-height: 180px;
+    overflow: auto;
+  }
+}
+
+.widget-preview {
+  border: 1px dashed var(--td-component-stroke);
+  border-radius: 8px;
+  padding: 6px;
+  background: var(--td-bg-color-secondarycontainer);
+  width: 100%;
+}
+
+.preview-surface {
+  position: relative;
+  height: 88px;
+  border-radius: 6px;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke);
+  overflow: hidden;
+}
+
+.preview-launcher {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
+  cursor: default;
+
+  :deep(.t-icon) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.pos-bottom-right .preview-launcher { right: 10px; bottom: 10px; }
+.pos-bottom-left .preview-launcher { left: 10px; bottom: 10px; }
+.pos-top-right .preview-launcher { left: auto; right: 10px; top: 10px; }
+.pos-top-left .preview-launcher { left: 10px; top: 10px; }
+</style>

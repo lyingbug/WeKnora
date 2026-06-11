@@ -1,0 +1,286 @@
+<template>
+  <t-drawer
+    :visible="visible"
+    :header="title || $t('embedPublish.preview')"
+    size="720px"
+    :footer="false"
+    class="embed-preview-drawer"
+    @close="emit('update:visible', false)"
+  >
+    <div class="preview-body">
+      <t-tabs v-model="tab" class="preview-tabs">
+        <t-tab-panel value="iframe" :label="$t('embedPublish.tabIframe')">
+          <p class="preview-hint">{{ $t('embedPublish.previewIframeHint') }}</p>
+          <div class="device-frame">
+            <div class="device-frame__chrome">
+              <span class="device-frame__dot" />
+              <span class="device-frame__dot" />
+              <span class="device-frame__dot" />
+              <span class="device-frame__url">{{ previewUrlLabel }}</span>
+            </div>
+            <div class="device-frame__screen">
+              <t-loading v-if="!iframeSrc" size="small" :text="$t('embedPublish.previewLoading')" />
+              <iframe
+                v-else
+                :key="iframeSrc"
+                :src="iframeSrc"
+                class="preview-iframe"
+                allow="clipboard-write"
+              />
+            </div>
+          </div>
+        </t-tab-panel>
+        <t-tab-panel value="widget" :label="$t('embedPublish.tabWidget')">
+          <p class="preview-hint">{{ $t('embedPublish.previewWidgetHint') }}</p>
+          <div class="widget-shell" :class="`pos-${position}`">
+            <div class="widget-mock-page">
+              <div class="widget-mock-page__title">{{ $t('embedPublish.previewMockPage') }}</div>
+              <div class="widget-mock-page__line" />
+              <div class="widget-mock-page__line widget-mock-page__line--short" />
+            </div>
+            <button
+              type="button"
+              class="widget-launcher"
+              :style="{ background: primaryColor || 'var(--td-brand-color)' }"
+              :aria-label="widgetOpen ? $t('common.close') : $t('embedPublish.preview')"
+              @click="widgetOpen = !widgetOpen"
+            >
+              <t-icon :name="widgetOpen ? 'close' : 'chat'" />
+            </button>
+            <transition name="widget-panel">
+              <div v-show="widgetOpen" class="widget-panel">
+                <iframe
+                  v-if="iframeSrc"
+                  :key="`widget-${iframeSrc}`"
+                  :src="iframeSrc"
+                  class="preview-iframe"
+                  :title="title || $t('embedPublish.preview')"
+                  allow="clipboard-write"
+                />
+              </div>
+            </transition>
+          </div>
+        </t-tab-panel>
+      </t-tabs>
+    </div>
+  </t-drawer>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { buildEmbedURL, type WidgetPosition } from '@/api/embed'
+
+const props = defineProps<{
+  visible: boolean
+  channelId: string
+  token: string
+  title?: string
+  primaryColor?: string
+  position?: WidgetPosition
+}>()
+
+const emit = defineEmits<{
+  (e: 'update:visible', value: boolean): void
+}>()
+
+const tab = ref<'iframe' | 'widget'>('iframe')
+const widgetOpen = ref(true)
+
+const iframeSrc = computed(() => {
+  if (!props.channelId || !props.token) return ''
+  return buildEmbedURL(props.channelId, props.token)
+})
+
+const previewUrlLabel = computed(() => {
+  if (!props.channelId) return ''
+  try {
+    return new URL(buildEmbedURL(props.channelId)).pathname
+  } catch {
+    return `/embed/${props.channelId}`
+  }
+})
+
+watch(() => props.visible, (open) => {
+  if (open) {
+    tab.value = 'iframe'
+    widgetOpen.value = true
+  }
+})
+</script>
+
+<style scoped lang="less">
+.preview-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.preview-tabs {
+  :deep(.t-tabs__nav-item) {
+    font-size: 13px;
+  }
+}
+
+.preview-hint {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--td-text-color-secondary);
+}
+
+.device-frame {
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--td-bg-color-container);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+
+  &__chrome {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 14px;
+    background: var(--td-bg-color-secondarycontainer);
+    border-bottom: 1px solid var(--td-component-stroke);
+  }
+
+  &__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--td-component-stroke);
+
+    &:nth-child(1) { background: #ff5f57; }
+    &:nth-child(2) { background: #febc2e; }
+    &:nth-child(3) { background: #28c840; }
+  }
+
+  &__url {
+    flex: 1;
+    margin-left: 8px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--td-text-color-placeholder);
+    background: var(--td-bg-color-container);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__screen {
+    height: 560px;
+    background: #f5f7fa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.preview-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #fff;
+  display: block;
+}
+
+.widget-shell {
+  position: relative;
+  height: 560px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.widget-mock-page {
+  padding: 28px 32px;
+
+  &__title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--td-text-color-placeholder);
+    margin-bottom: 16px;
+  }
+
+  &__line {
+    height: 10px;
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.06);
+    margin-bottom: 10px;
+    max-width: 72%;
+
+    &--short {
+      max-width: 48%;
+    }
+  }
+}
+
+.widget-launcher {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  z-index: 3;
+  transition: transform 0.15s ease;
+
+  &:hover {
+    transform: scale(1.04);
+  }
+}
+
+.widget-panel {
+  position: absolute;
+  width: 380px;
+  max-width: calc(100% - 32px);
+  height: 500px;
+  max-height: calc(100% - 88px);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
+  z-index: 2;
+  border: 1px solid var(--td-component-stroke);
+}
+
+.widget-panel-enter-active,
+.widget-panel-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.widget-panel-enter-from,
+.widget-panel-leave-to {
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+}
+
+.pos-bottom-right {
+  .widget-launcher { right: 20px; bottom: 20px; }
+  .widget-panel { right: 20px; bottom: 80px; }
+}
+
+.pos-bottom-left {
+  .widget-launcher { left: 20px; bottom: 20px; }
+  .widget-panel { left: 20px; bottom: 80px; }
+}
+
+.pos-top-right {
+  .widget-launcher { right: 20px; top: 20px; }
+  .widget-panel { right: 20px; top: 80px; }
+}
+
+.pos-top-left {
+  .widget-launcher { left: 20px; top: 20px; }
+  .widget-panel { left: 20px; top: 80px; }
+}
+</style>
