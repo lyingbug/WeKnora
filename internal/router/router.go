@@ -125,6 +125,15 @@ func NewRouter(params RouterParams) *gin.Engine {
 		))
 	}
 
+	// Embed page framing policy: emit a per-channel `frame-ancestors` CSP so the
+	// embed SPA page (/embed/:channelId) can only be iframed by the channel's
+	// allowed origins. This is the page-level counterpart to the API Origin
+	// allowlist enforced in EmbedAuth. Registered before the static handler so
+	// it runs for the embed HTML response.
+	if params.EmbedChannelService != nil {
+		r.Use(embedFrameAncestorsMiddleware(params.EmbedChannelService))
+	}
+
 	// 前端静态文件（仅 Lite 版本内嵌前端）
 	if handler.Edition == "lite" {
 		serveFrontendStatic(r)
@@ -1177,6 +1186,66 @@ func RegisterIMChannelRoutes(r *gin.RouterGroup, imHandler *handler.IMHandler, g
 	{
 		wechatGroup.POST("/qrcode", g.Admin(), imHandler.WeChatGetQRCode)
 		wechatGroup.POST("/qrcode/status", g.Admin(), imHandler.WeChatPollQRCodeStatus)
+	}
+}
+
+// embedChannelIDFromPath extracts the channel id from an /embed/:channelID path.
+func embedChannelIDFromPath(path string) string {
+	const prefix = "/embed/"
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(path, prefix)
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rest = rest[:i]
+	}
+	if i := strings.IndexByte(rest, '?'); i >= 0 {
+		rest = rest[:i]
+	}
+	return strings.TrimSpace(rest)
+}
+
+// embedFrameAncestorsMiddleware sets a per-channel `frame-ancestors` CSP on the
+// embed SPA page so it can only be framed by the channel's allowed origins.
+// When the channel declares no origins (or "*"), no restriction is applied,
+// matching the API allowlist semantics. Only GET/HEAD page loads are handled.
+func embedFrameAncestorsMiddleware(svc interfaces.EmbedChannelService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Next()
+			return
+		}
+		channelID := embedChannelIDFromPath(c.Request.URL.Path)
+		if channelID == "" {
+			c.Next()
+			return
+		}
+		ch, err := svc.LookupEnabledChannel(c.Request.Context(), channelID)
+		if err != nil || ch == nil {
+			c.Next()
+			return
+		}
+		origins := ch.AllowedOriginsList()
+		sources := make([]string, 0, len(origins))
+		wildcard := false
+		for _, o := range origins {
+			o = strings.TrimSpace(o)
+			if o == "" {
+				continue
+			}
+			if o == "*" {
+				wildcard = true
+				break
+			}
+			sources = append(sources, o)
+		}
+		// No explicit origins or a wildcard => do not constrain framing here.
+		if wildcard || len(sources) == 0 {
+			c.Next()
+			return
+		}
+		c.Header("Content-Security-Policy", "frame-ancestors "+strings.Join(sources, " "))
+		c.Next()
 	}
 }
 

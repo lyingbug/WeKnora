@@ -41,9 +41,17 @@ export function useEmbedBridge(channelId: Ref<string>) {
         const exchangeRes = await exchangeEmbedSession(id, embedToken)
         if (exchangeRes?.data?.session_token) {
           apiToken = exchangeRes.data.session_token
+        } else if (!import.meta.env.DEV) {
+          // Fail closed in production: a missing session token must not silently
+          // fall back to the long-lived publish token.
+          throw new Error('embed session exchange returned no token')
         }
-      } catch {
-        // Fall back to publish token when exchange is unavailable.
+      } catch (exchangeErr) {
+        // In production we refuse to downgrade to the publish token; only the
+        // dev build keeps the convenience fallback for local testing.
+        if (!import.meta.env.DEV) {
+          throw exchangeErr
+        }
       }
 
       const res = await getEmbedConfig(id, apiToken)

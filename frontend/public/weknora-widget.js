@@ -69,8 +69,15 @@
 
     var panelWidth = Number(opts.width) > 0 ? Number(opts.width) : DEFAULT_WIDTH;
     var panelHeight = Number(opts.height) > 0 ? Number(opts.height) : DEFAULT_HEIGHT;
-    var embedOrigin = baseUrl;
     var embedUrl = baseUrl + '/embed/' + encodeURIComponent(channelId);
+    var embedOrigin = baseUrl;
+    try {
+      // Derive the exact origin (scheme + host + port) rather than trusting the
+      // raw baseUrl string, so postMessage origin checks are precise.
+      embedOrigin = new URL(embedUrl, global.location ? global.location.href : undefined).origin;
+    } catch (e) {
+      embedOrigin = baseUrl;
+    }
     var destroyed = false;
     var panelOpen = false;
     var iframeReady = false;
@@ -117,24 +124,25 @@
     iframe.src = embedUrl;
     iframe.style.cssText = 'width:100%;height:100%;border:none';
     iframe.setAttribute('allow', 'clipboard-write');
+    // TODO(security): once the embed page is served from a dedicated origin
+    // (e.g. embed.<host>), add a sandbox attribute such as
+    // sandbox="allow-scripts allow-forms allow-popups" to harden isolation.
+    // Adding sandbox on a same-origin embed makes the iframe Origin "null",
+    // which breaks the backend Origin allowlist, so it is intentionally
+    // omitted until the embed page moves to its own origin.
     iframe.setAttribute('title', title);
     panel.appendChild(iframe);
 
     function isTrustedOrigin(origin) {
       if (!origin || origin === 'null') return false;
-      try {
-        if (origin === embedOrigin) return true;
-        if (iframeOrigin && origin === iframeOrigin) return true;
-        return false;
-      } catch (e) {
-        return false;
-      }
+      return origin === embedOrigin;
     }
 
     function postToIframe(message) {
       if (!iframe.contentWindow) return;
-      var target = iframeOrigin || embedOrigin || '*';
-      iframe.contentWindow.postMessage(message, target);
+      // Always target the known embed origin; never fall back to '*' so the
+      // publish token can't leak to an unexpected document.
+      iframe.contentWindow.postMessage(message, embedOrigin || '/');
     }
 
     function provideToken() {
@@ -147,11 +155,13 @@
     }
 
     function onMessage(e) {
+      // Only trust messages coming from our own iframe window and origin.
+      if (e.source !== iframe.contentWindow) return;
+      if (!isTrustedOrigin(e.origin)) return;
       if (!e.data || e.data.source !== EMBED_SOURCE) return;
       if (e.data.channel_id && e.data.channel_id !== channelId) return;
-      if (iframeOrigin && e.origin && !isTrustedOrigin(e.origin)) return;
 
-      if (!iframeOrigin && e.origin) {
+      if (!iframeOrigin) {
         iframeOrigin = e.origin;
       }
 
@@ -210,13 +220,9 @@
 
     launcher.addEventListener('click', toggle);
     iframe.addEventListener('load', function () {
-      try {
-        if (iframe.contentWindow && iframe.contentWindow.location && iframe.contentWindow.location.origin) {
-          iframeOrigin = iframe.contentWindow.location.origin;
-        }
-      } catch (err) {
-        iframeOrigin = embedOrigin;
-      }
+      // The embed page lives at embedOrigin; we cannot (and need not) read the
+      // cross-origin contentWindow.location. Just (re)provide the token.
+      iframeOrigin = embedOrigin;
       provideToken();
     });
 

@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/application/service"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
@@ -55,11 +58,56 @@ type embedChannelRequest struct {
 	WidgetPosition         string `json:"widget_position"`
 }
 
+// isProductionMode reports whether the server runs in a hardened (release) mode.
+func isProductionMode() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("GIN_MODE")), "release")
+}
+
+// validateAllowedOrigins enforces that a public embed channel declares an
+// explicit origin allowlist. An empty list means "allow any origin" in the
+// auth middleware, which is unsafe for a publicly reachable widget, so it is
+// rejected. In production a wildcard ("*") is also rejected; each entry must be
+// a well-formed http(s) origin (optionally a "*." subdomain wildcard).
+func validateAllowedOrigins(origins []string) error {
+	cleaned := make([]string, 0, len(origins))
+	for _, o := range origins {
+		o = strings.TrimSpace(o)
+		if o == "" {
+			continue
+		}
+		cleaned = append(cleaned, o)
+	}
+	if len(cleaned) == 0 {
+		return fmt.Errorf("at least one allowed origin is required")
+	}
+	for _, o := range cleaned {
+		if o == "*" {
+			if isProductionMode() {
+				return fmt.Errorf("wildcard origin '*' is not allowed in production")
+			}
+			continue
+		}
+		host := o
+		if strings.HasPrefix(o, "*.") {
+			host = "https://" + strings.TrimPrefix(o, "*.")
+		}
+		u, err := url.Parse(host)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("invalid allowed origin: %q", o)
+		}
+	}
+	return nil
+}
+
 func (h *EmbedChannelHandler) CreateEmbedChannel(c *gin.Context) {
 	agentID := secutils.SanitizeForLog(c.Param("id"))
 	tenantID := c.GetUint64(types.TenantIDContextKey.String())
 	var req embedChannelRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := validateAllowedOrigins(req.AllowedOrigins); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -116,6 +164,14 @@ func (h *EmbedChannelHandler) UpdateEmbedChannel(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	// Only validate when the caller intends to change the allowlist. A nil slice
+	// means "leave unchanged"; a present slice must still be a valid allowlist.
+	if req.AllowedOrigins != nil {
+		if err := validateAllowedOrigins(req.AllowedOrigins); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	originsJSON, _ := json.Marshal(req.AllowedOrigins)
 	update := &types.EmbedChannel{

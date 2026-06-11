@@ -194,13 +194,37 @@ export function parseEmbedTokenFromLocation(): string {
 
 export function buildEmbedURL(channelId: string, token?: string) {
   const base = window.location.origin
-  const path = `${base}/embed/${channelId}`
+  const path = `${base}/embed/${encodeURIComponent(channelId)}`
   if (!token) return path
   return `${path}#token=${encodeURIComponent(token)}`
 }
 
-export function buildEmbedSnippet(channelId: string) {
-  const url = buildEmbedURL(channelId)
+/** Escape a value for safe interpolation inside an HTML double-quoted attribute. */
+function escapeHtmlAttr(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+/** Validate that a base URL is a well-formed http(s) origin; fall back otherwise. */
+function safeBaseUrl(raw?: string): string {
+  const fallback = window.location.origin
+  if (!raw) return fallback
+  try {
+    const u = new URL(raw, window.location.href)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return fallback
+    return u.origin
+  } catch {
+    return fallback
+  }
+}
+
+export function buildEmbedSnippet(channelId: string, token?: string) {
+  // A bare iframe has no token-handoff host, so the snippet must carry the
+  // publish token in the URL hash, otherwise the embed page cannot bootstrap.
+  const url = escapeHtmlAttr(buildEmbedURL(channelId, token))
   return `<iframe src="${url}" style="width:400px;height:600px;border:none;border-radius:12px" allow="clipboard-write"></iframe>`
 }
 
@@ -209,16 +233,16 @@ export function buildWidgetSnippet(
   token: string,
   opts?: { primaryColor?: string; title?: string; position?: WidgetPosition; baseUrl?: string },
 ) {
-  const base = opts?.baseUrl || window.location.origin
+  const base = safeBaseUrl(opts?.baseUrl)
   const position = opts?.position || 'bottom-right'
   const attrs = [
-    `src="${base}/weknora-widget.js"`,
-    `data-channel="${channelId}"`,
-    `data-token="${token}"`,
-    `data-position="${position}"`,
+    `src="${escapeHtmlAttr(`${base}/weknora-widget.js`)}"`,
+    `data-channel="${escapeHtmlAttr(channelId)}"`,
+    `data-token="${escapeHtmlAttr(token)}"`,
+    `data-position="${escapeHtmlAttr(position)}"`,
   ]
-  if (opts?.primaryColor) attrs.push(`data-primary-color="${opts.primaryColor}"`)
-  if (opts?.title) attrs.push(`data-title="${opts.title}"`)
+  if (opts?.primaryColor) attrs.push(`data-primary-color="${escapeHtmlAttr(opts.primaryColor)}"`)
+  if (opts?.title) attrs.push(`data-title="${escapeHtmlAttr(opts.title)}"`)
   return `<script ${attrs.join('\n        ')}></script>`
 }
 

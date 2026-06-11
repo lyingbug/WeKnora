@@ -505,7 +505,13 @@ const copyToken = async (ch: EmbedChannel) => {
   MessagePlugin.success(t('embedPublish.tokenCopied'))
 }
 
-const iframeSnippet = (ch: EmbedChannel) => buildEmbedSnippet(ch.id)
+const iframeSnippet = (ch: EmbedChannel) => {
+  const token = tokenFor(ch)
+  // The bare iframe has no host to hand off a token, so it must embed the
+  // publish token in the URL; without a token the snippet cannot work.
+  if (!token) return `<!-- ${t('embedPublish.tokenHint')} -->`
+  return buildEmbedSnippet(ch.id, token)
+}
 
 const widgetSnippet = (ch: EmbedChannel) => {
   const token = tokenFor(ch)
