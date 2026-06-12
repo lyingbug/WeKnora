@@ -2365,6 +2365,7 @@ export default {
     previewLoading: 'Loading preview…',
     previewUnavailable: 'Preview is unavailable. Ensure the channel is enabled and Redis is available.',
     defaultChatTitle: 'AI Assistant',
+    newChat: 'New chat',
     channelsPanelIntro: 'Create embed channels for this agent, configure appearance and security, then deploy to third-party sites.',
     sectionChannel: 'Channel info',
     sectionSecurity: 'Security & rate limit',

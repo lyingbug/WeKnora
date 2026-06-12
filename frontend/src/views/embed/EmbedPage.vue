@@ -11,11 +11,23 @@
           <h1 class="embed-header__title">{{ headerTitle }}</h1>
           <p v-if="headerSubtitle" class="embed-header__subtitle">{{ headerSubtitle }}</p>
         </div>
+        <t-button
+          variant="text"
+          shape="square"
+          size="small"
+          class="embed-header__action"
+          :title="$t('embedPublish.newChat')"
+          :aria-label="$t('embedPublish.newChat')"
+          @click="handleNewChat"
+        >
+          <template #icon><t-icon name="add" /></template>
+        </t-button>
       </header>
 
       <EmbedChatView
         v-if="sessionId"
         :session-id="sessionId"
+        :session-sig="sessionSig"
         :channel-id="channelId"
         :token="token"
         :agent-id="config.agent_id"
@@ -48,10 +60,17 @@ const {
   token,
   config,
   sessionId,
+  sessionSig,
   loadError,
   awaitingToken,
   hostContext,
+  startNewSession,
 } = useEmbedBridge(channelId)
+
+const handleNewChat = () => {
+  sessionTitle.value = ''
+  startNewSession()
+}
 
 const kbIds = computed(() => config.value?.knowledge_base_ids ?? [])
 
@@ -183,6 +202,15 @@ watch(headerTitle, (title) => {
   &__text {
     min-width: 0;
     flex: 1;
+  }
+
+  &__action {
+    flex-shrink: 0;
+    color: var(--td-text-color-secondary);
+
+    &:hover {
+      color: var(--td-brand-color);
+    }
   }
 
   &__title {

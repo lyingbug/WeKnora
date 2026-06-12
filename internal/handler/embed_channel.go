@@ -363,7 +363,10 @@ func (h *EmbedChannelHandler) CreateEmbedSession(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"success": true, "data": created})
+	// Hand back a signed handle bound to this session; the widget must echo it
+	// (X-Embed-Session header) on every subsequent load/chat call.
+	sig := service.SignEmbedSessionHandle(ch, created.ID)
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": gin.H{"id": created.ID, "sig": sig}})
 }
 
 func (h *EmbedChannelHandler) EmbedKnowledgeChat(c *gin.Context) {
@@ -431,6 +434,14 @@ func (h *EmbedChannelHandler) ensureEmbedSession(c *gin.Context) error {
 	if sess.TenantID != ch.TenantID || sess.Description != marker {
 		c.JSON(http.StatusForbidden, gin.H{"error": "session not allowed for this embed channel"})
 		return apperrors.NewForbiddenError("session not allowed")
+	}
+	// Require the signed handle minted at creation. This is the per-visitor
+	// authorization secret: knowing the session id alone (e.g. from a leaked
+	// access log) is insufficient without the matching signature.
+	sig := c.GetHeader("X-Embed-Session")
+	if !service.VerifyEmbedSessionHandle(ch, sessionID, sig) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "session signature invalid"})
+		return apperrors.NewForbiddenError("session signature invalid")
 	}
 	return nil
 }

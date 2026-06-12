@@ -19,6 +19,7 @@ import { useChatStreamHandler } from '@/composables/useChatStreamHandler'
 
 export function useEmbedChatSession(options: {
   sessionId: Ref<string>
+  sessionSig: Ref<string>
   channelId: string
   token: string
   agentId: string
@@ -154,6 +155,7 @@ export function useEmbedChatSession(options: {
       data.session_id,
       data.limit,
       data.created_at || undefined,
+      options.sessionSig.value,
     )
       .then(async (res) => {
         const batch = res?.data as Record<string, unknown>[] | undefined
@@ -227,6 +229,7 @@ export function useEmbedChatSession(options: {
       method: 'POST',
       url: endpoint,
       embed_token: options.token,
+      embed_session_sig: options.sessionSig.value,
     })
   }
 

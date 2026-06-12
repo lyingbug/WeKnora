@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"strings"
@@ -93,6 +96,36 @@ func (s *embedChannelService) LookupEnabledChannel(ctx context.Context, channelI
 // IsEmbedSessionToken reports whether token is a session token (ems_ prefix).
 func IsEmbedSessionToken(token string) bool {
 	return strings.HasPrefix(strings.TrimSpace(token), embedSessionTokenPrefix)
+}
+
+// SignEmbedSessionHandle binds a chat session id to its embed channel with an
+// HMAC keyed by the channel's (server-only) publish token. The handle is handed
+// to the widget at session-creation time and must be presented on every history
+// load / chat call. Because the session id travels in the request path (and can
+// land in access logs), this signature — sent in a header, never logged — is the
+// real authorization secret: a leaked session id is useless without it. Rotating
+// the channel token invalidates outstanding handles, which is acceptable.
+func SignEmbedSessionHandle(ch *types.EmbedChannel, sessionID string) string {
+	if ch == nil || strings.TrimSpace(sessionID) == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(ch.PublishToken))
+	mac.Write([]byte(ch.ID + "|" + sessionID))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// VerifyEmbedSessionHandle reports whether sig is a valid handle for sessionID
+// on channel ch, using a constant-time comparison.
+func VerifyEmbedSessionHandle(ch *types.EmbedChannel, sessionID, sig string) bool {
+	sig = strings.TrimSpace(sig)
+	if sig == "" {
+		return false
+	}
+	expected := SignEmbedSessionHandle(ch, sessionID)
+	if expected == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(sig)) == 1
 }
 
 // IssuePreviewSession mints a short-lived session token for management UI preview.

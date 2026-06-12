@@ -3226,6 +3226,7 @@ export default {
     previewLoading: "正在加载预览…",
     previewUnavailable: "预览暂时不可用，请确认渠道已启用且 Redis 可用",
     defaultChatTitle: "AI 助手",
+    newChat: "新建对话",
     channelsPanelIntro: "为 Agent 创建独立嵌入渠道，配置外观与安全策略后发布到第三方网站。",
     sectionChannel: "渠道信息",
     sectionSecurity: "安全与限流",

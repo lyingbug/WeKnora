@@ -1,6 +1,7 @@
 <template>
   <EmbedChatCore
     :session-id="sessionId"
+    :session-sig="sessionSig"
     :channel-id="channelId"
     :token="token"
     :agent-id="agentId"
@@ -20,6 +21,7 @@ const EmbedChatCore = defineAsyncComponent(() => import('@/views/embed/EmbedChat
 
 defineProps<{
   sessionId: string
+  sessionSig: string
   channelId: string
   token: string
   agentId: string

@@ -101,7 +101,7 @@ export async function getEmbedConfig(channelId: string, token: string) {
 }
 
 export async function createEmbedSession(channelId: string, token: string) {
-  return post<{ success: boolean; data: { id: string } }>(
+  return post<{ success: boolean; data: { id: string; sig: string } }>(
     `/api/v1/embed/${channelId}/sessions`,
     {},
     { headers: { Authorization: `Embed ${token}` } },
@@ -122,14 +122,18 @@ export async function getEmbedMessageList(
   sessionId: string,
   limit: number,
   beforeTime?: string,
+  sig?: string,
 ) {
   const params = new URLSearchParams({ limit: String(limit) })
   if (beforeTime) {
     params.set('before_time', beforeTime)
   }
+  const headers: Record<string, string> = { Authorization: `Embed ${token}` }
+  // Signed session handle — sent as a header so it never lands in URL/access logs.
+  if (sig) headers['X-Embed-Session'] = sig
   return get<{ success: boolean; data: unknown[] }>(
     `/api/v1/embed/${channelId}/messages/${sessionId}/load?${params.toString()}`,
-    { headers: { Authorization: `Embed ${token}` } },
+    { headers },
   )
 }
 

@@ -5,6 +5,7 @@ import {
   createEmbedSession,
   exchangeEmbedSession,
   getEmbedConfig,
+  getEmbedMessageList,
   isEmbedSessionToken,
   onEmbedHostContext,
   onEmbedHostToken,
@@ -14,6 +15,62 @@ import {
   type EmbedChannelPublicConfig,
 } from '@/api/embed'
 
+// Persist the chat session id per channel so a page refresh resumes the same
+// conversation (and its history) instead of silently starting a new session.
+const EMBED_SESSION_STORAGE_PREFIX = 'weknora-embed-session:'
+
+const sessionStorageKey = (channelId: string) => `${EMBED_SESSION_STORAGE_PREFIX}${channelId}`
+
+interface StoredSession {
+  id: string
+  sig: string
+}
+
+function readStoredSession(channelId: string): StoredSession | null {
+  try {
+    const raw = window.localStorage.getItem(sessionStorageKey(channelId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed.id === 'string' && typeof parsed.sig === 'string' && parsed.id) {
+      return { id: parsed.id, sig: parsed.sig }
+    }
+  } catch {
+    // Malformed / legacy (plain-string) entry: ignore so a fresh signed
+    // session is created below.
+  }
+  return null
+}
+
+function writeStoredSession(channelId: string, session: StoredSession | null) {
+  try {
+    if (session?.id) {
+      window.localStorage.setItem(sessionStorageKey(channelId), JSON.stringify(session))
+    } else {
+      window.localStorage.removeItem(sessionStorageKey(channelId))
+    }
+  } catch {
+    // localStorage may be unavailable (private mode / disabled cookies).
+    // Persistence is best-effort; the session still works for this load.
+  }
+}
+
+// A stored session may have been deleted/expired server-side, or its signed
+// handle invalidated by a channel token rotation. Probe it cheaply (limit=1)
+// with the stored signature before reusing — the backend rejects stale/foreign
+// ids and bad signatures with 4xx, which surfaces here as a thrown error.
+async function isStoredSessionValid(
+  channelId: string,
+  apiToken: string,
+  session: StoredSession,
+): Promise<boolean> {
+  try {
+    await getEmbedMessageList(channelId, apiToken, session.id, 1, undefined, session.sig)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function useEmbedBridge(channelId: Ref<string>) {
   const { t } = useI18n()
   const route = useRoute()
@@ -21,6 +78,7 @@ export function useEmbedBridge(channelId: Ref<string>) {
   const token = ref('')
   const config = ref<EmbedChannelPublicConfig | null>(null)
   const sessionId = ref('')
+  const sessionSig = ref('')
   const loadError = ref('')
   const awaitingToken = ref(false)
   const hostContext = ref<Record<string, unknown>>({})
@@ -66,12 +124,24 @@ export function useEmbedBridge(channelId: Ref<string>) {
         return
       }
       config.value = res.data
-      const sessionRes = await createEmbedSession(id, apiToken)
-      sessionId.value = sessionRes?.data?.id || ''
-      if (!sessionId.value) {
+
+      // Resume a persisted session when still valid; otherwise create a fresh one.
+      let resolved: StoredSession | null = null
+      const stored = readStoredSession(id)
+      if (stored && (await isStoredSessionValid(id, apiToken, stored))) {
+        resolved = stored
+      } else {
+        const sessionRes = await createEmbedSession(id, apiToken)
+        const newId = sessionRes?.data?.id || ''
+        if (newId) resolved = { id: newId, sig: sessionRes?.data?.sig || '' }
+      }
+      if (!resolved) {
         loadError.value = t('embedPublish.sessionFailed')
         return
       }
+      sessionId.value = resolved.id
+      sessionSig.value = resolved.sig
+      writeStoredSession(id, resolved)
       token.value = apiToken
       postEmbedReady(id)
     } catch (e: unknown) {
@@ -84,6 +154,25 @@ export function useEmbedBridge(channelId: Ref<string>) {
       } else {
         loadError.value = msg || t('embedPublish.loadError')
       }
+    }
+  }
+
+  // Discard the current conversation and start a fresh signed session. Backing
+  // the "新建对话" affordance — also the privacy escape hatch on shared devices.
+  const startNewSession = async () => {
+    const id = channelId.value
+    const apiToken = token.value
+    if (!id || !apiToken) return
+    try {
+      const sessionRes = await createEmbedSession(id, apiToken)
+      const newId = sessionRes?.data?.id || ''
+      if (!newId) return
+      const next: StoredSession = { id: newId, sig: sessionRes?.data?.sig || '' }
+      sessionSig.value = next.sig
+      sessionId.value = next.id
+      writeStoredSession(id, next)
+    } catch {
+      // Non-fatal: keep the current session if creating a new one fails.
     }
   }
 
@@ -130,8 +219,10 @@ export function useEmbedBridge(channelId: Ref<string>) {
     token,
     config,
     sessionId,
+    sessionSig,
     loadError,
     awaitingToken,
     hostContext,
+    startNewSession,
   }
 }

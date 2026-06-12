@@ -107,6 +107,7 @@ import { useEmbedChatSession } from '@/composables/useEmbedChatSession'
 
 const props = defineProps<{
   sessionId: string
+  sessionSig: string
   channelId: string
   token: string
   agentId: string
@@ -123,6 +124,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const sessionIdRef = toRef(props, 'sessionId')
+const sessionSigRef = toRef(props, 'sessionSig')
 const suggestedQuestions = ref<SuggestedQuestion[]>([])
 const suggestedLoading = ref(false)
 const hostContextRef = ref<Record<string, unknown>>(props.hostContext || {})
@@ -147,6 +149,7 @@ const {
   handleStopGeneration,
 } = useEmbedChatSession({
   sessionId: sessionIdRef,
+  sessionSig: sessionSigRef,
   channelId: props.channelId,
   token: props.token,
   agentId: props.agentId,
