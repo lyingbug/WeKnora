@@ -11,6 +11,7 @@
     :use-session-header-title="useSessionHeaderTitle"
     :host-context="hostContext"
     @session-title="(title: string) => emit('session-title', title)"
+    @messages-state="(has: boolean) => emit('messages-state', has)"
   />
 </template>
 
@@ -34,5 +35,6 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'session-title', title: string): void
+  (e: 'messages-state', hasMessages: boolean): void
 }>()
 </script>

@@ -120,6 +120,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'session-title', title: string): void
+  (e: 'messages-state', hasMessages: boolean): void
 }>()
 
 const { t } = useI18n()
@@ -155,6 +156,7 @@ const {
   agentId: props.agentId,
   kbIds: props.kbIds,
   hostContext: hostContextRef,
+  onMessagesChange: (has) => emit('messages-state', has),
   onSessionTitle: (title) => {
     if (props.useSessionHeaderTitle) {
       emit('session-title', title)

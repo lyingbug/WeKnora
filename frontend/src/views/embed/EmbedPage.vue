@@ -16,6 +16,7 @@
           shape="square"
           size="small"
           class="embed-header__action"
+          :disabled="!chatHasMessages"
           :title="$t('embedPublish.newChat')"
           :aria-label="$t('embedPublish.newChat')"
           @click="handleNewChat"
@@ -37,6 +38,7 @@
         :use-session-header-title="useSessionHeaderTitle"
         :host-context="hostContext"
         @session-title="sessionTitle = $event"
+        @messages-state="chatHasMessages = $event"
       />
       <div v-else class="embed-loading">{{ $t('embedPublish.loading') }}</div>
     </template>
@@ -55,6 +57,7 @@ const { t } = useI18n()
 const route = useRoute()
 const channelId = ref(String(route.params.channelId || ''))
 const sessionTitle = ref('')
+const chatHasMessages = ref(false)
 
 const {
   token,
@@ -68,6 +71,9 @@ const {
 } = useEmbedBridge(channelId)
 
 const handleNewChat = () => {
+  // The current session is already empty — reuse it instead of spawning yet
+  // another blank session (which would otherwise pile up server-side).
+  if (!chatHasMessages.value) return
   sessionTitle.value = ''
   startNewSession()
 }

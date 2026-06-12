@@ -153,7 +153,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 	RegisterIMRoutes(r, params.IMHandler)
 
 	// Web embed 公开路由（使用 publish token 鉴权，不走全局 Auth）
-	RegisterEmbedPublicRoutes(r, params.EmbedChannelHandler, params.EmbedChannelService, params.TenantService, params.RedisClient)
+	RegisterEmbedPublicRoutes(r, params.EmbedChannelHandler, params.EmbedChannelService, params.TenantService, params.RedisClient, params.FileService)
 
 	// 认证中间件
 	r.Use(middleware.Auth(params.TenantService, params.UserService, params.TenantMemberService, params.Config))
@@ -1122,6 +1122,7 @@ func RegisterEmbedPublicRoutes(
 	embedService interfaces.EmbedChannelService,
 	tenantService interfaces.TenantService,
 	redisClient *redis.Client,
+	fileService interfaces.FileService,
 ) {
 	if embedHandler == nil || embedService == nil {
 		return
@@ -1136,6 +1137,10 @@ func RegisterEmbedPublicRoutes(
 		embed.POST("/knowledge-chat/:session_id", embedHandler.EmbedKnowledgeChat)
 		embed.POST("/agent-chat/:session_id", embedHandler.EmbedAgentChat)
 		embed.GET("/messages/:session_id/load", embedHandler.EmbedLoadMessages)
+		// Serve images embedded in bot replies (e.g. chart exports). EmbedAuth
+		// injects the channel's tenant, and the handler enforces that the
+		// requested path belongs to that tenant.
+		embed.GET("/files", newFileServeHandler(fileService))
 	}
 }
 
@@ -1347,7 +1352,12 @@ type getRouteRegistrar interface {
 	GET(string, ...gin.HandlerFunc) gin.IRoutes
 }
 
-func serveFiles(r getRouteRegistrar, globalFileService interfaces.FileService) {
+// newFileServeHandler builds the file-proxy handler. It reads the tenant from
+// the request context (set by whichever auth middleware precedes it), so the
+// same handler backs both the authenticated /files route and the embed route
+// (where EmbedAuth injects the channel's tenant). Tenant ownership of the
+// requested path is enforced via ValidateStoragePathTenant either way.
+func newFileServeHandler(globalFileService interfaces.FileService) gin.HandlerFunc {
 	baseDir := os.Getenv("LOCAL_STORAGE_BASE_DIR")
 	if baseDir == "" {
 		baseDir = "/data/files"
@@ -1359,9 +1369,7 @@ func serveFiles(r getRouteRegistrar, globalFileService interfaces.FileService) {
 		}
 	}
 
-	logger.Infof(context.Background(), "[Router] Serving files from /files (local base: %s)", absDir)
-
-	r.GET("/files", func(c *gin.Context) {
+	return func(c *gin.Context) {
 		filePath := strings.TrimSpace(c.Query("file_path"))
 		if filePath == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "missing required parameter: file_path"})
@@ -1448,7 +1456,12 @@ func serveFiles(r getRouteRegistrar, globalFileService interfaces.FileService) {
 		if _, err := io.Copy(c.Writer, reader); err != nil {
 			logger.Warnf(context.Background(), "[Router] /files write response failed: %v", err)
 		}
-	})
+	}
+}
+
+func serveFiles(r getRouteRegistrar, globalFileService interfaces.FileService) {
+	logger.Infof(context.Background(), "[Router] Serving files from /files")
+	r.GET("/files", newFileServeHandler(globalFileService))
 }
 
 // servePresignedFiles serves files via HMAC-signed URLs without requiring authentication.

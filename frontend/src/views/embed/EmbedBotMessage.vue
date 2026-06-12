@@ -104,7 +104,11 @@ const hasActualContent = computed(() => {
 })
 
 const hydrateImages = async () => {
-  await hydrateProtectedFileImages(parentMd.value)
+  const embedCtx =
+    props.embedChannelId && props.embedToken
+      ? { channelId: props.embedChannelId, token: props.embedToken }
+      : undefined
+  await hydrateProtectedFileImages(parentMd.value, embedCtx)
 }
 
 const renderMermaidDiagrams = async () => {
