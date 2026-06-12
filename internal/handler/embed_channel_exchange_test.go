@@ -79,6 +79,7 @@ func TestExchangeEmbedSessionSuccess(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/exchange", nil)
+	req.Header.Set("Authorization", "Embed em_publish_token")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -113,10 +114,33 @@ func TestExchangeEmbedSessionUnavailable(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/exchange", nil)
+	req.Header.Set("Authorization", "Embed em_publish_token")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", w.Code)
+	}
+}
+
+func TestExchangeEmbedSessionRejectsSessionToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &EmbedChannelHandler{embedSvc: &exchangeEmbedSvc{sessionToken: "ems_new", expiresIn: 1800}}
+
+	r := gin.New()
+	r.POST("/exchange", func(c *gin.Context) {
+		ch := &types.EmbedChannel{ID: "channel-1", Enabled: true}
+		ctx := context.WithValue(c.Request.Context(), middleware.EmbedChannelContextKey, ch)
+		c.Request = c.Request.WithContext(ctx)
+		h.ExchangeEmbedSession(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/exchange", nil)
+	req.Header.Set("Authorization", "Embed ems_existing_session")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
 	}
 }

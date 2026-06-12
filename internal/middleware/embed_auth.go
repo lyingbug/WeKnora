@@ -137,11 +137,14 @@ func EmbedAuth(
 }
 
 func extractEmbedToken(c *gin.Context) string {
+	// Only accept the token via the Authorization header. A query-string token
+	// would be captured by proxy/access logs and browser history; the embed
+	// client always sends "Authorization: Embed <token>".
 	auth := c.GetHeader("Authorization")
 	if strings.HasPrefix(auth, "Embed ") {
 		return strings.TrimSpace(strings.TrimPrefix(auth, "Embed "))
 	}
-	return strings.TrimSpace(c.Query("token"))
+	return ""
 }
 
 func requestOrigin(c *gin.Context) string {

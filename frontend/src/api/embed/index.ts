@@ -127,7 +127,12 @@ export async function getEmbedMessageList(
 const EMBED_MSG_SOURCE = 'weknora-embed'
 const EMBED_HOST_SOURCE = 'weknora-host'
 
-function resolveParentOrigin(): string {
+// The exact parent origin, learned from the first trusted host message
+// (trust-on-first-use). Once known, every inbound/outbound message is pinned to
+// it so conversation content is never broadcast to an unexpected window.
+let verifiedParentOrigin = ''
+
+function referrerParentOrigin(): string {
   if (window.parent === window) return ''
   try {
     if (document.referrer) {
@@ -136,21 +141,45 @@ function resolveParentOrigin(): string {
   } catch {
     // ignore malformed referrer
   }
-  return '*'
+  return ''
+}
+
+/** Best-known parent origin: verified handshake first, then referrer. */
+function knownParentOrigin(): string {
+  return verifiedParentOrigin || referrerParentOrigin()
 }
 
 function isTrustedParentMessage(event: MessageEvent): boolean {
   if (window.parent === window) return false
   if (event.source !== window.parent) return false
   if (!event.data || event.data.source !== EMBED_HOST_SOURCE) return false
-  const parentOrigin = resolveParentOrigin()
-  if (parentOrigin !== '*' && event.origin !== parentOrigin) return false
+  if (typeof event.origin !== 'string' || event.origin === 'null') return false
+  const expected = knownParentOrigin()
+  if (expected) {
+    if (event.origin !== expected) return false
+  } else {
+    // First trusted handshake with no referrer hint: pin to this origin.
+    verifiedParentOrigin = event.origin
+  }
   return true
 }
 
-function postToParent(payload: Record<string, unknown>) {
+/**
+ * Post a message to the host page.
+ * `sensitive` payloads (conversation content) are dropped when the parent
+ * origin is unknown rather than broadcast to '*'. Non-sensitive handshake
+ * messages (bootstrap_request/ready) may fall back to '*' so token handoff can
+ * still bootstrap when the referrer is stripped.
+ */
+function postToParent(payload: Record<string, unknown>, opts?: { sensitive?: boolean }) {
   if (window.parent === window) return
-  window.parent.postMessage({ source: EMBED_MSG_SOURCE, ...payload }, resolveParentOrigin())
+  const target = knownParentOrigin()
+  if (!target) {
+    if (opts?.sensitive) return
+    window.parent.postMessage({ source: EMBED_MSG_SOURCE, ...payload }, '*')
+    return
+  }
+  window.parent.postMessage({ source: EMBED_MSG_SOURCE, ...payload }, target)
 }
 
 /** Notify the parent page that the embed widget is ready. */
@@ -165,22 +194,28 @@ export function postEmbedBootstrapRequest(channelId: string) {
 
 /** Notify the parent page when a user message is sent. */
 export function postEmbedMessageSent(channelId: string, sessionId: string, query: string) {
-  postToParent({
-    type: 'message_sent',
-    channel_id: channelId,
-    session_id: sessionId,
-    query,
-  })
+  postToParent(
+    {
+      type: 'message_sent',
+      channel_id: channelId,
+      session_id: sessionId,
+      query,
+    },
+    { sensitive: true },
+  )
 }
 
 /** Notify the parent page when an assistant reply completes. */
 export function postEmbedMessageReceived(channelId: string, sessionId: string, content: string) {
-  postToParent({
-    type: 'message_received',
-    channel_id: channelId,
-    session_id: sessionId,
-    content,
-  })
+  postToParent(
+    {
+      type: 'message_received',
+      channel_id: channelId,
+      session_id: sessionId,
+      content,
+    },
+    { sensitive: true },
+  )
 }
 
 export function parseEmbedTokenFromLocation(): string {

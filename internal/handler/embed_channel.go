@@ -241,6 +241,14 @@ func (h *EmbedChannelHandler) ExchangeEmbedSession(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
+	// Only the long-lived publish token may mint session tokens. Accepting a
+	// session token here would let a holder renew it indefinitely without ever
+	// re-presenting the publish token.
+	if auth := strings.TrimSpace(c.GetHeader("Authorization")); !strings.HasPrefix(auth, "Embed ") ||
+		service.IsEmbedSessionToken(strings.TrimPrefix(auth, "Embed ")) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "publish token required"})
+		return
+	}
 	sessionToken, expiresIn, err := h.embedSvc.IssueSessionToken(ctx, ch.ID)
 	if err != nil {
 		if errors.Is(err, service.ErrEmbedSessionUnavailable) {

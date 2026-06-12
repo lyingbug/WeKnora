@@ -212,7 +212,7 @@ func TestExtractEmbedToken(t *testing.T) {
 		want   string
 	}{
 		{name: "authorization header", header: "Embed em_publish", want: "em_publish"},
-		{name: "query param", query: "ems_session", want: "ems_session"},
+		{name: "query param rejected", query: "ems_session", want: ""},
 		{name: "header preferred", header: "Embed em_header", query: "em_query", want: "em_header"},
 		{name: "missing", want: ""},
 	}
