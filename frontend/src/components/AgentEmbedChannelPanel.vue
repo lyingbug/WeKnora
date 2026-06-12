@@ -310,10 +310,14 @@
             <t-tabs v-model="drawerSnippetTab" class="snippet-tabs">
               <t-tab-panel value="iframe" :label="$t('embedPublish.tabIframe')" />
               <t-tab-panel value="widget" :label="$t('embedPublish.tabWidget')" />
+              <t-tab-panel value="secure" :label="$t('embedPublish.tabSecure')" />
             </t-tabs>
             <p class="snippet-scenario">{{ snippetScenarioHint }}</p>
             <p v-if="drawerSnippetTab === 'widget'" class="snippet-note">
               {{ $t('embedPublish.widgetTokenNote') }}
+            </p>
+            <p v-else-if="drawerSnippetTab === 'secure'" class="snippet-note snippet-note--ok">
+              {{ $t('embedPublish.secureTokenNote') }}
             </p>
 
             <div class="code-panel">
@@ -323,6 +327,7 @@
                 </span>
                 <div class="code-panel__actions">
                   <t-button
+                    v-if="drawerSnippetTab !== 'secure'"
                     size="small"
                     variant="text"
                     :loading="previewLoading"
@@ -339,6 +344,22 @@
               </div>
               <pre class="code-panel__pre">{{ drawerSnippet }}</pre>
             </div>
+
+            <template v-if="drawerSnippetTab === 'secure'">
+              <p class="snippet-scenario">{{ $t('embedPublish.secureServerLabel') }}</p>
+              <div class="code-panel">
+                <div class="code-panel__toolbar">
+                  <span class="code-panel__label">{{ $t('embedPublish.secureServerCode') }}</span>
+                  <div class="code-panel__actions">
+                    <t-button size="small" variant="outline" @click="copySecureServerExample">
+                      <template #icon><t-icon name="file-copy" /></template>
+                      {{ $t('embedPublish.copyCode') }}
+                    </t-button>
+                  </div>
+                </div>
+                <pre class="code-panel__pre">{{ secureServerExample }}</pre>
+              </div>
+            </template>
           </div>
         </div>
       </section>
@@ -372,6 +393,8 @@ import {
   issueEmbedPreviewSession,
   buildEmbedSnippet,
   buildWidgetSnippet,
+  buildSecureWidgetSnippet,
+  buildSecureServerExample,
   type EmbedChannel,
   type HeaderTitleMode,
   type WidgetPosition,
@@ -404,7 +427,7 @@ const editingId = ref('')
 const editingEnabled = ref(true)
 const originsText = ref('')
 const originsError = ref('')
-const drawerSnippetTab = ref<'iframe' | 'widget'>('iframe')
+const drawerSnippetTab = ref<'iframe' | 'widget' | 'secure'>('iframe')
 
 const EMBED_TOKEN_STORAGE = 'weknora_embed_publish_tokens'
 const WEKNORA_BRAND_COLOR = '#07C05F'
@@ -554,16 +577,34 @@ const widgetSnippet = (ch: EmbedChannel) => {
   })
 }
 
+const secureSnippet = (ch: EmbedChannel) => {
+  const position = (ch.widget_position as WidgetPosition) || 'bottom-right'
+  return buildSecureWidgetSnippet(ch.id, {
+    primaryColor: ch.primary_color,
+    title: ch.page_title || ch.name,
+    position,
+  })
+}
+
+const secureServerExample = computed(() => {
+  const ch = drawerChannel.value
+  if (!ch) return ''
+  return buildSecureServerExample(ch.id)
+})
+
 const drawerSnippet = computed(() => {
   const ch = drawerChannel.value
   if (!ch) return ''
+  if (drawerSnippetTab.value === 'secure') return secureSnippet(ch)
   return drawerSnippetTab.value === 'widget' ? widgetSnippet(ch) : iframeSnippet(ch)
 })
 
-const snippetScenarioHint = computed(() =>
-  drawerSnippetTab.value === 'widget'
+const snippetScenarioHint = computed(() => {
+  if (drawerSnippetTab.value === 'secure') return t('embedPublish.embedSecureDesc')
+  return drawerSnippetTab.value === 'widget'
     ? t('embedPublish.embedWidgetDesc')
-    : t('embedPublish.embedIframeDesc'))
+    : t('embedPublish.embedIframeDesc')
+})
 
 const fillFormFromChannel = (ch: EmbedChannel) => {
   editingId.value = ch.id
@@ -698,7 +739,7 @@ const openPreviewFromDrawer = async () => {
         return
       }
     }
-    previewMode.value = drawerSnippetTab.value
+    previewMode.value = drawerSnippetTab.value === 'iframe' ? 'iframe' : 'widget'
     previewChannel.value = ch
     previewToken.value = token
     previewVisible.value = true
@@ -707,6 +748,12 @@ const openPreviewFromDrawer = async () => {
   } finally {
     previewLoading.value = false
   }
+}
+
+const copySecureServerExample = async () => {
+  if (!secureServerExample.value) return
+  await navigator.clipboard.writeText(secureServerExample.value)
+  MessagePlugin.success(t('embedPublish.copied'))
 }
 
 const copyDrawerSnippet = async () => {
@@ -1169,6 +1216,11 @@ const toggleEnabled = async (ch: EmbedChannel, enabled: boolean) => {
   color: var(--td-text-color-secondary);
   background: color-mix(in srgb, var(--td-warning-color, #ed7b2f) 8%, var(--td-bg-color-container));
   border: 1px solid color-mix(in srgb, var(--td-warning-color, #ed7b2f) 20%, transparent);
+}
+
+.snippet-note--ok {
+  background: color-mix(in srgb, var(--td-success-color, #2ba471) 8%, var(--td-bg-color-container));
+  border-color: color-mix(in srgb, var(--td-success-color, #2ba471) 20%, transparent);
 }
 
 .code-panel {

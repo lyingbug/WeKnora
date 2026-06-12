@@ -38,6 +38,14 @@ export interface EmbedChannelPublicConfig {
 export type HeaderTitleMode = 'channel' | 'session'
 export type WidgetPosition = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left'
 
+/** Prefix of short-lived embed session tokens minted by the backend. */
+export const EMBED_SESSION_TOKEN_PREFIX = 'ems_'
+
+/** Whether a token is already a short-lived session token (secure mode). */
+export function isEmbedSessionToken(token: string): boolean {
+  return typeof token === 'string' && token.trim().startsWith(EMBED_SESSION_TOKEN_PREFIX)
+}
+
 export async function listEmbedChannels(agentId: string) {
   return get<{ success: boolean; data: EmbedChannel[] }>(`/api/v1/agents/${agentId}/embed-channels`)
 }
@@ -280,6 +288,55 @@ export function buildWidgetSnippet(
   if (opts?.primaryColor) attrs.push(`data-primary-color="${escapeHtmlAttr(opts.primaryColor)}"`)
   if (opts?.title) attrs.push(`data-title="${escapeHtmlAttr(opts.title)}"`)
   return `<script ${attrs.join('\n        ')}></script>`
+}
+
+/** Default placeholder for the integrator's own token-minting endpoint. */
+export const SECURE_TOKEN_ENDPOINT_PLACEHOLDER = 'https://your-backend.example.com/weknora/embed-token'
+
+/**
+ * Secure-mode widget snippet: the page references an endpoint on the
+ * integrator's own backend (data-token-endpoint) instead of carrying the
+ * publish token. The publish token never reaches the browser.
+ */
+export function buildSecureWidgetSnippet(
+  channelId: string,
+  opts?: { primaryColor?: string; title?: string; position?: WidgetPosition; baseUrl?: string; tokenEndpoint?: string },
+) {
+  const base = safeBaseUrl(opts?.baseUrl)
+  const position = opts?.position || 'bottom-right'
+  const endpoint = opts?.tokenEndpoint || SECURE_TOKEN_ENDPOINT_PLACEHOLDER
+  const attrs = [
+    `src="${escapeHtmlAttr(`${base}/weknora-widget.js`)}"`,
+    `data-channel="${escapeHtmlAttr(channelId)}"`,
+    `data-token-endpoint="${escapeHtmlAttr(endpoint)}"`,
+    `data-position="${escapeHtmlAttr(position)}"`,
+  ]
+  if (opts?.primaryColor) attrs.push(`data-primary-color="${escapeHtmlAttr(opts.primaryColor)}"`)
+  if (opts?.title) attrs.push(`data-title="${escapeHtmlAttr(opts.title)}"`)
+  return `<script ${attrs.join('\n        ')}></script>`
+}
+
+/**
+ * Server-side reference (Node/Express) for the token-minting endpoint that
+ * secure mode points at. The publish token stays on the server; the endpoint
+ * exchanges it for a short-lived session token and returns that to the page.
+ */
+export function buildSecureServerExample(channelId: string, opts?: { baseUrl?: string }) {
+  const base = safeBaseUrl(opts?.baseUrl)
+  const exchangeUrl = `${base}/api/v1/embed/${channelId}/exchange`
+  return [
+    `// Node/Express — keep WEKNORA_PUBLISH_TOKEN only on the server (env var).`,
+    `app.get('/weknora/embed-token', async (req, res) => {`,
+    `  // TODO: authenticate req against your own session before minting a token.`,
+    `  const r = await fetch('${exchangeUrl}', {`,
+    `    method: 'POST',`,
+    `    headers: { Authorization: 'Embed ' + process.env.WEKNORA_PUBLISH_TOKEN },`,
+    `  })`,
+    `  const body = await r.json()`,
+    `  if (!body?.data?.session_token) return res.status(502).json({ error: 'mint failed' })`,
+    `  res.json({ token: body.data.session_token, expiresIn: body.data.expires_in })`,
+    `})`,
+  ].join('\n')
 }
 
 /** Listen for context injected by the parent page (embed host). */

@@ -5,6 +5,7 @@ import {
   createEmbedSession,
   exchangeEmbedSession,
   getEmbedConfig,
+  isEmbedSessionToken,
   onEmbedHostContext,
   onEmbedHostToken,
   parseEmbedTokenFromLocation,
@@ -37,20 +38,25 @@ export function useEmbedBridge(channelId: Ref<string>) {
 
     try {
       let apiToken = embedToken
-      try {
-        const exchangeRes = await exchangeEmbedSession(id, embedToken)
-        if (exchangeRes?.data?.session_token) {
-          apiToken = exchangeRes.data.session_token
-        } else if (!import.meta.env.DEV) {
-          // Fail closed in production: a missing session token must not silently
-          // fall back to the long-lived publish token.
-          throw new Error('embed session exchange returned no token')
-        }
-      } catch (exchangeErr) {
-        // In production we refuse to downgrade to the publish token; only the
-        // dev build keeps the convenience fallback for local testing.
-        if (!import.meta.env.DEV) {
-          throw exchangeErr
+      // Secure mode: the host already handed us a short-lived session token
+      // (minted server-side from the publish token). Use it directly — the
+      // exchange endpoint only accepts publish tokens and would reject this.
+      if (!isEmbedSessionToken(embedToken)) {
+        try {
+          const exchangeRes = await exchangeEmbedSession(id, embedToken)
+          if (exchangeRes?.data?.session_token) {
+            apiToken = exchangeRes.data.session_token
+          } else if (!import.meta.env.DEV) {
+            // Fail closed in production: a missing session token must not silently
+            // fall back to the long-lived publish token.
+            throw new Error('embed session exchange returned no token')
+          }
+        } catch (exchangeErr) {
+          // In production we refuse to downgrade to the publish token; only the
+          // dev build keeps the convenience fallback for local testing.
+          if (!import.meta.env.DEV) {
+            throw exchangeErr
+          }
         }
       }
 

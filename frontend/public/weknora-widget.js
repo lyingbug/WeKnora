@@ -6,7 +6,14 @@
  *   WeKnora.open() | close() | toggle() | destroy()
  *   WeKnora.on('ready', fn) | off('ready', fn)
  *
- * Legacy script-tag auto-init via data-* attributes on the script element.
+ * Secure mode (recommended): instead of `token`, pass `tokenEndpoint` — a URL on
+ * your own backend that returns { token: "ems_...", expiresIn: 1800 }. Your
+ * backend mints that short-lived session token by exchanging the publish token
+ * (kept server-side) against POST /api/v1/embed/:channel/exchange. The publish
+ * token then never reaches the browser; the widget auto-refreshes before expiry.
+ *
+ * Legacy script-tag auto-init via data-* attributes on the script element
+ * (data-channel + data-token, or data-channel + data-token-endpoint).
  */
 (function (global) {
   'use strict';
@@ -48,10 +55,66 @@
 
   function createWidget(opts) {
     var channelId = opts.channel || opts.channelId;
-    var token = opts.token;
-    if (!channelId || !token) {
-      console.warn('[WeKnora] channel and token are required');
+    // Insecure mode: a long-lived publish token is embedded in the page.
+    var staticToken = opts.token;
+    // Secure mode: the page never holds the publish token. Instead it points at
+    // an endpoint on the integrator's own backend that mints a short-lived
+    // session token (by server-side exchange of the publish token). The widget
+    // fetches a fresh token here and refreshes it before expiry.
+    var tokenEndpoint = opts.tokenEndpoint || opts.token_endpoint || '';
+    if (!channelId || (!staticToken && !tokenEndpoint)) {
+      console.warn('[WeKnora] channel and (token or tokenEndpoint) are required');
       return null;
+    }
+
+    var currentToken = staticToken || '';
+    var tokenInFlight = null;
+    var refreshTimer = null;
+
+    function scheduleRefresh(expiresInSec) {
+      if (!tokenEndpoint) return;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      var ttl = Number(expiresInSec) > 0 ? Number(expiresInSec) : 1800;
+      // Refresh at ~80% of the lifetime, never sooner than 30s.
+      var delayMs = Math.max(Math.floor(ttl * 0.8), 30) * 1000;
+      refreshTimer = setTimeout(function () {
+        loadToken(true).then(function (tok) {
+          if (tok) provideToken();
+        }).catch(function () { /* keep last token; next interaction retries */ });
+      }, delayMs);
+    }
+
+    // Returns a Promise resolving to a usable token. In static mode this is the
+    // embedded publish token. In secure mode it fetches from tokenEndpoint.
+    function loadToken(force) {
+      if (staticToken) return Promise.resolve(staticToken);
+      if (currentToken && !force) return Promise.resolve(currentToken);
+      if (tokenInFlight) return tokenInFlight;
+      tokenInFlight = fetch(tokenEndpoint, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      })
+        .then(function (res) {
+          if (!res.ok) throw new Error('token endpoint HTTP ' + res.status);
+          return res.json();
+        })
+        .then(function (data) {
+          var d = data || {};
+          var inner = d.data || d;
+          var tok = inner.token || inner.session_token || '';
+          var expiresIn = inner.expiresIn || inner.expires_in || 0;
+          if (!tok) throw new Error('token endpoint returned no token');
+          currentToken = tok;
+          scheduleRefresh(expiresIn);
+          return tok;
+        })
+        .catch(function (e) {
+          console.error('[WeKnora] failed to load token', e);
+          throw e;
+        })
+        .then(function (tok) { tokenInFlight = null; return tok; }, function (e) { tokenInFlight = null; throw e; });
+      return tokenInFlight;
     }
 
     var position = normalizePosition(opts.position);
@@ -146,12 +209,15 @@
     }
 
     function provideToken() {
-      postToIframe({
-        source: HOST_SOURCE,
-        type: 'provide_token',
-        token: token,
-        channel_id: channelId,
-      });
+      loadToken(false).then(function (tok) {
+        if (!tok) return;
+        postToIframe({
+          source: HOST_SOURCE,
+          type: 'provide_token',
+          token: tok,
+          channel_id: channelId,
+        });
+      }).catch(function () { /* already logged; iframe stays awaiting */ });
     }
 
     function onMessage(e) {
@@ -211,6 +277,7 @@
     function destroy() {
       if (destroyed) return;
       destroyed = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
       global.removeEventListener('message', onMessage);
       if (launcher.parentNode) launcher.parentNode.removeChild(launcher);
       if (panel.parentNode) panel.parentNode.removeChild(panel);
@@ -271,10 +338,12 @@
   if (legacyScript) {
     var legacyChannel = legacyScript.getAttribute('data-channel');
     var legacyToken = legacyScript.getAttribute('data-token');
-    if (legacyChannel && legacyToken) {
+    var legacyTokenEndpoint = legacyScript.getAttribute('data-token-endpoint');
+    if (legacyChannel && (legacyToken || legacyTokenEndpoint)) {
       api.init({
         channel: legacyChannel,
         token: legacyToken,
+        tokenEndpoint: legacyTokenEndpoint,
         position: legacyScript.getAttribute('data-position'),
         primaryColor: legacyScript.getAttribute('data-primary-color'),
         title: legacyScript.getAttribute('data-title'),
