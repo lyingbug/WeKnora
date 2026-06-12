@@ -3,8 +3,8 @@ import { createI18n } from 'vue-i18n'
 const messages = {
   "zh-CN": {
     "embedPublish": {
-      "title": "Web 嵌入",
-      "description": "将此智能体以 iframe 或浮窗形式发布到第三方网站，知识库范围跟随智能体配置。",
+      "title": "网页嵌入",
+      "description": "将智能体嵌入到您的网页，访客可通过页面内聊天窗口或右下角浮窗发起对话。",
       "create": "新建嵌入渠道",
       "empty": "暂无嵌入渠道",
       "unnamed": "未命名渠道",
@@ -42,7 +42,7 @@ const messages = {
       "missingChannel": "缺少嵌入渠道或 Token",
       "invalidChannel": "无效的嵌入渠道",
       "sessionFailed": "无法创建对话会话，请稍后重试",
-      "channelDisabled": "嵌入渠道已停用，请在 Agent 编辑器的「Web 嵌入」中重新启用",
+      "channelDisabled": "嵌入渠道已停用，请在 Agent 编辑器的「网页嵌入」中重新启用",
       "loading": "加载中...",
       "tabIframe": "iframe",
       "tabWidget": "浮窗",
@@ -398,8 +398,8 @@ const messages = {
   },
   "en-US": {
     "embedPublish": {
-      "title": "Web Embed",
-      "description": "Publish this agent on external sites via iframe or floating widget. Knowledge scope follows the agent configuration.",
+      "title": "Web Page Embed",
+      "description": "Embed this agent on your website so visitors can chat via an in-page window or a floating launcher.",
       "create": "New embed channel",
       "empty": "No embed channels yet",
       "unnamed": "Unnamed channel",
@@ -437,7 +437,7 @@ const messages = {
       "missingChannel": "Missing embed channel or token",
       "invalidChannel": "Invalid embed channel",
       "sessionFailed": "Failed to create chat session, please try again",
-      "channelDisabled": "This embed channel is disabled. Re-enable it under Agent editor → Web Embed",
+      "channelDisabled": "This embed channel is disabled. Re-enable it under Agent editor → Web Page Embed",
       "loading": "Loading...",
       "tabIframe": "iframe",
       "tabWidget": "Widget",
@@ -793,16 +793,122 @@ const messages = {
   }
 } as const
 
+type MessageTree = Record<string, unknown>
+
+function deepMerge<T extends MessageTree>(base: T, patch: MessageTree): T {
+  const out: MessageTree = { ...base }
+  for (const key of Object.keys(patch)) {
+    const patchVal = patch[key]
+    const baseVal = base[key]
+    if (
+      patchVal &&
+      typeof patchVal === 'object' &&
+      !Array.isArray(patchVal) &&
+      baseVal &&
+      typeof baseVal === 'object' &&
+      !Array.isArray(baseVal)
+    ) {
+      out[key] = deepMerge(baseVal as MessageTree, patchVal as MessageTree)
+    } else {
+      out[key] = patchVal
+    }
+  }
+  return out as T
+}
+
+const koEmbedPublish = {
+  embedPublish: {
+    title: '웹 페이지 임베드',
+    description: '에이전트를 웹 페이지에 임베드하여 방문자가 페이지 내 채팅창 또는 플로팅 버튼으로 대화할 수 있게 합니다.',
+    create: '새 임베드 채널',
+    empty: '임베드 채널 없음',
+    unnamed: '이름 없는 채널',
+    loading: '로딩 중...',
+    awaitingToken: '호스트 페이지에서 토큰 제공 대기 중…',
+    defaultChatTitle: 'AI 어시스턴트',
+    newChat: '새 대화',
+    preview: '미리보기',
+    previewIframeHint: 'iframe 임베드가 외부 페이지에서 어떻게 보이는지 시뮬레이션합니다.',
+    previewWidgetHint: '모의 호스트 페이지에서 플로팅 위젯을 표시합니다.',
+    previewMockPage: '모의 호스트 페이지',
+    previewLoading: '미리보기 로딩 중…',
+    channelDisabled: '임베드 채널이 비활성화되었습니다. 에이전트 편집기 → 웹 페이지 임베드에서 다시 활성화하세요',
+    invalidChannel: '잘못된 임베드 채널',
+    sessionFailed: '대화 세션을 생성할 수 없습니다. 나중에 다시 시도하세요',
+    missingChannel: '임베드 채널 또는 토큰 없음',
+    loadError: '로드 실패',
+  },
+  common: {
+    loading: '로딩 중...',
+    confirm: '확인',
+    cancel: '취소',
+    copy: '복사',
+    copied: '복사됨',
+  },
+  error: {
+    tokenNotFound: '로그인 토큰을 찾을 수 없습니다. 다시 로그인하세요',
+    invalidImageLink: '잘못된 이미지 링크',
+    streamFailed: '스트림 연결 실패',
+  },
+} as const
+
+const ruEmbedPublish = {
+  embedPublish: {
+    title: 'Встраивание на веб-страницу',
+    description: 'Встройте агента на свою веб-страницу: посетители смогут общаться через встроенное окно чата или плавающую кнопку.',
+    create: 'Новый канал встраивания',
+    empty: 'Каналов встраивания пока нет',
+    unnamed: 'Без названия',
+    loading: 'Загрузка...',
+    awaitingToken: 'Ожидание токена от страницы-хоста…',
+    defaultChatTitle: 'AI-ассистент',
+    newChat: 'Новый чат',
+    preview: 'Предпросмотр',
+    previewIframeHint: 'Как iframe выглядит на сторонней странице.',
+    previewWidgetHint: 'Плавающий виджет на mock-странице.',
+    previewMockPage: 'Mock-страница хоста',
+    previewLoading: 'Загрузка предпросмотра…',
+    channelDisabled: 'Канал встраивания отключён. Включите в редакторе агента → Встраивание на веб-страницу',
+    invalidChannel: 'Недействительный канал встраивания',
+    sessionFailed: 'Не удалось создать сессию чата, попробуйте позже',
+    missingChannel: 'Отсутствует канал встраивания или токен',
+    loadError: 'Не удалось загрузить',
+  },
+  common: {
+    loading: 'Загрузка...',
+    confirm: 'Подтвердить',
+    cancel: 'Отмена',
+    copy: 'Копировать',
+    copied: 'Скопировано',
+  },
+  error: {
+    tokenNotFound: 'Токен входа не найден, войдите снова',
+    invalidImageLink: 'Недействительная ссылка на изображение',
+    streamFailed: 'Ошибка потокового соединения',
+  },
+} as const
+
 const savedLocale = typeof localStorage !== 'undefined' ? localStorage.getItem('locale') : null
-const locale = savedLocale?.startsWith('en') ? 'en-US' : 'zh-CN'
+const locale = savedLocale?.startsWith('en')
+  ? 'en-US'
+  : savedLocale?.startsWith('ko')
+    ? 'ko-KR'
+    : savedLocale?.startsWith('ru')
+      ? 'ru-RU'
+      : 'zh-CN'
 
 const i18n = createI18n({
   legacy: false,
   locale,
-  fallbackLocale: 'zh-CN',
+  fallbackLocale: 'en-US',
   globalInjection: true,
   warnHtmlMessage: false,
-  messages,
+  messages: {
+    'zh-CN': messages['zh-CN'],
+    'en-US': messages['en-US'],
+    'ko-KR': deepMerge(messages['en-US'], koEmbedPublish),
+    'ru-RU': deepMerge(messages['en-US'], ruEmbedPublish),
+  },
 })
 
 export default i18n
