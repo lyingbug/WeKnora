@@ -158,7 +158,11 @@ export function useEmbedChatSession(options: {
       .then(async (res) => {
         const batch = res?.data as Record<string, unknown>[] | undefined
         if (!batch?.length) {
-          if (isScrollType) hasMoreHistory.value = false
+          // No (more) server history. Crucially this also covers the initial
+          // load of a brand-new session: leaving hasMoreHistory true here would
+          // let a later scroll-to-top re-fetch with an empty cursor (= "latest"),
+          // pulling back the just-sent messages and duplicating them.
+          hasMoreHistory.value = false
           return
         }
         const nextCursor = String(batch[0].created_at)
