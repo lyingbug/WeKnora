@@ -8,60 +8,59 @@
     @close="emit('update:visible', false)"
   >
     <div class="preview-body">
-      <t-tabs v-model="tab" class="preview-tabs">
-        <t-tab-panel value="iframe" :label="$t('embedPublish.tabIframe')">
-          <p class="preview-hint">{{ $t('embedPublish.previewIframeHint') }}</p>
-          <div class="device-frame">
-            <div class="device-frame__chrome">
-              <span class="device-frame__dot" />
-              <span class="device-frame__dot" />
-              <span class="device-frame__dot" />
-              <span class="device-frame__url">{{ previewUrlLabel }}</span>
-            </div>
-            <div class="device-frame__screen">
-              <t-loading v-if="!iframeSrc" size="small" :text="$t('embedPublish.previewLoading')" />
+      <template v-if="mode === 'iframe'">
+        <p class="preview-hint">{{ $t('embedPublish.previewIframeHint') }}</p>
+        <div class="device-frame">
+          <div class="device-frame__chrome">
+            <span class="device-frame__dot" />
+            <span class="device-frame__dot" />
+            <span class="device-frame__dot" />
+            <span class="device-frame__url">{{ previewUrlLabel }}</span>
+          </div>
+          <div class="device-frame__screen">
+            <t-loading v-if="!iframeSrc" size="small" :text="$t('embedPublish.previewLoading')" />
+            <iframe
+              v-else
+              :key="iframeSrc"
+              :src="iframeSrc"
+              class="preview-iframe"
+              allow="clipboard-write"
+            />
+          </div>
+        </div>
+      </template>
+
+      <template v-else>
+        <p class="preview-hint">{{ $t('embedPublish.previewWidgetHint') }}</p>
+        <div class="widget-shell" :class="`pos-${position}`">
+          <div class="widget-mock-page">
+            <div class="widget-mock-page__title">{{ $t('embedPublish.previewMockPage') }}</div>
+            <div class="widget-mock-page__line" />
+            <div class="widget-mock-page__line widget-mock-page__line--short" />
+          </div>
+          <button
+            type="button"
+            class="widget-launcher"
+            :style="{ background: primaryColor || 'var(--td-brand-color)' }"
+            :aria-label="widgetOpen ? $t('common.close') : $t('embedPublish.preview')"
+            @click="widgetOpen = !widgetOpen"
+          >
+            <t-icon :name="widgetOpen ? 'close' : 'chat'" />
+          </button>
+          <transition name="widget-panel">
+            <div v-show="widgetOpen" class="widget-panel">
               <iframe
-                v-else
-                :key="iframeSrc"
+                v-if="iframeSrc"
+                :key="`widget-${iframeSrc}`"
                 :src="iframeSrc"
                 class="preview-iframe"
+                :title="title || $t('embedPublish.preview')"
                 allow="clipboard-write"
               />
             </div>
-          </div>
-        </t-tab-panel>
-        <t-tab-panel value="widget" :label="$t('embedPublish.tabWidget')">
-          <p class="preview-hint">{{ $t('embedPublish.previewWidgetHint') }}</p>
-          <div class="widget-shell" :class="`pos-${position}`">
-            <div class="widget-mock-page">
-              <div class="widget-mock-page__title">{{ $t('embedPublish.previewMockPage') }}</div>
-              <div class="widget-mock-page__line" />
-              <div class="widget-mock-page__line widget-mock-page__line--short" />
-            </div>
-            <button
-              type="button"
-              class="widget-launcher"
-              :style="{ background: primaryColor || 'var(--td-brand-color)' }"
-              :aria-label="widgetOpen ? $t('common.close') : $t('embedPublish.preview')"
-              @click="widgetOpen = !widgetOpen"
-            >
-              <t-icon :name="widgetOpen ? 'close' : 'chat'" />
-            </button>
-            <transition name="widget-panel">
-              <div v-show="widgetOpen" class="widget-panel">
-                <iframe
-                  v-if="iframeSrc"
-                  :key="`widget-${iframeSrc}`"
-                  :src="iframeSrc"
-                  class="preview-iframe"
-                  :title="title || $t('embedPublish.preview')"
-                  allow="clipboard-write"
-                />
-              </div>
-            </transition>
-          </div>
-        </t-tab-panel>
-      </t-tabs>
+          </transition>
+        </div>
+      </template>
     </div>
   </t-drawer>
 </template>
@@ -74,6 +73,7 @@ const props = defineProps<{
   visible: boolean
   channelId: string
   token: string
+  mode?: 'iframe' | 'widget'
   title?: string
   primaryColor?: string
   position?: WidgetPosition
@@ -83,7 +83,7 @@ const emit = defineEmits<{
   (e: 'update:visible', value: boolean): void
 }>()
 
-const tab = ref<'iframe' | 'widget'>('iframe')
+const mode = computed(() => props.mode || 'iframe')
 const widgetOpen = ref(true)
 
 const iframeSrc = computed(() => {
@@ -102,7 +102,6 @@ const previewUrlLabel = computed(() => {
 
 watch(() => props.visible, (open) => {
   if (open) {
-    tab.value = 'iframe'
     widgetOpen.value = true
   }
 })
@@ -113,12 +112,6 @@ watch(() => props.visible, (open) => {
   display: flex;
   flex-direction: column;
   min-height: 100%;
-}
-
-.preview-tabs {
-  :deep(.t-tabs__nav-item) {
-    font-size: 13px;
-  }
 }
 
 .preview-hint {

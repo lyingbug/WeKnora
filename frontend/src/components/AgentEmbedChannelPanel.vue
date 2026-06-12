@@ -136,9 +136,12 @@
             v-model="originsText"
             :disabled="!isAdmin"
             :placeholder="$t('embedPublish.originsPlaceholder')"
+            :status="originsError ? 'error' : 'default'"
             :autosize="{ minRows: 2, maxRows: 4 }"
+            @change="originsError = ''"
           />
-          <p class="form-desc">{{ $t('embedPublish.originsHint') }}</p>
+          <p v-if="originsError" class="form-desc form-desc--error">{{ originsError }}</p>
+          <p v-else class="form-desc">{{ $t('embedPublish.originsHint') }}</p>
         </div>
 
         <div class="form-item">
@@ -327,6 +330,7 @@
       v-model:visible="previewVisible"
       :channel-id="previewChannel?.id || ''"
       :token="previewToken"
+      :mode="previewMode"
       :title="previewChannel?.name || $t('embedPublish.preview')"
       :primary-color="previewChannel?.primary_color"
       :position="previewPosition"
@@ -354,6 +358,11 @@ import {
   type HeaderTitleMode,
   type WidgetPosition,
 } from '@/api/embed'
+import {
+  parseAllowedOrigins,
+  validateAllowedOrigins,
+  type AllowedOriginsValidationError,
+} from '@/utils/embedAllowedOrigins'
 
 const props = defineProps<{ agentId: string }>()
 
@@ -369,12 +378,14 @@ const revealedTokens = reactive<Record<string, boolean>>({})
 const previewVisible = ref(false)
 const previewChannel = ref<EmbedChannel | null>(null)
 const previewToken = ref('')
+const previewMode = ref<'iframe' | 'widget'>('iframe')
 const previewLoading = ref(false)
 const rotating = ref(false)
 const showDrawer = ref(false)
 const editingId = ref('')
 const editingEnabled = ref(true)
 const originsText = ref('')
+const originsError = ref('')
 const drawerSnippetTab = ref<'iframe' | 'widget'>('iframe')
 
 const EMBED_TOKEN_STORAGE = 'weknora_embed_publish_tokens'
@@ -549,6 +560,7 @@ const fillFormFromChannel = (ch: EmbedChannel) => {
     widget_position: (ch.widget_position as WidgetPosition) || 'bottom-right',
   }
   originsText.value = (ch.allowed_origins || []).join('\n')
+  originsError.value = ''
   drawerSnippetTab.value = 'iframe'
 }
 
@@ -557,6 +569,7 @@ const openCreate = () => {
   editingEnabled.value = true
   form.value = defaultForm()
   originsText.value = ''
+  originsError.value = ''
   drawerSnippetTab.value = 'iframe'
   showDrawer.value = true
 }
@@ -570,16 +583,43 @@ const closeDrawer = () => {
   showDrawer.value = false
 }
 
-const parseOrigins = () => originsText.value.split('\n').map((s) => s.trim()).filter(Boolean)
+const parseOrigins = () => parseAllowedOrigins(originsText.value)
+
+const originsValidationMessage = (error: AllowedOriginsValidationError) => {
+  if (error.code === 'required') return t('embedPublish.originsRequired')
+  if (error.code === 'wildcard_prod') return t('embedPublish.originsWildcardProd')
+  return t('embedPublish.originsInvalid', { origin: error.origin })
+}
+
+const mapOriginsApiError = (message: string): string | null => {
+  if (message === 'at least one allowed origin is required') {
+    return t('embedPublish.originsRequired')
+  }
+  if (message === "wildcard origin '*' is not allowed in production") {
+    return t('embedPublish.originsWildcardProd')
+  }
+  const invalidMatch = message.match(/^invalid allowed origin: "(.+)"$/)
+  if (invalidMatch) {
+    return t('embedPublish.originsInvalid', { origin: invalidMatch[1] })
+  }
+  return null
+}
 
 const saveForm = async () => {
   if (!isAdmin.value) return
+  const originsValidation = validateAllowedOrigins(parseOrigins())
+  if (!originsValidation.ok) {
+    originsError.value = originsValidationMessage(originsValidation.error)
+    MessagePlugin.warning(originsError.value)
+    return
+  }
+  originsError.value = ''
   saving.value = true
   try {
     const payload = {
       name: form.value.name,
       welcome_message: form.value.welcome_message,
-      allowed_origins: parseOrigins(),
+      allowed_origins: originsValidation.origins,
       rate_limit_per_minute: form.value.rate_limit_per_minute,
       primary_color: form.value.primary_color,
       page_title: form.value.page_title,
@@ -609,6 +649,15 @@ const saveForm = async () => {
         if (created) fillFormFromChannel(created)
       }
     }
+  } catch (err: any) {
+    const apiMsg = typeof err?.message === 'string' ? err.message : ''
+    const originsMsg = apiMsg ? mapOriginsApiError(apiMsg) : null
+    if (originsMsg) {
+      originsError.value = originsMsg
+      MessagePlugin.warning(originsMsg)
+      return
+    }
+    MessagePlugin.error(apiMsg || t('embedPublish.saveFailed'))
   } finally {
     saving.value = false
   }
@@ -628,6 +677,7 @@ const openPreviewFromDrawer = async () => {
         return
       }
     }
+    previewMode.value = drawerSnippetTab.value
     previewChannel.value = ch
     previewToken.value = token
     previewVisible.value = true
@@ -923,6 +973,10 @@ const toggleEnabled = async (ch: EmbedChannel, enabled: boolean) => {
   &--block {
     margin: -2px 0 0;
     color: var(--td-text-color-secondary);
+  }
+
+  &--error {
+    color: var(--td-error-color);
   }
 }
 
