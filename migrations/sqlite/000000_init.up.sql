@@ -608,6 +608,7 @@ CREATE TABLE IF NOT EXISTS embed_channels (
     allowed_origins TEXT NOT NULL DEFAULT '[]',
     welcome_message TEXT NOT NULL DEFAULT '',
     rate_limit_per_minute INTEGER NOT NULL DEFAULT 30,
+    rate_limit_per_day INTEGER NOT NULL DEFAULT 10000,
     primary_color VARCHAR(32) NOT NULL DEFAULT '',
     page_title VARCHAR(255) NOT NULL DEFAULT '',
     header_title_mode VARCHAR(32) NOT NULL DEFAULT 'channel',

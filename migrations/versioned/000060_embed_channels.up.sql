@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS embed_channels (
     allowed_origins JSONB NOT NULL DEFAULT '[]',
     welcome_message TEXT NOT NULL DEFAULT '',
     rate_limit_per_minute INTEGER NOT NULL DEFAULT 30,
+    rate_limit_per_day INTEGER NOT NULL DEFAULT 10000,
     primary_color VARCHAR(32) NOT NULL DEFAULT '',
     page_title VARCHAR(255) NOT NULL DEFAULT '',
     header_title_mode VARCHAR(32) NOT NULL DEFAULT 'channel',
@@ -32,6 +33,9 @@ CREATE INDEX IF NOT EXISTS idx_embed_channels_deleted ON embed_channels (deleted
 COMMENT ON TABLE embed_channels IS 'Web embed channels for publishing agent chat to external sites via iframe';
 COMMENT ON COLUMN embed_channels.publish_token IS 'Plaintext scoped token (em_ prefix); rotatable from management UI';
 COMMENT ON COLUMN embed_channels.allowed_origins IS 'JSON array of allowed parent origins; empty means allow all';
+COMMENT ON COLUMN embed_channels.rate_limit_per_minute IS 'Per-IP per-minute request cap for the public embed endpoints';
+COMMENT ON COLUMN embed_channels.rate_limit_per_day IS
+    'Channel-wide daily total request cap across all IPs; bounds cost/abuse since the publish token is publicly visible';
 COMMENT ON COLUMN embed_channels.primary_color IS 'CSS color for embed widget accent (e.g. #0052d9)';
 COMMENT ON COLUMN embed_channels.page_title IS 'Browser tab title for the embed page';
 COMMENT ON COLUMN embed_channels.header_title_mode IS

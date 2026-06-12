@@ -51,6 +51,7 @@ type embedChannelRequest struct {
 	AllowedOrigins     []string `json:"allowed_origins"`
 	WelcomeMessage     string   `json:"welcome_message"`
 	RateLimitPerMinute int      `json:"rate_limit_per_minute"`
+	RateLimitPerDay    int      `json:"rate_limit_per_day"`
 	PrimaryColor       string   `json:"primary_color"`
 	PageTitle          string   `json:"page_title"`
 	HeaderTitleMode        string `json:"header_title_mode"`
@@ -126,6 +127,7 @@ func (h *EmbedChannelHandler) CreateEmbedChannel(c *gin.Context) {
 		AllowedOrigins:         originsJSON,
 		WelcomeMessage:         req.WelcomeMessage,
 		RateLimitPerMinute:     req.RateLimitPerMinute,
+		RateLimitPerDay:        req.RateLimitPerDay,
 		PrimaryColor:           req.PrimaryColor,
 		PageTitle:              req.PageTitle,
 		HeaderTitleMode:        req.HeaderTitleMode,
@@ -179,6 +181,7 @@ func (h *EmbedChannelHandler) UpdateEmbedChannel(c *gin.Context) {
 		AllowedOrigins:     originsJSON,
 		WelcomeMessage:     req.WelcomeMessage,
 		RateLimitPerMinute: req.RateLimitPerMinute,
+		RateLimitPerDay:    req.RateLimitPerDay,
 		PrimaryColor:       req.PrimaryColor,
 		PageTitle:          req.PageTitle,
 		HeaderTitleMode:    req.HeaderTitleMode,
@@ -479,6 +482,7 @@ func embedChannelResponse(ch *types.EmbedChannel, publishToken string) gin.H {
 		"allowed_origins":       ch.AllowedOriginsList(),
 		"welcome_message":       ch.WelcomeMessage,
 		"rate_limit_per_minute": ch.RateLimitPerMinute,
+		"rate_limit_per_day":    ch.RateLimitPerDay,
 		"primary_color":         ch.PrimaryColor,
 		"page_title":            ch.PageTitle,
 		"header_title_mode":          types.NormalizeEmbedHeaderTitleMode(ch.HeaderTitleMode),

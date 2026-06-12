@@ -19,7 +19,18 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const embedRateLimitKeyPrefix = "embed:ratelimit:"
+const (
+	embedRateLimitKeyPrefix      = "embed:ratelimit:"
+	embedDailyRateLimitKeyPrefix = "embed:ratelimit:day:"
+
+	// embedGlobalMinuteFactor derives a channel-wide per-minute cap from the
+	// per-IP cap. The publish token is publicly visible, so a single attacker
+	// can rotate IPs to defeat the per-IP limit; this bounds aggregate burst.
+	embedGlobalMinuteFactor = 20
+	// embedGlobalMinuteFloor keeps the global per-minute cap usable even when
+	// the per-IP cap is tiny.
+	embedGlobalMinuteFloor = 120
+)
 
 // EmbedChannelContextKey stores the authenticated embed channel on the request context.
 const EmbedChannelContextKey types.ContextKey = "EmbedChannel"
@@ -27,6 +38,9 @@ const EmbedChannelContextKey types.ContextKey = "EmbedChannel"
 var (
 	embedLimiterOnce sync.Once
 	embedLimiter     *ratelimit.Limiter
+
+	embedDailyLimiterOnce sync.Once
+	embedDailyLimiter     *ratelimit.Limiter
 )
 
 func embedRateLimiter(redisClient *redis.Client) *ratelimit.Limiter {
@@ -39,6 +53,25 @@ func embedRateLimiter(redisClient *redis.Client) *ratelimit.Limiter {
 	return embedLimiter
 }
 
+func embedDailyRateLimiter(redisClient *redis.Client) *ratelimit.Limiter {
+	embedDailyLimiterOnce.Do(func() {
+		embedDailyLimiter = ratelimit.New(redisClient, embedDailyRateLimitKeyPrefix, 24*time.Hour, "")
+		stopCh := make(chan struct{})
+		go embedDailyLimiter.StartCleanup(stopCh)
+	})
+	return embedDailyLimiter
+}
+
+// embedGlobalPerMinute returns the channel-wide per-minute budget derived from
+// the per-IP budget.
+func embedGlobalPerMinute(perIP int) int {
+	budget := perIP * embedGlobalMinuteFactor
+	if budget < embedGlobalMinuteFloor {
+		budget = embedGlobalMinuteFloor
+	}
+	return budget
+}
+
 // EmbedAuth validates publish tokens and injects a scoped tenant context for embed routes.
 func EmbedAuth(
 	svc interfaces.EmbedChannelService,
@@ -46,6 +79,7 @@ func EmbedAuth(
 	redisClient *redis.Client,
 ) gin.HandlerFunc {
 	limiter := embedRateLimiter(redisClient)
+	dailyLimiter := embedDailyRateLimiter(redisClient)
 	return func(c *gin.Context) {
 		channelID := strings.TrimSpace(c.Param("channel_id"))
 		if channelID == "" {
@@ -93,9 +127,23 @@ func EmbedAuth(
 			return
 		}
 
+		// Per-IP per-minute cap.
 		rateKey := fmt.Sprintf("%s:%s", channelID, c.ClientIP())
 		if !limiter.Allow(c.Request.Context(), rateKey, ch.RateLimitPerMinute) {
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
+			c.Abort()
+			return
+		}
+		// Channel-wide per-minute cap (bounds burst across rotating IPs since
+		// the publish token is publicly visible).
+		if !limiter.Allow(c.Request.Context(), channelID+":__global", embedGlobalPerMinute(ch.RateLimitPerMinute)) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
+			c.Abort()
+			return
+		}
+		// Channel-wide daily total cap (bounds sustained abuse).
+		if !dailyLimiter.Allow(c.Request.Context(), channelID, ch.RateLimitPerDay) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "daily request limit exceeded"})
 			c.Abort()
 			return
 		}

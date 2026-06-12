@@ -95,7 +95,7 @@ func (l *Limiter) redisAllow(ctx context.Context, key string, max int) (bool, er
 // StartCleanup runs periodic eviction for the local fallback map. No-op when
 // only Redis is in use, but cheap to call either way.
 func (l *Limiter) StartCleanup(stopCh <-chan struct{}) {
-	l.local.startCleanup(stopCh)
+	l.local.startCleanup(l.window, stopCh)
 }
 
 type localEntry struct {
@@ -145,13 +145,18 @@ func (l *localLimiter) allow(key string, window time.Duration, max int) bool {
 	}
 }
 
-func (l *localLimiter) startCleanup(stopCh <-chan struct{}) {
+func (l *localLimiter) startCleanup(window time.Duration, stopCh <-chan struct{}) {
+	if window <= 0 {
+		window = time.Minute
+	}
 	ticker := time.NewTicker(localCleanupInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			cutoff := time.Now().Add(-time.Minute)
+			// Evict against the limiter's own window, not a hardcoded minute,
+			// so non-minute limiters (e.g. a per-day cap) are not dropped early.
+			cutoff := time.Now().Add(-window)
 			l.entries.Range(func(key, val any) bool {
 				entry := val.(*localEntry)
 				entry.mu.Lock()

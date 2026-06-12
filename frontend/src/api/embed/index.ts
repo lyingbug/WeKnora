@@ -9,6 +9,7 @@ export interface EmbedChannel {
   allowed_origins: string[]
   welcome_message: string
   rate_limit_per_minute: number
+  rate_limit_per_day?: number
   primary_color?: string
   page_title?: string
   header_title_mode?: HeaderTitleMode

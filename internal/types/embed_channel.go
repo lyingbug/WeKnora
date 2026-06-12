@@ -20,6 +20,7 @@ type EmbedChannel struct {
 	AllowedOrigins    JSON           `json:"allowed_origins"     gorm:"type:jsonb;not null;default:'[]'"`
 	WelcomeMessage     string         `json:"welcome_message"      gorm:"type:text;not null;default:''"`
 	RateLimitPerMinute int            `json:"rate_limit_per_minute" gorm:"not null;default:30"`
+	RateLimitPerDay    int            `json:"rate_limit_per_day"    gorm:"not null;default:10000"`
 	PrimaryColor       string         `json:"primary_color"        gorm:"type:varchar(32);not null;default:''"`
 	PageTitle          string         `json:"page_title"           gorm:"type:varchar(255);not null;default:''"`
 	HeaderTitleMode         string         `json:"header_title_mode"         gorm:"type:varchar(32);not null;default:'channel'"`
@@ -42,6 +43,9 @@ func (ch *EmbedChannel) BeforeCreate(tx *gorm.DB) error {
 	if ch.RateLimitPerMinute <= 0 {
 		ch.RateLimitPerMinute = 30
 	}
+	if ch.RateLimitPerDay <= 0 {
+		ch.RateLimitPerDay = DefaultEmbedRateLimitPerDay
+	}
 	if ch.WidgetPosition == "" {
 		ch.WidgetPosition = DefaultEmbedWidgetPosition
 	}
@@ -50,6 +54,11 @@ func (ch *EmbedChannel) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+// DefaultEmbedRateLimitPerDay caps total embed requests per channel per day
+// (across all client IPs), bounding cost/abuse when the publicly visible
+// publish token is copied and replayed from rotating IPs.
+const DefaultEmbedRateLimitPerDay = 10000
 
 const DefaultEmbedWidgetPosition = "bottom-right"
 const DefaultEmbedHeaderTitleMode = "channel"

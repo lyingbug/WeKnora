@@ -156,6 +156,24 @@
           />
           <p class="form-desc">{{ $t('embedPublish.rateLimitDesc') }}</p>
         </div>
+
+        <div class="form-item">
+          <label class="form-label">{{ $t('embedPublish.rateLimitDayLabel') }}</label>
+          <t-input-number
+            v-model="form.rate_limit_per_day"
+            :disabled="!isAdmin"
+            :min="1"
+            :max="1000000"
+            theme="column"
+            style="width: 160px"
+          />
+          <p class="form-desc">{{ $t('embedPublish.rateLimitDayDesc') }}</p>
+        </div>
+
+        <div class="embed-token-warning" role="note">
+          <t-icon name="error-circle" class="embed-token-warning__icon" />
+          <p>{{ $t('embedPublish.publishTokenWarning') }}</p>
+        </div>
       </section>
 
       <section class="setting-drawer__section embed-drawer__section">
@@ -403,6 +421,7 @@ const defaultForm = () => ({
   name: '',
   welcome_message: '',
   rate_limit_per_minute: 30,
+  rate_limit_per_day: 10000,
   primary_color: getDefaultEmbedPrimaryColor(),
   page_title: '',
   header_title_mode: 'channel' as HeaderTitleMode,
@@ -553,6 +572,7 @@ const fillFormFromChannel = (ch: EmbedChannel) => {
     name: ch.name,
     welcome_message: ch.welcome_message,
     rate_limit_per_minute: ch.rate_limit_per_minute || 30,
+    rate_limit_per_day: ch.rate_limit_per_day || 10000,
     primary_color: ch.primary_color || getDefaultEmbedPrimaryColor(),
     page_title: ch.page_title || '',
     header_title_mode: (ch.header_title_mode as HeaderTitleMode) || 'channel',
@@ -621,6 +641,7 @@ const saveForm = async () => {
       welcome_message: form.value.welcome_message,
       allowed_origins: originsValidation.origins,
       rate_limit_per_minute: form.value.rate_limit_per_minute,
+      rate_limit_per_day: form.value.rate_limit_per_day,
       primary_color: form.value.primary_color,
       page_title: form.value.page_title,
       header_title_mode: form.value.header_title_mode,
@@ -743,6 +764,7 @@ const toggleEnabled = async (ch: EmbedChannel, enabled: boolean) => {
     welcome_message: ch.welcome_message,
     allowed_origins: ch.allowed_origins,
     rate_limit_per_minute: ch.rate_limit_per_minute,
+    rate_limit_per_day: ch.rate_limit_per_day,
     primary_color: ch.primary_color,
     page_title: ch.page_title,
     header_title_mode: ch.header_title_mode || 'channel',
@@ -1020,6 +1042,31 @@ const toggleEnabled = async (ch: EmbedChannel, enabled: boolean) => {
     flex-shrink: 0;
     margin-top: 1px;
     color: var(--td-brand-color);
+    font-size: 16px;
+  }
+
+  p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--td-text-color-secondary);
+  }
+}
+
+.embed-token-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--td-warning-color-1, #fff7e6);
+  border: 1px solid var(--td-warning-color-3, #ffd591);
+
+  &__icon {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: var(--td-warning-color, #e37318);
     font-size: 16px;
   }
 

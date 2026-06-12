@@ -78,6 +78,7 @@ func (s *embedChannelService) Create(
 		AllowedOrigins:     originsJSON,
 		WelcomeMessage:     req.WelcomeMessage,
 		RateLimitPerMinute: req.RateLimitPerMinute,
+		RateLimitPerDay:    req.RateLimitPerDay,
 		PrimaryColor:       strings.TrimSpace(req.PrimaryColor),
 		PageTitle:          strings.TrimSpace(req.PageTitle),
 		HeaderTitleMode:        types.NormalizeEmbedHeaderTitleMode(req.HeaderTitleMode),
@@ -86,6 +87,9 @@ func (s *embedChannelService) Create(
 	}
 	if ch.RateLimitPerMinute <= 0 {
 		ch.RateLimitPerMinute = 30
+	}
+	if ch.RateLimitPerDay <= 0 {
+		ch.RateLimitPerDay = types.DefaultEmbedRateLimitPerDay
 	}
 	if err := s.repo.Create(ctx, ch); err != nil {
 		return nil, "", err
@@ -128,6 +132,9 @@ func (s *embedChannelService) Update(
 	}
 	if req.RateLimitPerMinute > 0 {
 		ch.RateLimitPerMinute = req.RateLimitPerMinute
+	}
+	if req.RateLimitPerDay > 0 {
+		ch.RateLimitPerDay = req.RateLimitPerDay
 	}
 	if req.AllowedOrigins != nil {
 		if len(req.AllowedOrigins) == 0 {
