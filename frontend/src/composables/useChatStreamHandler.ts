@@ -554,16 +554,22 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           if (responseType === 'error' && !toolName) {
             const errorMsg = String(data.content || t('chat.processError'))
             message.content = errorMsg
+            message.is_completed = true
             isReplying.value = false
             loading.value = false
+            fullContent.value = ''
+            currentAssistantMessageId.value = ''
             reportError(errorMsg)
             console.error('[Chat Error]', errorMsg)
           }
         } else if (responseType === 'error') {
           const errorMsg = String(data.content || t('chat.processError'))
           message.content = errorMsg
+          message.is_completed = true
           isReplying.value = false
           loading.value = false
+          fullContent.value = ''
+          currentAssistantMessageId.value = ''
           reportError(errorMsg)
           console.error('[Chat Error]', errorMsg)
         }
