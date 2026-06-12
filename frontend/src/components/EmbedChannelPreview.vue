@@ -77,6 +77,13 @@ const props = defineProps<{
   title?: string
   primaryColor?: string
   position?: WidgetPosition
+  /**
+   * Bumped by the parent every time a preview is (re)opened. Folded into the
+   * iframe URL so the embed page fully reloads and re-fetches the latest saved
+   * config — otherwise re-previewing after an edit shows stale content until a
+   * full page refresh.
+   */
+  refreshKey?: number
 }>()
 
 const emit = defineEmits<{
@@ -88,7 +95,15 @@ const widgetOpen = ref(true)
 
 const iframeSrc = computed(() => {
   if (!props.channelId || !props.token) return ''
-  return buildEmbedURL(props.channelId, props.token)
+  const url = buildEmbedURL(props.channelId, props.token)
+  if (!props.refreshKey) return url
+  // Insert a cache-busting param before the #token hash so each reopen forces
+  // a fresh load. The embed page ignores unknown query params.
+  const hashIdx = url.indexOf('#')
+  const head = hashIdx >= 0 ? url.slice(0, hashIdx) : url
+  const hash = hashIdx >= 0 ? url.slice(hashIdx) : ''
+  const sep = head.includes('?') ? '&' : '?'
+  return `${head}${sep}r=${props.refreshKey}${hash}`
 })
 
 const previewUrlLabel = computed(() => {
@@ -111,17 +126,27 @@ watch(() => props.visible, (open) => {
 .preview-body {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  height: 100%;
+  gap: 14px;
 }
 
 .preview-hint {
-  margin: 0 0 16px;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
   font-size: 13px;
   line-height: 1.55;
   color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondarycontainer);
+  border: 1px solid var(--td-component-stroke);
 }
 
 .device-frame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--td-component-stroke);
   border-radius: 12px;
   overflow: hidden;
@@ -162,7 +187,8 @@ watch(() => props.visible, (open) => {
   }
 
   &__screen {
-    height: 560px;
+    flex: 1;
+    min-height: 420px;
     background: #f5f7fa;
     display: flex;
     align-items: center;
@@ -180,7 +206,8 @@ watch(() => props.visible, (open) => {
 
 .widget-shell {
   position: relative;
-  height: 560px;
+  flex: 1;
+  min-height: 480px;
   border: 1px solid var(--td-component-stroke);
   border-radius: 12px;
   overflow: hidden;
@@ -275,5 +302,20 @@ watch(() => props.visible, (open) => {
 .pos-top-left {
   .widget-launcher { left: 20px; top: 20px; }
   .widget-panel { left: 20px; top: 80px; }
+}
+</style>
+
+<!--
+  Non-scoped: make the drawer body a full-height flex host so the device frame
+  / widget shell can grow to fill the available space instead of sitting as a
+  fixed-height island. Namespaced under .embed-preview-drawer.
+-->
+<style lang="less">
+.embed-preview-drawer {
+  .t-drawer__body {
+    display: flex;
+    flex-direction: column;
+    padding: 16px 18px;
+  }
 }
 </style>

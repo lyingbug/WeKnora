@@ -144,35 +144,32 @@
           <p v-else class="form-desc">{{ $t('embedPublish.originsHint') }}</p>
         </div>
 
-        <div class="form-item">
-          <label class="form-label">{{ $t('embedPublish.rateLimitLabel') }}</label>
-          <t-input-number
-            v-model="form.rate_limit_per_minute"
-            :disabled="!isAdmin"
-            :min="1"
-            :max="600"
-            theme="column"
-            style="width: 160px"
-          />
-          <p class="form-desc">{{ $t('embedPublish.rateLimitDesc') }}</p>
-        </div>
+        <div class="form-grid form-grid--2">
+          <div class="form-item">
+            <label class="form-label">{{ $t('embedPublish.rateLimitLabel') }}</label>
+            <t-input-number
+              v-model="form.rate_limit_per_minute"
+              :disabled="!isAdmin"
+              :min="1"
+              :max="600"
+              theme="column"
+              class="form-number"
+            />
+            <p class="form-desc">{{ $t('embedPublish.rateLimitDesc') }}</p>
+          </div>
 
-        <div class="form-item">
-          <label class="form-label">{{ $t('embedPublish.rateLimitDayLabel') }}</label>
-          <t-input-number
-            v-model="form.rate_limit_per_day"
-            :disabled="!isAdmin"
-            :min="1"
-            :max="1000000"
-            theme="column"
-            style="width: 160px"
-          />
-          <p class="form-desc">{{ $t('embedPublish.rateLimitDayDesc') }}</p>
-        </div>
-
-        <div class="embed-token-warning" role="note">
-          <t-icon name="error-circle" class="embed-token-warning__icon" />
-          <p>{{ $t('embedPublish.publishTokenWarning') }}</p>
+          <div class="form-item">
+            <label class="form-label">{{ $t('embedPublish.rateLimitDayLabel') }}</label>
+            <t-input-number
+              v-model="form.rate_limit_per_day"
+              :disabled="!isAdmin"
+              :min="1"
+              :max="1000000"
+              theme="column"
+              class="form-number"
+            />
+            <p class="form-desc">{{ $t('embedPublish.rateLimitDayDesc') }}</p>
+          </div>
         </div>
       </section>
 
@@ -189,14 +186,25 @@
           <p class="form-desc">{{ $t('embedPublish.pageTitleDesc') }}</p>
         </div>
 
-        <div class="form-item">
-          <label class="form-label">{{ $t('embedPublish.headerTitleMode') }}</label>
-          <t-select
-            v-model="form.header_title_mode"
-            :disabled="!isAdmin"
-            :options="headerTitleModeOptions"
-          />
-          <p class="form-desc">{{ $t('embedPublish.headerTitleModeDesc') }}</p>
+        <div class="form-grid form-grid--2">
+          <div class="form-item">
+            <label class="form-label">{{ $t('embedPublish.headerTitleMode') }}</label>
+            <t-select
+              v-model="form.header_title_mode"
+              :disabled="!isAdmin"
+              :options="headerTitleModeOptions"
+            />
+            <p class="form-desc">{{ $t('embedPublish.headerTitleModeDesc') }}</p>
+          </div>
+
+          <div class="form-item">
+            <label class="form-label">{{ $t('embedPublish.widgetPosition') }}</label>
+            <t-select
+              v-model="form.widget_position"
+              :disabled="!isAdmin"
+              :options="positionOptions"
+            />
+          </div>
         </div>
 
         <div class="form-item">
@@ -206,15 +214,6 @@
             :disabled="!isAdmin"
             format="HEX"
             :color-modes="['monochrome']"
-          />
-        </div>
-
-        <div class="form-item">
-          <label class="form-label">{{ $t('embedPublish.widgetPosition') }}</label>
-          <t-select
-            v-model="form.widget_position"
-            :disabled="!isAdmin"
-            :options="positionOptions"
           />
         </div>
 
@@ -320,6 +319,11 @@
               {{ $t('embedPublish.secureTokenNote') }}
             </p>
 
+            <div v-if="drawerSnippetTab !== 'secure'" class="embed-token-warning" role="note">
+              <t-icon name="error-circle" class="embed-token-warning__icon" />
+              <p>{{ $t('embedPublish.publishTokenWarning') }}</p>
+            </div>
+
             <div class="code-panel">
               <div class="code-panel__toolbar">
                 <span class="code-panel__label">
@@ -373,6 +377,7 @@
       :title="previewChannel?.name || $t('embedPublish.preview')"
       :primary-color="previewChannel?.primary_color"
       :position="previewPosition"
+      :refresh-key="previewNonce"
     />
   </div>
 </template>
@@ -421,6 +426,7 @@ const previewChannel = ref<EmbedChannel | null>(null)
 const previewToken = ref('')
 const previewMode = ref<'iframe' | 'widget'>('iframe')
 const previewLoading = ref(false)
+const previewNonce = ref(0)
 const rotating = ref(false)
 const showDrawer = ref(false)
 const editingId = ref('')
@@ -742,6 +748,7 @@ const openPreviewFromDrawer = async () => {
     previewMode.value = drawerSnippetTab.value === 'iframe' ? 'iframe' : 'widget'
     previewChannel.value = ch
     previewToken.value = token
+    previewNonce.value += 1
     previewVisible.value = true
   } catch {
     MessagePlugin.error(t('embedPublish.previewUnavailable'))
@@ -1051,7 +1058,8 @@ const toggleEnabled = async (ch: EmbedChannel, enabled: boolean) => {
 
 .form-grid {
   display: grid;
-  gap: 10px;
+  gap: 10px 16px;
+  align-items: start;
 
   &--2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1062,6 +1070,10 @@ const toggleEnabled = async (ch: EmbedChannel, enabled: boolean) => {
       grid-template-columns: 1fr;
     }
   }
+}
+
+.form-number {
+  width: 100%;
 }
 
 .enable-row {
