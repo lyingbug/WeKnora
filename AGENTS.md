@@ -1,5 +1,19 @@
 # AGENTS.md
 
+## Git identity & pull requests
+
+- This checkout is the fork `lyingbug/WeKnora` (`origin`); `upstream` is `Tencent/WeKnora`.
+- Commits must be authored as `lyingbug <[email protected]>` (set in repo-local git config: `git config --local user.name lyingbug` / `user.email 11257935+[email protected]`). Re-assert this if a fresh run resets it to the platform default.
+- The Cursor-injected token can push to `origin` (the fork) but has NO write access to `Tencent/WeKnora`, so `ManagePullRequest` and `gh` cannot open PRs on upstream.
+- To open a PR against `Tencent/WeKnora`: push the branch to `origin`, then create the PR from the fork via the GitHub API using a `lyingbug` Personal Access Token stored as the `LYINGBUG_GITHUB_TOKEN` secret (needs `public_repo` scope). Example:
+  ```bash
+  curl -sS -X POST \
+    -H "Authorization: Bearer $LYINGBUG_GITHUB_TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    https://api.github.com/repos/Tencent/WeKnora/pulls \
+    -d '{"title":"<title>","head":"lyingbug:<branch>","base":"main","body":"<body>"}'
+  ```
+
 ## Cursor Cloud specific instructions
 
 WeKnora is a polyglot monorepo (see `README.md`). For local development the product runs as:
