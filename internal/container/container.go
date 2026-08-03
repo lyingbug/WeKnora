@@ -316,6 +316,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewWikiMaintenanceRunner))
 	must(container.Invoke(startWikiMaintenance))
 	logger.Debugf(ctx, "[Container] Wiki maintenance runner registered")
+	must(container.Invoke(service.BindWikiAIRecheck))
+	logger.Debugf(ctx, "[Container] Wiki AI review recheck bound to repair verification")
 	must(container.Provide(service.NewHousekeepingService))
 	must(container.Invoke(startHousekeepingService))
 	logger.Debugf(ctx, "[Container] Knowledge housekeeping runner registered")

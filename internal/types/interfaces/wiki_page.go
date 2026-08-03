@@ -323,6 +323,12 @@ type WikiPageRepository interface {
 	// the KB without loading every page at once.
 	ListPagesCursor(ctx context.Context, kbID string, cursor string, limit int) ([]*types.WikiPage, string, error)
 
+	// ListPagesPendingAIReview returns up to `limit` pages whose recorded AI
+	// review no longer covers their current version, never-reviewed pages
+	// first. Used to spend the AI review's per-run call budget where it can
+	// still find something.
+	ListPagesPendingAIReview(ctx context.Context, kbID string, reviewerVersion string, limit int) ([]*types.WikiPage, error)
+
 	// ListByTypeRecent returns the most-recently-updated pages of the
 	// given type, projected to slug/title/summary, capped at `limit`.
 	// Used by rebuildIndexPage's first-time generation path so the
@@ -435,7 +441,13 @@ type WikiPageRepository interface {
 	// UpsertLintIssues persists a batch of findings in one statement. Callers
 	// must deduplicate fingerprints within the slice.
 	UpsertLintIssues(ctx context.Context, issues []*types.WikiPageIssue) error
-	ResolveMissingLintIssues(ctx context.Context, kbID, runID string, resolvedAt time.Time) error
+	// ResolveMissingLintIssues closes findings a completed run no longer sees,
+	// restricted to the detector families and pages the run actually covered.
+	ResolveMissingLintIssues(ctx context.Context, scope types.WikiLintReconcileScope, resolvedAt time.Time) error
+	// ListPageAIReviews returns the AI review ledger for the given slugs.
+	ListPageAIReviews(ctx context.Context, kbID string, slugs []string) (map[string]*types.WikiPageAIReview, error)
+	// UpsertPageAIReview records that a page was examined at a content hash.
+	UpsertPageAIReview(ctx context.Context, review *types.WikiPageAIReview) error
 	// ExpireStaleRepairAttempts retires repair attempts that stopped reporting
 	// before cutoff, releasing the issues they held.
 	ExpireStaleRepairAttempts(ctx context.Context, cutoff time.Time, message string, now time.Time) (int64, error)
@@ -450,5 +462,7 @@ type WikiPageRepository interface {
 	CreateLintRun(ctx context.Context, run *types.WikiLintRun) error
 	UpdateLintRun(ctx context.Context, run *types.WikiLintRun) error
 	GetLintRun(ctx context.Context, kbID, runID string) (*types.WikiLintRun, error)
-	GetLatestLintRun(ctx context.Context, kbID string) (*types.WikiLintRun, error)
+	// GetLatestLintRun returns the newest run for a knowledge base; a non-empty
+	// scopeKey restricts it to full-wiki scans or to one page's checks.
+	GetLatestLintRun(ctx context.Context, kbID, scopeKey string) (*types.WikiLintRun, error)
 }

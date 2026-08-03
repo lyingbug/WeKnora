@@ -56,22 +56,34 @@ type WikiLintService struct {
 	wikiService      interfaces.WikiPageService
 	kbService        interfaces.KnowledgeBaseService
 	knowledgeService interfaces.KnowledgeService
+	modelService     interfaces.ModelService
 	repo             interfaces.WikiPageRepository
+	aiReviewer       *wikiAIReviewer
 }
 
-// NewWikiLintService creates a new wiki lint service
+// NewWikiLintService creates a new wiki lint service.
+//
+// modelService may be nil in tests and in deployments that never enable the AI
+// review; the service then reports AI mode as unavailable rather than failing
+// at call time.
 func NewWikiLintService(
 	wikiService interfaces.WikiPageService,
 	kbService interfaces.KnowledgeBaseService,
 	knowledgeService interfaces.KnowledgeService,
+	modelService interfaces.ModelService,
 	repo interfaces.WikiPageRepository,
 ) *WikiLintService {
-	return &WikiLintService{
+	s := &WikiLintService{
 		wikiService:      wikiService,
 		kbService:        kbService,
 		knowledgeService: knowledgeService,
+		modelService:     modelService,
 		repo:             repo,
 	}
+	if modelService != nil {
+		s.aiReviewer = &wikiAIReviewer{modelService: modelService, kbService: kbService, repo: repo}
+	}
+	return s
 }
 
 // lintCursorBatch is the per-batch limit for the streaming page walk.
@@ -262,6 +274,7 @@ type wikiLintScan struct {
 func (s *WikiLintService) scanWiki(
 	ctx context.Context,
 	kbID string,
+	targetSlugs []string,
 	emit func(WikiLintIssue) error,
 	progress func(percent int),
 ) (*wikiLintScan, error) {
@@ -305,8 +318,31 @@ func (s *WikiLintService) scanWiki(
 		return emit(finding)
 	}
 
-	reporter := newWikiLintProgress(stats.TotalPages, progress)
 	knowledgeLive := make(map[string]bool) // kid -> exists; cached across pages
+
+	// A page-scoped scan reads exactly the pages it was asked about. The
+	// live-slug set above is still KB-wide because that is what "does this
+	// link target exist" means, but nothing else walks the wiki — which is
+	// what lets a single-page check answer in one round trip instead of one
+	// full-KB walk. The advisory cross-reference pass is skipped: it needs the
+	// complete entity title set, and its findings are not persisted anyway.
+	if len(targetSlugs) > 0 {
+		for _, slug := range targetSlugs {
+			page, pageErr := s.wikiService.GetPageBySlug(ctx, kbID, slug)
+			if pageErr != nil {
+				return nil, fmt.Errorf("load page %s: %w", slug, pageErr)
+			}
+			if err := s.scanPageDefects(ctx, page, slugSet, knowledgeLive, emitFinding); err != nil {
+				return nil, err
+			}
+		}
+		if progress != nil {
+			progress(95)
+		}
+		return scan, nil
+	}
+
+	reporter := newWikiLintProgress(stats.TotalPages, progress)
 
 	// First pass: orphan / broken-link / empty / stale-ref detection. Every
 	// check is order-independent. Entity and concept titles are collected here
@@ -485,7 +521,7 @@ func scanPageCrossRefs(
 // counted but not materialized; Truncated tells the caller that happened.
 func (s *WikiLintService) RunLint(ctx context.Context, kbID string) (*WikiLintReport, error) {
 	issues := make([]WikiLintIssue, 0, wikiLintReportMaxIssues)
-	scan, err := s.scanWiki(ctx, kbID, func(finding WikiLintIssue) error {
+	scan, err := s.scanWiki(ctx, kbID, nil, func(finding WikiLintIssue) error {
 		if len(issues) < wikiLintReportMaxIssues {
 			issues = append(issues, finding)
 		}
@@ -595,13 +631,60 @@ type WikiLintTaskPayload struct {
 	RunID           string `json:"run_id"`
 }
 
-// StartRun creates a queued lint run while enforcing one active run per KB.
+// WikiLintRunRequest is what a caller asks a health scan to do: which detector
+// families to run, and over which pages.
+type WikiLintRunRequest struct {
+	// Mode is one of types.WikiLintMode*. Anything unrecognized normalizes to
+	// the static rules, so a client cannot spend model calls by accident.
+	Mode string
+	// Slugs limits the run to specific pages. Empty means the whole wiki.
+	Slugs []string
+}
+
+// wikiLintScopeKey names the slot a run occupies. Full-wiki scans share one
+// slot; each page owns its own, so checking a page never has to wait for (or
+// be rejected by) a scan of the whole wiki.
+func wikiLintScopeKey(slugs []string) (scope, key string) {
+	if len(slugs) == 0 {
+		return types.WikiLintScopeKB, types.WikiLintScopeKB
+	}
+	sorted := append([]string(nil), slugs...)
+	sort.Strings(sorted)
+	return types.WikiLintScopePage, "page:" + strings.Join(sorted, ",")
+}
+
+// ErrWikiLintTooManyPages rejects a page-scoped request that is really a
+// full-wiki scan wearing a list of slugs.
+var ErrWikiLintTooManyPages = errors.New("a page-scoped lint run accepts at most 20 pages")
+
+// wikiLintMaxTargetSlugs bounds a page-scoped request. Beyond this the caller
+// should run a full scan, which is cheaper than the same work spread over many
+// single-page runs.
+const wikiLintMaxTargetSlugs = 20
+
+// StartRun creates a queued lint run while enforcing one active run per scope.
+//
+// AI mode is rejected here rather than at execution time, so a user who has not
+// configured a review model is told so by the click that would have spent the
+// calls, instead of finding a failed run later.
 func (s *WikiLintService) StartRun(
-	ctx context.Context, tenantID uint64, kbID string,
+	ctx context.Context, tenantID uint64, kbID string, req WikiLintRunRequest,
 ) (*types.WikiLintRun, error) {
+	mode := types.NormalizeWikiLintMode(req.Mode)
+	slugs := normalizeWikiLintSlugs(req.Slugs)
+	if len(slugs) > wikiLintMaxTargetSlugs {
+		return nil, ErrWikiLintTooManyPages
+	}
+	if types.WikiLintModeRunsAI(mode) {
+		if err := s.AIReviewAvailable(ctx, kbID); err != nil {
+			return nil, err
+		}
+	}
+	scope, scopeKey := wikiLintScopeKey(slugs)
 	run := &types.WikiLintRun{
 		ID: uuid.New().String(), TenantID: tenantID, KnowledgeBaseID: kbID,
 		Status: "queued", RuleVersion: wikiLintRuleVersion,
+		Mode: mode, Scope: scope, ScopeKey: scopeKey, TargetSlugs: slugs,
 	}
 	if err := s.repo.CreateLintRun(ctx, run); err != nil {
 		return nil, err
@@ -609,14 +692,67 @@ func (s *WikiLintService) StartRun(
 	return run, nil
 }
 
+// AIReviewAvailable reports whether the knowledge base can run an AI review,
+// returning ErrWikiAIReviewUnavailable with the reason when it cannot.
+func (s *WikiLintService) AIReviewAvailable(ctx context.Context, kbID string) error {
+	if s.aiReviewer == nil {
+		return ErrWikiAIReviewUnavailable
+	}
+	kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, kbID)
+	if err != nil {
+		return err
+	}
+	if WikiLintModelID(kb) == "" {
+		return ErrWikiAIReviewUnavailable
+	}
+	return nil
+}
+
+// normalizeWikiLintSlugs trims, deduplicates, and orders a target list so the
+// same request always produces the same scope key.
+func normalizeWikiLintSlugs(slugs []string) types.StringArray {
+	if len(slugs) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(slugs))
+	out := make(types.StringArray, 0, len(slugs))
+	for _, slug := range slugs {
+		trimmed := strings.TrimSpace(slug)
+		if trimmed == "" {
+			continue
+		}
+		if _, dup := seen[trimmed]; dup {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
+}
+
 // GetRun returns a KB-scoped lint run.
 func (s *WikiLintService) GetRun(ctx context.Context, kbID, runID string) (*types.WikiLintRun, error) {
 	return s.repo.GetLintRun(ctx, kbID, runID)
 }
 
-// GetLatestRun returns the most recently created lint run for a KB.
-func (s *WikiLintService) GetLatestRun(ctx context.Context, kbID string) (*types.WikiLintRun, error) {
-	return s.repo.GetLatestLintRun(ctx, kbID)
+// GetLatestRun returns the most recently created lint run for a KB, optionally
+// restricted to one scope key (see wikiLintScopeKey).
+func (s *WikiLintService) GetLatestRun(
+	ctx context.Context, kbID, scopeKey string,
+) (*types.WikiLintRun, error) {
+	return s.repo.GetLatestLintRun(ctx, kbID, scopeKey)
+}
+
+// GetLatestPageRun returns the newest check of one page.
+func (s *WikiLintService) GetLatestPageRun(
+	ctx context.Context, kbID, slug string,
+) (*types.WikiLintRun, error) {
+	_, scopeKey := wikiLintScopeKey([]string{slug})
+	return s.repo.GetLatestLintRun(ctx, kbID, scopeKey)
 }
 
 // FailRun records an enqueue or execution failure on a durable lint run.
@@ -726,10 +862,10 @@ func lintSeverityString(severity WikiLintIssueSeverity) string {
 
 // ProcessRun scans, persists, and reconciles findings for one complete run.
 //
-// Findings stream into wikiLintUpsertBatch-sized writes rather than being
-// collected first, so a KB with many defects costs the same memory as a healthy
-// one. Only durable rules are persisted — advisory suggestions belong to the
-// synchronous report, not the problem centre.
+// A run executes up to two phases, chosen by its mode: the static rule walk and
+// the bounded AI review. Each phase reconciles only its own source, and a
+// page-scoped run reconciles only its own pages, so no phase can close a
+// finding it was never in a position to look for.
 //
 // Reconciliation runs last and only on the success path: closing issues by
 // absence is sound only after every detector and every write has landed, and
@@ -739,6 +875,10 @@ func (s *WikiLintService) ProcessRun(ctx context.Context, payload WikiLintTaskPa
 	if err != nil {
 		return err
 	}
+	// The AI review resolves a tenant-scoped chat model, and an asynq worker
+	// starts from a bare context.
+	ctx = context.WithValue(ctx, types.TenantIDContextKey, payload.TenantID)
+
 	now := time.Now()
 	run.Status, run.Progress, run.StartedAt = "running", 5, &now
 	if err := s.repo.UpdateLintRun(ctx, run); err != nil {
@@ -753,7 +893,62 @@ func (s *WikiLintService) ProcessRun(ctx context.Context, payload WikiLintTaskPa
 		_ = s.repo.UpdateLintRun(context.WithoutCancel(ctx), run)
 	}()
 
+	mode := types.NormalizeWikiLintMode(run.Mode)
 	seenAt := time.Now()
+	sources := make([]string, 0, 2)
+	persisted := 0
+
+	if types.WikiLintModeRunsStatic(mode) {
+		staticCount, staticErr := s.runStaticPhase(ctx, payload, run, seenAt)
+		if staticErr != nil {
+			return staticErr
+		}
+		persisted += staticCount
+		sources = append(sources, types.WikiIssueSourceLint)
+	}
+
+	if types.WikiLintModeRunsAI(mode) {
+		aiCount, aiErr := s.runAIPhase(ctx, payload, run, seenAt)
+		if aiErr != nil {
+			return aiErr
+		}
+		persisted += aiCount
+		sources = append(sources, types.WikiIssueSourceAI)
+	}
+
+	// A page-scoped run may only speak for the pages it read. A full scan
+	// passes a nil slug set, which reconciles the whole knowledge base.
+	var reconcileSlugs []string
+	if len(run.TargetSlugs) > 0 {
+		reconcileSlugs = run.TargetSlugs
+	}
+	if err := s.repo.ResolveMissingLintIssues(ctx, types.WikiLintReconcileScope{
+		KnowledgeBaseID: payload.KnowledgeBaseID,
+		RunID:           run.ID,
+		Sources:         sources,
+		Slugs:           reconcileSlugs,
+	}, seenAt); err != nil {
+		return fmt.Errorf("reconcile lint findings: %w", err)
+	}
+
+	finished := time.Now()
+	run.Status, run.Progress, run.FindingCount, run.FinishedAt = "completed", 100, persisted, &finished
+	run.ErrorMessage = ""
+	logger.Infof(ctx,
+		"wiki lint run %s: KB %s mode=%s scope=%s — %d findings persisted (%d from %d AI calls)",
+		run.ID, payload.KnowledgeBaseID, mode, run.Scope, persisted, run.AIFindingCount, run.AICalls)
+	return s.repo.UpdateLintRun(ctx, run)
+}
+
+// runStaticPhase walks the deterministic rules and persists their findings.
+//
+// Findings stream into wikiLintUpsertBatch-sized writes rather than being
+// collected first, so a KB with many defects costs the same memory as a healthy
+// one. Only durable rules are persisted — advisory suggestions belong to the
+// synchronous report, not the problem centre.
+func (s *WikiLintService) runStaticPhase(
+	ctx context.Context, payload WikiLintTaskPayload, run *types.WikiLintRun, seenAt time.Time,
+) (int, error) {
 	persisted := 0
 	batch := make([]*types.WikiPageIssue, 0, wikiLintUpsertBatch)
 	// Fingerprints are deduplicated within a batch because a single upsert
@@ -772,7 +967,14 @@ func (s *WikiLintService) ProcessRun(ctx context.Context, payload WikiLintTaskPa
 		return nil
 	}
 
-	scan, err := s.scanWiki(ctx, payload.KnowledgeBaseID, func(finding WikiLintIssue) error {
+	// A full run splits its progress bar between the two phases so the AI
+	// review, which is the slow one, is not reported as a stall at 95%.
+	staticCeiling := 95
+	if types.WikiLintModeRunsAI(types.NormalizeWikiLintMode(run.Mode)) {
+		staticCeiling = 40
+	}
+
+	_, err := s.scanWiki(ctx, payload.KnowledgeBaseID, run.TargetSlugs, func(finding WikiLintIssue) error {
 		rule, ok := wikiLintRuleFor(string(finding.Type))
 		if !ok || !rule.Durable {
 			return nil
@@ -787,26 +989,141 @@ func (s *WikiLintService) ProcessRun(ctx context.Context, payload WikiLintTaskPa
 		}
 		return flush()
 	}, func(percent int) {
-		run.Progress = percent
+		run.Progress = percent * staticCeiling / 95
 		_ = s.repo.UpdateLintRun(ctx, run)
 	})
 	if err != nil {
-		return err
+		return persisted, err
 	}
 	if err := flush(); err != nil {
-		return err
+		return persisted, err
+	}
+	if run.Progress != staticCeiling {
+		run.Progress = staticCeiling
+		_ = s.repo.UpdateLintRun(ctx, run)
+	}
+	return persisted, nil
+}
+
+// runAIPhase spends the run's model-call budget and persists what came back.
+//
+// A page whose review call failed is deliberately left out of the ledger: it is
+// retried by the next run rather than being recorded as reviewed and clean. The
+// phase itself only fails when nothing could be reviewed at all — one bad page
+// must not discard the findings of the pages that succeeded.
+func (s *WikiLintService) runAIPhase(
+	ctx context.Context, payload WikiLintTaskPayload, run *types.WikiLintRun, seenAt time.Time,
+) (int, error) {
+	if s.aiReviewer == nil {
+		return 0, ErrWikiAIReviewUnavailable
+	}
+	kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, payload.KnowledgeBaseID)
+	if err != nil {
+		return 0, fmt.Errorf("get KB: %w", err)
+	}
+	modelID := WikiLintModelID(kb)
+	if modelID == "" {
+		return 0, ErrWikiAIReviewUnavailable
 	}
 
-	if err := s.repo.ResolveMissingLintIssues(ctx, payload.KnowledgeBaseID, run.ID, seenAt); err != nil {
-		return fmt.Errorf("reconcile lint findings: %w", err)
+	pages, err := s.aiReviewCandidates(ctx, kb, run)
+	if err != nil {
+		return 0, err
+	}
+	if len(pages) == 0 {
+		run.Progress = 95
+		_ = s.repo.UpdateLintRun(ctx, run)
+		return 0, nil
 	}
 
-	finished := time.Now()
-	run.Status, run.Progress, run.FindingCount, run.FinishedAt = "completed", 100, persisted, &finished
-	run.ErrorMessage = ""
-	logger.Infof(ctx, "wiki lint run %s: KB %s — %d findings scanned, %d persisted",
-		run.ID, payload.KnowledgeBaseID, scan.Total, persisted)
-	return s.repo.UpdateLintRun(ctx, run)
+	persisted := 0
+	completed := 0
+	var reviewErr error
+	// A page-scoped run is an explicit user request for a fresh opinion, so it
+	// bypasses the unchanged-page ledger; a KB-wide run relies on it to stay
+	// affordable.
+	force := len(run.TargetSlugs) > 0
+	err = s.aiReviewer.reviewPages(ctx, kb, pages, force, func(result wikiAIReviewResult) {
+		completed++
+		run.Progress = 40 + completed*55/len(pages)
+
+		if result.Skipped {
+			run.AIPagesSkipped++
+			_ = s.repo.UpdateLintRun(ctx, run)
+			return
+		}
+		run.AICalls++
+		if result.Err != nil {
+			if reviewErr == nil {
+				reviewErr = result.Err
+			}
+			logger.Warnf(ctx, "wiki ai review: page %s failed: %v", result.Page.Slug, result.Err)
+			_ = s.repo.UpdateLintRun(ctx, run)
+			return
+		}
+		run.AIPagesScanned++
+		run.AIFindingCount += len(result.Findings)
+
+		if len(result.Findings) > 0 {
+			records := make([]*types.WikiPageIssue, 0, len(result.Findings))
+			for _, finding := range result.Findings {
+				records = append(records, wikiAIIssueRecord(
+					payload.TenantID, payload.KnowledgeBaseID, run.ID, modelID,
+					seenAt, result.Page, finding,
+				))
+			}
+			if upsertErr := s.repo.UpsertLintIssues(ctx, records); upsertErr != nil {
+				if reviewErr == nil {
+					reviewErr = upsertErr
+				}
+				logger.Warnf(ctx, "wiki ai review: persist findings for %s failed: %v",
+					result.Page.Slug, upsertErr)
+				return
+			}
+			persisted += len(records)
+		}
+		// The ledger is written only after the findings are durable, so a
+		// crash between the two re-reviews the page instead of losing it.
+		if ledgerErr := s.repo.UpsertPageAIReview(ctx, &types.WikiPageAIReview{
+			ID: uuid.New().String(), TenantID: payload.TenantID,
+			KnowledgeBaseID: payload.KnowledgeBaseID, PageID: result.Page.ID,
+			Slug: result.Page.Slug, ContentHash: result.Hash,
+			ReviewerVersion: wikiAIReviewerVersion, ReviewedVersion: result.Page.Version,
+			FindingCount: len(result.Findings), RunID: run.ID, ModelID: modelID,
+			ReviewedAt: time.Now(),
+		}); ledgerErr != nil {
+			logger.Warnf(ctx, "wiki ai review: ledger write for %s failed: %v",
+				result.Page.Slug, ledgerErr)
+		}
+		_ = s.repo.UpdateLintRun(ctx, run)
+	})
+	if err != nil {
+		return persisted, err
+	}
+	if run.AIPagesScanned == 0 && reviewErr != nil {
+		return persisted, fmt.Errorf("wiki ai review failed for every page: %w", reviewErr)
+	}
+	return persisted, nil
+}
+
+// aiReviewCandidates picks the pages this run will spend model calls on: the
+// named pages for a page-scoped run, otherwise the highest-value pages within
+// the knowledge base's per-run budget.
+func (s *WikiLintService) aiReviewCandidates(
+	ctx context.Context, kb *types.KnowledgeBase, run *types.WikiLintRun,
+) ([]*types.WikiPage, error) {
+	if len(run.TargetSlugs) > 0 {
+		pages := make([]*types.WikiPage, 0, len(run.TargetSlugs))
+		for _, slug := range run.TargetSlugs {
+			page, err := s.wikiService.GetPageBySlug(ctx, kb.ID, slug)
+			if err != nil {
+				return nil, fmt.Errorf("load page %s: %w", slug, err)
+			}
+			pages = append(pages, page)
+		}
+		return pages, nil
+	}
+	return s.repo.ListPagesPendingAIReview(ctx, kb.ID, wikiAIReviewerVersion, wikiAIMaxPagesFor(kb))
 }
 
 // wikiLintIssueRecord projects a finding onto its durable problem-centre row.
@@ -835,7 +1152,7 @@ func wikiLintIssueRecord(
 func (s *WikiLintService) AutoFix(ctx context.Context, kbID string) (int, error) {
 	fixed := 0
 	repairedPages := make(map[string]struct{})
-	_, err := s.scanWiki(ctx, kbID, func(finding WikiLintIssue) error {
+	_, err := s.scanWiki(ctx, kbID, nil, func(finding WikiLintIssue) error {
 		if !finding.AutoFixable || finding.TargetSlug == "" {
 			return nil
 		}

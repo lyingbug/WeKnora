@@ -1076,6 +1076,47 @@ func (r *wikiPageRepository) ListPagesCursor(
 	return pages, nextCursor, nil
 }
 
+// ListPagesPendingAIReview returns the pages most worth spending an AI review
+// call on, newest work first.
+//
+// The AI review has a per-run call budget, so page selection is where that
+// budget is actually spent. Two things decide the order: a page nobody has
+// ever reviewed comes before one that only changed, and within each group the
+// most recently updated page comes first — freshly ingested content is where
+// semantic defects are introduced. Pages whose recorded review already covers
+// their current version are excluded outright, which is what makes a repeat
+// scan of an unchanged wiki nearly free.
+//
+// The index page is skipped: its body is generated boilerplate, not prose an
+// editor would fix.
+func (r *wikiPageRepository) ListPagesPendingAIReview(
+	ctx context.Context, kbID string, reviewerVersion string, limit int,
+) ([]*types.WikiPage, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var pages []*types.WikiPage
+	err := r.db.WithContext(ctx).
+		Table("wiki_pages AS p").
+		Select("p.*").
+		Joins(`LEFT JOIN wiki_page_ai_reviews AS r
+			ON r.knowledge_base_id = p.knowledge_base_id
+			AND r.page_id = p.id
+			AND r.reviewer_version = ?`, reviewerVersion).
+		Where("p.knowledge_base_id = ? AND p.status <> ? AND p.page_type <> ?",
+			kbID, types.WikiPageStatusArchived, types.WikiPageTypeIndex).
+		Where("p.deleted_at IS NULL").
+		Where("r.id IS NULL OR r.reviewed_version < p.version").
+		Order("CASE WHEN r.id IS NULL THEN 0 ELSE 1 END ASC").
+		Order("p.updated_at DESC").
+		Limit(limit).
+		Find(&pages).Error
+	if err != nil {
+		return nil, err
+	}
+	return pages, nil
+}
+
 // ListByTypeRecent returns up to `limit` summary-typed pages ordered
 // by updated_at DESC, projected to slug/title/summary. Used by the
 // rebuildIndexPage first-time generation path — historically that
@@ -1534,22 +1575,70 @@ func (r *wikiPageRepository) UpsertLintIssues(ctx context.Context, issues []*typ
 		Create(issues).Error
 }
 
+// ResolveMissingLintIssues closes findings a completed run no longer sees.
+//
+// Closing by absence is only sound for the detectors the run actually ran and
+// over the pages it actually looked at, which is what scope carries: a static
+// run may not retire AI findings, an AI review may not retire static ones, and
+// a page-scoped run of either kind may only speak for its own pages.
 func (r *wikiPageRepository) ResolveMissingLintIssues(
-	ctx context.Context, kbID, runID string, resolvedAt time.Time,
+	ctx context.Context, scope types.WikiLintReconcileScope, resolvedAt time.Time,
 ) error {
-	return r.db.WithContext(ctx).Model(&types.WikiPageIssue{}).
-		Where("knowledge_base_id = ? AND source = ?", kbID, types.WikiIssueSourceLint).
-		Where("last_seen_run_id <> ?", runID).
-		Where("status IN ?", types.WikiIssueActionableStatuses).
-		Updates(map[string]interface{}{
-			"status":                types.WikiIssueStatusResolved,
-			"resolved_at":           resolvedAt,
-			"resolution_action":     "lint_no_longer_detected",
-			"resolution_summary":    "The issue was not present in a complete subsequent lint run.",
-			"active_attempt_id":     "",
-			"resolved_page_version": gorm.Expr("detected_page_version"),
-			"updated_at":            resolvedAt,
-		}).Error
+	if len(scope.Sources) == 0 {
+		return nil
+	}
+	query := r.db.WithContext(ctx).Model(&types.WikiPageIssue{}).
+		Where("knowledge_base_id = ? AND source IN ?", scope.KnowledgeBaseID, scope.Sources).
+		Where("last_seen_run_id <> ?", scope.RunID).
+		Where("status IN ?", types.WikiIssueActionableStatuses)
+	if scope.Slugs != nil {
+		if len(scope.Slugs) == 0 {
+			return nil
+		}
+		query = query.Where("slug IN ?", scope.Slugs)
+	}
+	return query.Updates(map[string]interface{}{
+		"status":                types.WikiIssueStatusResolved,
+		"resolved_at":           resolvedAt,
+		"resolution_action":     "lint_no_longer_detected",
+		"resolution_summary":    "The issue was not present in a complete subsequent lint run.",
+		"active_attempt_id":     "",
+		"resolved_page_version": gorm.Expr("detected_page_version"),
+		"updated_at":            resolvedAt,
+	}).Error
+}
+
+// ListPageAIReviews returns the review ledger rows for the given slugs, keyed
+// by slug. The AI reviewer reads it to skip pages whose body has not changed
+// since the last review.
+func (r *wikiPageRepository) ListPageAIReviews(
+	ctx context.Context, kbID string, slugs []string,
+) (map[string]*types.WikiPageAIReview, error) {
+	out := make(map[string]*types.WikiPageAIReview, len(slugs))
+	if len(slugs) == 0 {
+		return out, nil
+	}
+	var rows []*types.WikiPageAIReview
+	if err := r.db.WithContext(ctx).
+		Where("knowledge_base_id = ? AND slug IN ?", kbID, slugs).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.Slug] = row
+	}
+	return out, nil
+}
+
+// UpsertPageAIReview records that a page was examined at a given content hash.
+func (r *wikiPageRepository) UpsertPageAIReview(ctx context.Context, review *types.WikiPageAIReview) error {
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "knowledge_base_id"}, {Name: "page_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"slug", "content_hash", "reviewer_version", "reviewed_version",
+			"finding_count", "run_id", "model_id", "reviewed_at", "updated_at",
+		}),
+	}).Create(review).Error
 }
 
 func (r *wikiPageRepository) ClaimIssueAndCreateAttempt(
@@ -1668,16 +1757,23 @@ func (r *wikiPageRepository) ListActiveRepairAttempts(
 // wikiLintRunActiveStatuses are the states that hold the one-active-run slot.
 var wikiLintRunActiveStatuses = []string{"queued", "running"}
 
-// CreateLintRun inserts a queued run, enforcing one active run per KB.
+// CreateLintRun inserts a queued run, enforcing one active run per scope.
 //
 // The count is a fast pre-check that yields a clean conflict error; the partial
 // unique index is the race-safe backstop for two starts that both passed the
 // count before either inserted. Recovering abandoned runs is not this method's
 // job — WikiMaintenanceRunner owns that, so starting a run stays a pure write.
+//
+// The slot is per scope key, so a single-page check and a full-wiki scan do not
+// block each other; two checks of the same page still collapse into one.
 func (r *wikiPageRepository) CreateLintRun(ctx context.Context, run *types.WikiLintRun) error {
+	if run.ScopeKey == "" {
+		run.ScopeKey = types.WikiLintScopeKB
+	}
 	var active int64
 	if err := r.db.WithContext(ctx).Model(&types.WikiLintRun{}).
-		Where("knowledge_base_id = ? AND status IN ?", run.KnowledgeBaseID, wikiLintRunActiveStatuses).
+		Where("knowledge_base_id = ? AND scope_key = ? AND status IN ?",
+			run.KnowledgeBaseID, run.ScopeKey, wikiLintRunActiveStatuses).
 		Count(&active).Error; err != nil {
 		return err
 	}
@@ -1755,6 +1851,8 @@ func (r *wikiPageRepository) UpdateLintRun(ctx context.Context, run *types.WikiL
 		Where("id = ? AND knowledge_base_id = ?", run.ID, run.KnowledgeBaseID).
 		Updates(map[string]interface{}{
 			"status": run.Status, "progress": run.Progress, "finding_count": run.FindingCount,
+			"ai_pages_scanned": run.AIPagesScanned, "ai_pages_skipped": run.AIPagesSkipped,
+			"ai_calls": run.AICalls, "ai_finding_count": run.AIFindingCount,
 			"error_message": run.ErrorMessage, "started_at": run.StartedAt,
 			"finished_at": run.FinishedAt, "updated_at": time.Now(),
 		})
@@ -1776,9 +1874,21 @@ func (r *wikiPageRepository) GetLintRun(ctx context.Context, kbID, runID string)
 	return &run, err
 }
 
-func (r *wikiPageRepository) GetLatestLintRun(ctx context.Context, kbID string) (*types.WikiLintRun, error) {
+// GetLatestLintRun returns the most recent run for a knowledge base, optionally
+// restricted to one scope key.
+//
+// The scope filter matters for the problem centre's header: without it a user's
+// single-page check would become "the latest run" and overwrite the reported
+// state of the last full-wiki scan.
+func (r *wikiPageRepository) GetLatestLintRun(
+	ctx context.Context, kbID, scopeKey string,
+) (*types.WikiLintRun, error) {
 	var run types.WikiLintRun
-	err := r.db.WithContext(ctx).Where("knowledge_base_id = ?", kbID).Order("created_at DESC").First(&run).Error
+	query := r.db.WithContext(ctx).Where("knowledge_base_id = ?", kbID)
+	if scopeKey != "" {
+		query = query.Where("scope_key = ?", scopeKey)
+	}
+	err := query.Order("created_at DESC").First(&run).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrWikiIssueNotFound
 	}

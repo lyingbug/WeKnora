@@ -174,7 +174,7 @@ func TestExpireStaleLintRunsFreesTheActiveSlot(t *testing.T) {
 	assert.Equal(t, int64(1), retired)
 
 	require.NoError(t, repo.CreateLintRun(ctx, next))
-	latest, err := repo.GetLatestLintRun(ctx, kbID)
+	latest, err := repo.GetLatestLintRun(ctx, kbID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "run-next", latest.ID)
 
@@ -182,4 +182,89 @@ func TestExpireStaleLintRunsFreesTheActiveSlot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "failed", reaped.Status)
 	assert.Equal(t, "expired", reaped.ErrorMessage)
+}
+
+// TestLintRunActiveSlotIsPerScope covers the reason the slot moved from the
+// knowledge base to the scope key: a user checking one page must not be told
+// the whole wiki is busy, and the latest full-wiki scan must stay reportable
+// even after several page checks ran on top of it.
+func TestLintRunActiveSlotIsPerScope(t *testing.T) {
+	db := setupWikiPagesTestDB(t)
+	repo := NewWikiPageRepository(db)
+	ctx := context.Background()
+	kbID := "kb-scoped-runs"
+
+	fullScan := &types.WikiLintRun{
+		ID: "run-kb", TenantID: 1, KnowledgeBaseID: kbID, Status: "running",
+		Mode: types.WikiLintModeStatic, Scope: types.WikiLintScopeKB, ScopeKey: types.WikiLintScopeKB,
+	}
+	require.NoError(t, repo.CreateLintRun(ctx, fullScan))
+
+	pageCheck := &types.WikiLintRun{
+		ID: "run-page", TenantID: 1, KnowledgeBaseID: kbID, Status: "queued",
+		Mode: types.WikiLintModeFull, Scope: types.WikiLintScopePage,
+		ScopeKey: "page:concept/rag", TargetSlugs: types.StringArray{"concept/rag"},
+	}
+	require.NoError(t, repo.CreateLintRun(ctx, pageCheck),
+		"a page check must not contend with a full-wiki scan")
+
+	assert.ErrorIs(t, repo.CreateLintRun(ctx, &types.WikiLintRun{
+		ID: "run-page-dup", TenantID: 1, KnowledgeBaseID: kbID, Status: "queued",
+		Scope: types.WikiLintScopePage, ScopeKey: "page:concept/rag",
+	}), ErrWikiIssueConflict, "two checks of the same page still collapse into one")
+
+	latestKB, err := repo.GetLatestLintRun(ctx, kbID, types.WikiLintScopeKB)
+	require.NoError(t, err)
+	assert.Equal(t, "run-kb", latestKB.ID,
+		"a page check must not become the reported state of the last full scan")
+
+	latestPage, err := repo.GetLatestLintRun(ctx, kbID, "page:concept/rag")
+	require.NoError(t, err)
+	assert.Equal(t, "run-page", latestPage.ID)
+}
+
+// TestResolveMissingLintIssuesRespectsSourceAndPageScope is the invariant that
+// keeps two detector families from erasing each other's findings, and keeps a
+// single-page check from closing issues on pages it never read.
+func TestResolveMissingLintIssuesRespectsSourceAndPageScope(t *testing.T) {
+	db := setupWikiPagesTestDB(t)
+	repo := NewWikiPageRepository(db)
+	ctx := context.Background()
+	kbID := "kb-reconcile-scope"
+	seenAt := time.Now()
+
+	seed := func(fingerprint, slug, source string) string {
+		issue := makeLintIssue(kbID, fingerprint, seenAt)
+		issue.Slug = slug
+		issue.Source = source
+		require.NoError(t, repo.UpsertLintIssue(ctx, issue))
+		return issue.ID
+	}
+	staticOnPage := seed("fp-static-a", "concept/a", types.WikiIssueSourceLint)
+	aiOnPage := seed("fp-ai-a", "concept/a", types.WikiIssueSourceAI)
+	staticElsewhere := seed("fp-static-b", "concept/b", types.WikiIssueSourceLint)
+
+	// A page-scoped static run of concept/a reported nothing.
+	require.NoError(t, repo.ResolveMissingLintIssues(ctx, types.WikiLintReconcileScope{
+		KnowledgeBaseID: kbID, RunID: "run-page-a",
+		Sources: []string{types.WikiIssueSourceLint}, Slugs: []string{"concept/a"},
+	}, seenAt))
+
+	status := func(id string) string {
+		issue, err := repo.GetIssue(ctx, kbID, id)
+		require.NoError(t, err)
+		return issue.Status
+	}
+	assert.Equal(t, types.WikiIssueStatusResolved, status(staticOnPage))
+	assert.Equal(t, types.WikiIssueStatusOpen, status(aiOnPage),
+		"a static run may not close a finding only the AI review can detect")
+	assert.Equal(t, types.WikiIssueStatusOpen, status(staticElsewhere),
+		"a page-scoped run may only speak for its own pages")
+
+	// An empty (but non-nil) page set means the run covered no pages at all.
+	require.NoError(t, repo.ResolveMissingLintIssues(ctx, types.WikiLintReconcileScope{
+		KnowledgeBaseID: kbID, RunID: "run-empty",
+		Sources: []string{types.WikiIssueSourceAI}, Slugs: []string{},
+	}, seenAt))
+	assert.Equal(t, types.WikiIssueStatusOpen, status(aiOnPage))
 }

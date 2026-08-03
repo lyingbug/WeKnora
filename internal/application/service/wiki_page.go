@@ -50,6 +50,9 @@ type wikiPageService struct {
 	kbService       interfaces.KnowledgeBaseService
 	taskPendingRepo interfaces.TaskPendingOpsRepository
 	redisClient     *redis.Client
+	// aiRechecker re-reviews a page when an AI finding's evidence survived the
+	// repair. Installed by SetAIIssueRechecker; nil when no review model exists.
+	aiRechecker wikiIssueRechecker
 }
 
 // NewWikiPageService creates a new wiki page service
@@ -1561,13 +1564,26 @@ func (s *wikiPageService) verifyWikiIssueResolution(
 		_ = json.Unmarshal(issue.Evidence, &evidence)
 	}
 	target, _ := evidence["target_slug"].(string)
+	quote, _ := evidence["quote"].(string)
 	return verifyWikiIssuePostcondition(ctx, wikiVerifyInput{
-		Issue:      issue,
-		Page:       page,
-		Attempt:    attempt,
-		TargetSlug: target,
-		Pages:      s.repo,
+		Issue:         issue,
+		Page:          page,
+		Attempt:       attempt,
+		TargetSlug:    target,
+		EvidenceQuote: quote,
+		Pages:         s.repo,
+		Recheck:       s.aiRechecker,
 	})
+}
+
+// SetAIIssueRechecker installs the AI reviewer's single-page recheck.
+//
+// Wiring runs in this direction because the reviewer is built on top of this
+// service; injecting the callback after construction keeps that dependency
+// one-way instead of making the two services mutually recursive. Leaving it
+// unset simply means AI findings fall back to the version-progress check.
+func (s *wikiPageService) SetAIIssueRechecker(recheck wikiIssueRechecker) {
+	s.aiRechecker = recheck
 }
 
 // UpdateIssueStatus applies only legal, KB-scoped transitions. A resolved

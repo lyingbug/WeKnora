@@ -54,8 +54,20 @@ type wikiVerifyInput struct {
 	// TargetSlug is the counterpart recorded in the finding's evidence (the
 	// dangling link target, the stale knowledge id, the unlinked entity).
 	TargetSlug string
-	Pages      wikiPageBySlugReader
+	// EvidenceQuote is the verbatim span an AI finding was anchored to. It is
+	// what makes a semantic finding verifiable without a model call: if the
+	// exact text the reviewer objected to is gone, the finding is gone.
+	EvidenceQuote string
+	Pages         wikiPageBySlugReader
+	// Recheck asks the AI reviewer whether an equivalent finding is still
+	// present on the page. It is consulted only when the cheap evidence check
+	// is inconclusive, and may be nil when no reviewer is configured.
+	Recheck wikiIssueRechecker
 }
+
+// wikiIssueRechecker re-reviews one page and reports whether a finding
+// equivalent to the given issue is still present.
+type wikiIssueRechecker func(ctx context.Context, issue *types.WikiPageIssue, page *types.WikiPage) (bool, error)
 
 // wikiLintRule binds a finding's identity, the metadata a detector stamps onto
 // it, and the postcondition that proves it resolved. Findings can only be
@@ -209,12 +221,52 @@ func verifyWikiIssuePostcondition(ctx context.Context, in wikiVerifyInput) error
 	}
 	rule, ok := wikiLintRuleFor(in.Issue.IssueType)
 	if !ok {
+		if in.Issue.Source == types.WikiIssueSourceAI {
+			return verifyWikiAIFindingResolved(ctx, in)
+		}
 		return verifyWikiSemanticProgress(in)
 	}
 	if rule.RequiresTarget && in.TargetSlug == "" {
 		return fmt.Errorf("%s issue is missing target evidence", rule.Type)
 	}
 	return rule.Verify(ctx, in)
+}
+
+// verifyWikiAIFindingResolved closes the loop on an AI finding.
+//
+// AI findings are the one class of semantic finding that carries a machine-
+// checkable anchor: the reviewer had to quote the page verbatim, so the cheapest
+// and strongest signal is whether that exact span survived the repair. When it
+// did not, the finding is resolved with no model call at all — which is the
+// common case, because the flagged text is what an editor rewrites.
+//
+// A surviving quote is genuinely ambiguous rather than a failure: a contradiction
+// can be resolved by editing the other side of it. Only then do we spend one
+// bounded recheck call. If no reviewer is configured, or the recheck itself
+// fails, we fall back to requiring that the page really advanced — the same
+// answer agent-reported findings get, never a silent pass.
+func verifyWikiAIFindingResolved(ctx context.Context, in wikiVerifyInput) error {
+	if err := verifyWikiSemanticProgress(in); err != nil {
+		return err
+	}
+	quote := strings.TrimSpace(in.EvidenceQuote)
+	if quote == "" {
+		return nil
+	}
+	if !strings.Contains(normalizeWikiEvidence(in.Page.Content), normalizeWikiEvidence(quote)) {
+		return nil
+	}
+	if in.Recheck == nil {
+		return nil
+	}
+	stillPresent, err := in.Recheck(ctx, in.Issue, in.Page)
+	if err != nil {
+		return nil
+	}
+	if stillPresent {
+		return errors.New("the AI review still reports this problem on the page after the repair")
+	}
+	return nil
 }
 
 // verifyWikiSemanticProgress is the fallback postcondition for findings whose
