@@ -332,15 +332,19 @@ func (s *WikiLintService) RecheckAIIssue(
 	if err != nil {
 		return false, err
 	}
-	// Ask the detector for the unit that involves this page, so a pair finding is
+	// Ask the detector for the units that involve this page, so a pair finding is
 	// re-checked as a pair rather than as a lone page.
-	candidates, err := detector.Candidates(ctx, env, 1)
-	if err != nil || len(candidates) == 0 {
-		return false, fmt.Errorf("wiki review recheck found no unit for issue %s", issue.ID)
+	candidates, err := detector.Candidates(ctx, env, wikiRecheckCandidateLimit)
+	if err != nil {
+		return false, err
+	}
+	candidate, err := selectWikiRecheckUnit(issue, detector, candidates)
+	if err != nil {
+		return false, err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, wikiReviewCallTimeout)
 	defer cancel()
-	findings, err := detector.Review(callCtx, env, candidates[0])
+	findings, err := detector.Review(callCtx, env, candidate)
 	if err != nil {
 		return false, err
 	}
@@ -354,6 +358,50 @@ func (s *WikiLintService) RecheckAIIssue(
 		}
 	}
 	return false, nil
+}
+
+// wikiRecheckCandidateLimit is how many units a recheck considers before giving
+// up on finding the one the issue belongs to. A page can be paired with several
+// counterparts, and re-checking the wrong pair would answer a question nobody
+// asked.
+const wikiRecheckCandidateLimit = 8
+
+// selectWikiRecheckUnit picks the unit an issue actually belongs to.
+//
+// For a finding anchored to a quoted span the page is the unit, so any candidate
+// for that page is the right one. For a finding identified by its unit — a pair,
+// or a page measured against a specific source — only the unit whose fingerprint
+// matches will do: re-checking the pair (A, C) and finding it clean says nothing
+// about a finding on (A, B), and silently accepting it would resolve the issue on
+// evidence that never concerned it.
+func selectWikiRecheckUnit(
+	issue *types.WikiPageIssue, detector wikiReviewDetector, candidates []wikiReviewCandidate,
+) (wikiReviewCandidate, error) {
+	if len(candidates) == 0 {
+		return wikiReviewCandidate{}, fmt.Errorf(
+			"wiki review recheck found no unit for issue %s on page %s", issue.ID, issue.Slug,
+		)
+	}
+	unitIdentified := false
+	for _, issueType := range detector.Identity().UnitIdentified {
+		if issueType == issue.IssueType {
+			unitIdentified = true
+			break
+		}
+	}
+	if !unitIdentified {
+		return candidates[0], nil
+	}
+	for _, candidate := range candidates {
+		for _, fingerprint := range detector.UnitFingerprints(issue.KnowledgeBaseID, candidate) {
+			if fingerprint == issue.Fingerprint {
+				return candidate, nil
+			}
+		}
+	}
+	return wikiReviewCandidate{}, fmt.Errorf(
+		"wiki review recheck could not find the unit issue %s belongs to", issue.ID,
+	)
 }
 
 // wikiIssueDetectorID recovers which detector reported an issue. The id is

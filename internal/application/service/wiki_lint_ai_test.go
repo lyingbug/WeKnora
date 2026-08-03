@@ -336,6 +336,48 @@ func TestReviewDetectorsCoverEveryAIIssueTypeExactlyOnce(t *testing.T) {
 	assert.Contains(t, owner, types.WikiIssueTypeDuplicatePages)
 }
 
+// TestSelectRecheckUnitRefusesTheWrongUnit is the guard on the one place a repair
+// spends a model call. Re-checking the pair (A, C) and finding it clean says
+// nothing about a finding on (A, B), so a recheck that cannot locate the issue's
+// own unit must fail rather than answer a question nobody asked.
+func TestSelectRecheckUnitRefusesTheWrongUnit(t *testing.T) {
+	detector := wikiDuplicatePagesDetector{}
+	const kbID = "kb-recheck"
+	page := func(id, slug string) *types.WikiPage {
+		return &types.WikiPage{ID: id, Slug: slug, PageType: types.WikiPageTypeEntity}
+	}
+	a, b, c := page("a", "entity/a"), page("b", "entity/b"), page("c", "entity/c")
+	pairAB := wikiReviewCandidate{Key: wikiPairKey(a.Slug, b.Slug), Pages: []*types.WikiPage{a, b}}
+	pairAC := wikiReviewCandidate{Key: wikiPairKey(a.Slug, c.Slug), Pages: []*types.WikiPage{a, c}}
+
+	issueAB := &types.WikiPageIssue{
+		KnowledgeBaseID: kbID, IssueType: types.WikiIssueTypeDuplicatePages,
+		Fingerprint: detector.UnitFingerprints(kbID, pairAB)[0],
+	}
+
+	chosen, err := selectWikiRecheckUnit(issueAB, detector, []wikiReviewCandidate{pairAC, pairAB})
+	require.NoError(t, err)
+	assert.Equal(t, pairAB.Key, chosen.Key)
+
+	_, err = selectWikiRecheckUnit(issueAB, detector, []wikiReviewCandidate{pairAC})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not find the unit")
+
+	_, err = selectWikiRecheckUnit(issueAB, detector, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "found no unit")
+
+	// A quote-anchored finding is about the page, so any unit for that page is the
+	// right one to re-read.
+	quoteAnchored := &types.WikiPageIssue{
+		KnowledgeBaseID: kbID, IssueType: types.WikiIssueTypeContradictory,
+	}
+	chosen, err = selectWikiRecheckUnit(quoteAnchored, wikiPageContentDetector{},
+		[]wikiReviewCandidate{{Key: a.ID, Pages: []*types.WikiPage{a}}})
+	require.NoError(t, err)
+	assert.Equal(t, a.ID, chosen.Key)
+}
+
 // TestWikiLintModelFallsBackToTheRepairModel keeps enabling the AI review from
 // requiring a second configuration step, while still letting a knowledge base
 // review with a cheaper model than it repairs with.
