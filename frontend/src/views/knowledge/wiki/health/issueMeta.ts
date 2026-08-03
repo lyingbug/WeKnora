@@ -13,13 +13,17 @@ interface IssueTypePreset {
 }
 
 /**
- * The issue types the problem centre can label, in the order the filter row
- * offers them: structural defects the rule scanner finds, then semantic ones
- * that only the AI review or an agent can report.
+ * The issue types the problem centre can label, grouped by the unit of judgement
+ * that produced them — which is also the order the filter row offers them in:
+ *
+ *   structural  — the rule scanner, reading the link graph
+ *   page        — the AI review, reading one page body
+ *   source      — the AI review, reading a page against its source document
+ *   pair        — the AI review, reading two pages side by side
  *
  * A type absent from this table still renders, as a generic "needs attention"
- * finding — but the backend restricts the AI review to a closed set precisely
- * so that a finding always arrives with a label a user can filter on.
+ * finding — but the backend restricts the AI review to a closed set precisely so
+ * that a finding always arrives with a label a user can filter on.
  */
 const ISSUE_TYPE_PRESETS: Record<string, IssueTypePreset> = {
   broken_link: { key: 'issueBrokenLink', theme: 'danger', icon: 'link-unlink' },
@@ -31,6 +35,9 @@ const ISSUE_TYPE_PRESETS: Record<string, IssueTypePreset> = {
   contradictory_facts: { key: 'issueConflict', theme: 'danger', icon: 'error-circle' },
   out_of_date: { key: 'issueOutdated', theme: 'default', icon: 'time' },
   unsupported_claim: { key: 'issueUnsupportedClaim', theme: 'warning', icon: 'help-circle' },
+  factual_error: { key: 'issueFactualError', theme: 'danger', icon: 'close-circle' },
+  incomplete_summary: { key: 'issueIncompleteSummary', theme: 'warning', icon: 'view-list' },
+  duplicate_pages: { key: 'issueDuplicatePages', theme: 'primary', icon: 'merge-cells' },
 }
 
 export const WIKI_ISSUE_TYPES = Object.keys(ISSUE_TYPE_PRESETS)
@@ -115,12 +122,44 @@ export interface WikiIssueAiEvidence {
  */
 export function wikiIssueAiEvidence(issue: WikiPageIssue): WikiIssueAiEvidence | null {
   const quote = typeof issue.evidence?.quote === 'string' ? issue.evidence.quote.trim() : ''
-  if (!quote) return null
   const suggestion = typeof issue.evidence?.suggestion === 'string' ? issue.evidence.suggestion.trim() : ''
+  if (!quote && !suggestion) return null
   const confidence = Number(issue.evidence?.confidence)
   return {
     quote,
     suggestion,
     confidence: Number.isFinite(confidence) ? confidence : 0,
   }
+}
+
+/**
+ * The counterpart page of a cross-page finding.
+ *
+ * A duplicate finding is about two pages, so showing only the one it happens to
+ * be filed under would leave the reader unable to judge it: the whole question is
+ * whether these two are the same subject.
+ */
+export function wikiIssuePairedPage(issue: WikiPageIssue): { slug: string; title: string } | null {
+  const slug = typeof issue.evidence?.other_slug === 'string' ? issue.evidence.other_slug.trim() : ''
+  if (!slug) return null
+  const title = typeof issue.evidence?.other_title === 'string' ? issue.evidence.other_title.trim() : ''
+  return { slug, title: title || slug }
+}
+
+/**
+ * The source document a grounding finding was judged against. Naming it matters
+ * because the finding is a claim about that document, and an editor who disagrees
+ * needs to know which one to open.
+ */
+export function wikiIssueSourceDocument(issue: WikiPageIssue): string {
+  const title = issue.evidence?.source_knowledge_title
+  return typeof title === 'string' ? title.trim() : ''
+}
+
+/** Coverage of a source document, for an incomplete-summary finding. */
+export function wikiIssueCoverage(issue: WikiPageIssue): { cited: number; total: number } | null {
+  const cited = Number(issue.evidence?.cited_chunks)
+  const total = Number(issue.evidence?.source_chunks)
+  if (!Number.isFinite(total) || total <= 0) return null
+  return { cited: Number.isFinite(cited) ? cited : 0, total }
 }

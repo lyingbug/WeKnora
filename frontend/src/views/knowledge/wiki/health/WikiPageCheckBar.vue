@@ -92,7 +92,7 @@ const resultText = computed(() => {
   // An unchanged page that was already reviewed is reported as skipped rather
   // than as "clean", so a user is never told a review happened when the point
   // was that it did not have to.
-  if (current.ai_pages_skipped > 0 && current.ai_pages_scanned === 0) {
+  if (current.ai_units_skipped > 0 && current.ai_units_reviewed === 0) {
     return t('knowledgeEditor.wikiBrowser.pageCheckUnchanged')
   }
   if ((current.finding_count ?? 0) === 0) {

@@ -5832,7 +5832,8 @@ onMounted(() => {
 })
 
 watch(() => props.wikiRepairModelId, (modelId) => {
-  if ((modelId || '').trim()) wikiRepairModelIdLocal.value = modelId.trim()
+  const trimmed = (modelId || '').trim()
+  if (trimmed) wikiRepairModelIdLocal.value = trimmed
 })
 
 watch(() => props.knowledgeBaseId, () => {

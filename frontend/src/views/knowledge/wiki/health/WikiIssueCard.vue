@@ -21,20 +21,46 @@
         </span>
       </header>
 
-      <button type="button" class="wiki-issue-card__page" @click="emit('open-page')">
-        <span class="wiki-issue-card__page-title">{{ pageTitle }}</span>
-        <code class="wiki-issue-card__page-slug">{{ issue.slug }}</code>
-      </button>
+      <div class="wiki-issue-card__pages">
+        <button type="button" class="wiki-issue-card__page" @click="emit('open-page')">
+          <span class="wiki-issue-card__page-title">{{ pageTitle }}</span>
+          <code class="wiki-issue-card__page-slug">{{ issue.slug }}</code>
+        </button>
+        <!-- A duplicate finding is about two pages, so both have to be reachable
+             from the card: the question it asks cannot be judged from one. -->
+        <template v-if="pairedPage">
+          <span class="wiki-issue-card__pair-join">
+            <t-icon name="swap-right" />
+            {{ $t('knowledgeEditor.wikiBrowser.issuePairedWith') }}
+          </span>
+          <button
+            type="button"
+            class="wiki-issue-card__page"
+            @click="emit('open-target', pairedPage.slug)"
+          >
+            <span class="wiki-issue-card__page-title">{{ pairedPage.title }}</span>
+            <code class="wiki-issue-card__page-slug">{{ pairedPage.slug }}</code>
+          </button>
+        </template>
+      </div>
 
       <p class="wiki-issue-card__desc">{{ issue.description }}</p>
 
-      <blockquote v-if="aiEvidence" class="wiki-issue-card__quote">
+      <blockquote v-if="aiEvidence?.quote" class="wiki-issue-card__quote">
         <t-icon name="quote" />
         <span>{{ aiEvidence.quote }}</span>
       </blockquote>
       <p v-if="aiEvidence?.suggestion" class="wiki-issue-card__suggestion">
         <t-icon name="lightbulb" />
         <span>{{ aiEvidence.suggestion }}</span>
+      </p>
+
+      <p v-if="sourceDocument" class="wiki-issue-card__source-doc">
+        <t-icon name="file" />
+        <span>{{ $t('knowledgeEditor.wikiBrowser.issueCheckedAgainst', { document: sourceDocument }) }}</span>
+        <span v-if="coverage" class="wiki-issue-card__coverage">
+          {{ $t('knowledgeEditor.wikiBrowser.issueCoverage', coverage) }}
+        </span>
       </p>
 
       <div v-if="targetSlug" class="wiki-issue-card__target">
@@ -104,9 +130,12 @@ import { useI18n } from 'vue-i18n'
 import type { WikiPageIssue } from '@/api/wiki'
 import {
   wikiIssueAiEvidence,
+  wikiIssueCoverage,
   wikiIssueEvidenceTarget,
+  wikiIssuePairedPage,
   wikiIssueRepairModeLabel,
   wikiIssueSeverityLabel,
+  wikiIssueSourceDocument,
   wikiIssueSourceLabel,
   wikiIssueTypeIcon,
   wikiIssueTypeLabel,
@@ -143,6 +172,9 @@ const typeIcon = computed(() => wikiIssueTypeIcon(props.issue.issue_type))
 const severity = computed(() => wikiIssueSeverityLabel(t, props.issue.severity))
 const sourceLabel = computed(() => wikiIssueSourceLabel(t, props.issue))
 const aiEvidence = computed(() => wikiIssueAiEvidence(props.issue))
+const pairedPage = computed(() => wikiIssuePairedPage(props.issue))
+const sourceDocument = computed(() => wikiIssueSourceDocument(props.issue))
+const coverage = computed(() => wikiIssueCoverage(props.issue))
 const targetSlug = computed(() => wikiIssueEvidenceTarget(props.issue))
 const targetDisplayName = computed(() => (targetSlug.value ? props.slugDisplayName(targetSlug.value) : ''))
 const pageTitle = computed(() => props.slugDisplayName(props.issue.slug))
@@ -286,6 +318,13 @@ function formatTime(dateStr: string): string {
   background: var(--td-error-color-1);
 }
 
+.wiki-issue-card__pages {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .wiki-issue-card__page {
   display: flex;
   align-items: baseline;
@@ -299,6 +338,14 @@ function formatTime(dateStr: string): string {
   &:hover .wiki-issue-card__page-title {
     text-decoration: underline;
   }
+}
+
+.wiki-issue-card__pair-join {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
 }
 
 .wiki-issue-card__page-title {
@@ -341,6 +388,7 @@ function formatTime(dateStr: string): string {
 }
 
 .wiki-issue-card__suggestion,
+.wiki-issue-card__source-doc,
 .wiki-issue-card__resolution {
   display: flex;
   gap: 6px;
@@ -353,6 +401,18 @@ function formatTime(dateStr: string): string {
     flex: none;
     margin-top: 2px;
   }
+}
+
+.wiki-issue-card__source-doc {
+  color: var(--td-text-color-placeholder);
+  flex-wrap: wrap;
+}
+
+.wiki-issue-card__coverage {
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--td-bg-color-component);
+  font-variant-numeric: tabular-nums;
 }
 
 .wiki-issue-card__resolution .t-icon {

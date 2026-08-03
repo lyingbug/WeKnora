@@ -95,6 +95,43 @@
         </div>
       </div>
 
+      <!-- Wiki AI 巡检模型：未配置时回退到修复模型，因此是可选项 -->
+      <div v-if="wikiEnabled" class="setting-row">
+        <div class="setting-info">
+          <label>{{ $t('knowledgeEditor.wiki.lintModelLabel') }}</label>
+          <p class="desc">{{ $t('knowledgeEditor.wiki.lintModelTip') }}</p>
+        </div>
+        <div class="setting-control">
+          <ModelSelector
+            model-type="KnowledgeQA"
+            :selected-model-id="config.wikiLintModelId"
+            :all-models="allModels"
+            @update:selected-model-id="handleWikiLintModelChange"
+            @add-model="handleAddModel('knowledgeqa')"
+            :placeholder="$t('knowledgeEditor.wiki.lintModelPlaceholder')"
+          />
+        </div>
+      </div>
+
+      <!-- 每次 AI 巡检的调用预算 -->
+      <div v-if="wikiEnabled" class="setting-row">
+        <div class="setting-info">
+          <label>{{ $t('knowledgeEditor.wiki.lintBudgetLabel') }}</label>
+          <p class="desc">{{ $t('knowledgeEditor.wiki.lintBudgetTip') }}</p>
+        </div>
+        <div class="setting-control">
+          <t-input-number
+            :value="config.wikiLintAiMaxPages || 0"
+            :min="0"
+            :max="240"
+            :step="4"
+            theme="column"
+            style="width: 140px"
+            @change="handleWikiLintBudgetChange"
+          />
+        </div>
+      </div>
+
     </div>
   </div>
 </template>
@@ -111,6 +148,8 @@ interface ModelConfig {
   vllmModelId?: string
   wikiSynthesisModelId?: string
   wikiRepairModelId?: string
+  wikiLintModelId?: string
+  wikiLintAiMaxPages?: number
 }
 
 interface Props {
@@ -158,6 +197,22 @@ const handleWikiRepairModelChange = (modelId: string) => {
   emit('update:config', {
     ...props.config,
     wikiRepairModelId: modelId
+  })
+}
+
+const handleWikiLintModelChange = (modelId: string) => {
+  emit('update:config', {
+    ...props.config,
+    wikiLintModelId: modelId
+  })
+}
+
+// 0 means "use the built-in default", which is what an operator who has not
+// thought about the budget should get rather than a review that does nothing.
+const handleWikiLintBudgetChange = (value: number | undefined) => {
+  emit('update:config', {
+    ...props.config,
+    wikiLintAiMaxPages: Number(value) || 0
   })
 }
 

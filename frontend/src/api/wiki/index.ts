@@ -144,12 +144,16 @@ export interface WikiLintRun {
   rule_version?: string;
   progress: number;
   finding_count: number;
-  /** Model-spend telemetry: one call per scanned page, skipped pages cost
-   * nothing because their content had not changed since the last review. */
-  ai_pages_scanned: number;
-  ai_pages_skipped: number;
+  /** Model-spend telemetry. A "unit" is whatever a detector judges in one call:
+   * one page, a page and its source document, or a pair of pages. Skipped units
+   * cost nothing because none of their inputs had changed since the last
+   * review. */
+  ai_units_reviewed: number;
+  ai_units_skipped: number;
   ai_calls: number;
   ai_finding_count: number;
+  /** The detectors that contributed to this run, for its audit trail. */
+  ai_detectors?: string[] | null;
   error_message: string;
   created_at: string;
   started_at?: string;

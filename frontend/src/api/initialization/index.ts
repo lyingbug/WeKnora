@@ -163,6 +163,8 @@ export interface KBModelConfigRequest {
     }
     wikiSynthesisModelId?: string
     wikiRepairModelId?: string
+    wikiLintModelId?: string
+    wikiLintAiMaxPages?: number
 }
 
 export function updateKBConfig(kbId: string, config: KBModelConfigRequest): Promise<any> {

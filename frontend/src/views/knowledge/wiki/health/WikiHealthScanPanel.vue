@@ -38,6 +38,8 @@
       <p v-else-if="!busy && lastRunSummary" class="wiki-scan-panel__summary">{{ lastRunSummary }}</p>
     </div>
 
+    <p v-if="!busy && detectorSummary" class="wiki-scan-panel__detectors">{{ detectorSummary }}</p>
+
     <div v-if="busy" class="wiki-scan-panel__progress">
       <span class="wiki-scan-panel__phase">{{ phaseLabel }}</span>
       <t-progress :percentage="run?.progress || 0" theme="plump" size="small" />
@@ -142,6 +144,9 @@ const phaseLabel = computed(() => {
   return t('knowledgeEditor.wikiBrowser.scanPhaseStatic')
 })
 
+// After a run, what it actually spent. Reporting the skipped units matters as
+// much as the calls: it is the difference between "the review found nothing" and
+// "nothing had changed since the review last looked".
 const lastRunSummary = computed(() => {
   const run = props.run
   if (!run || run.status !== 'completed') return ''
@@ -149,13 +154,24 @@ const lastRunSummary = computed(() => {
   if (run.ai_calls > 0) {
     parts.push(t('knowledgeEditor.wikiBrowser.scanAiSpend', {
       calls: run.ai_calls,
-      pages: run.ai_pages_scanned,
+      units: run.ai_units_reviewed,
     }))
   }
-  if (run.ai_pages_skipped > 0) {
-    parts.push(t('knowledgeEditor.wikiBrowser.scanAiSkipped', { count: run.ai_pages_skipped }))
+  if (run.ai_units_skipped > 0) {
+    parts.push(t('knowledgeEditor.wikiBrowser.scanAiSkipped', { count: run.ai_units_skipped }))
   }
   return parts.join(' · ')
+})
+
+// The detectors a completed AI run drew on. Naming them is what tells a user
+// which classes of defect this scan was actually able to find.
+const detectorSummary = computed(() => {
+  const run = props.run
+  if (!run || run.status !== 'completed' || run.mode === 'static') return ''
+  const ids = run.ai_detectors || []
+  if (ids.length === 0) return ''
+  const labels = ids.map((id) => t(`knowledgeEditor.wikiBrowser.detector_${id.replace(/-/g, '_')}`))
+  return t('knowledgeEditor.wikiBrowser.scanDetectors', { detectors: labels.join('、') })
 })
 
 const failureMessage = computed(() => {
@@ -264,6 +280,13 @@ function emitRun() {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.wiki-scan-panel__detectors {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--td-text-color-placeholder);
 }
 
 .wiki-scan-panel__summary,
