@@ -2,13 +2,17 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // capWikiServiceStub records the pages handed to UpdatePage/CreatePage so
@@ -273,6 +277,117 @@ func TestReduceSlugUpdatesZeroCapsPreserveHistoricalBehavior(t *testing.T) {
 	require.Equal(t, "regenerated body", wikiSvc.updatedPages[0].Content)
 	require.Equal(t, types.StringArray{"c1", "c2"}, wikiSvc.updatedPages[0].ChunkRefs,
 		"MaxRefs = 0 leaves chunk_refs unbounded")
+}
+
+func TestReduceSlugUpdatesContentCapDoesNotAbsorbNewAliases(t *testing.T) {
+	page := existingHubPage(strings.Repeat("x", 4096), "c1")
+	page.Aliases = types.StringArray{"known-alias"}
+	wikiSvc := &capWikiServiceStub{existing: page}
+	model := &countingChatModel{response: "SUMMARY: unused\nunused"}
+	svc := &wikiIngestService{
+		wikiService:  wikiSvc,
+		knowledgeSvc: &capKnowledgeServiceStub{},
+		chunkRepo:    &capChunkRepoStub{contents: map[string]string{"c2": "chunk two"}},
+	}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	add := capTestAddition("new-kid", "c2")
+	add.Item.Aliases = []string{"brand-new-alias"}
+
+	_, _, _, err := svc.reduceSlugUpdates(
+		ctx, model, "kb-1", "hub-page",
+		[]SlugUpdate{add},
+		1, capTestBatchCtx(1024, 0), nil,
+	)
+	require.NoError(t, err)
+	require.Zero(t, model.calls)
+	require.Len(t, wikiSvc.updatedPages, 1)
+	require.Equal(t, types.StringArray{"known-alias"}, wikiSvc.updatedPages[0].Aliases,
+		"a capped page must not absorb new aliases: UpdatePage treats an alias change "+
+			"as a real edit and would route the write back onto the versioned path")
+}
+
+func TestReduceSlugUpdatesBelowCapAbsorbsNewAliases(t *testing.T) {
+	page := existingHubPage(strings.Repeat("x", 512), "c1")
+	page.Aliases = types.StringArray{"known-alias"}
+	wikiSvc := &capWikiServiceStub{existing: page}
+	model := &countingChatModel{response: "SUMMARY: refreshed\nregenerated body"}
+	svc := &wikiIngestService{
+		wikiService:  wikiSvc,
+		knowledgeSvc: &capKnowledgeServiceStub{},
+		chunkRepo:    &capChunkRepoStub{contents: map[string]string{"c2": "chunk two"}},
+	}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	add := capTestAddition("new-kid", "c2")
+	add.Item.Aliases = []string{"brand-new-alias"}
+
+	_, _, _, err := svc.reduceSlugUpdates(
+		ctx, model, "kb-1", "hub-page",
+		[]SlugUpdate{add},
+		1, capTestBatchCtx(1024, 0), nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, model.calls)
+	require.Len(t, wikiSvc.updatedPages, 1)
+	require.Equal(t, types.StringArray{"known-alias", "brand-new-alias"},
+		wikiSvc.updatedPages[0].Aliases, "uncapped pages keep absorbing aliases")
+}
+
+// TestReduceSlugUpdatesContentCapWritesThroughMetaPath exercises the capped
+// path against the real wiki page service so the end-to-end promise is
+// verified rather than the stub's view of it: a capped add-only batch must
+// land as a bookkeeping-only write — no version bump and no revision snapshot
+// (which would copy the whole unchanged body into wiki_page_revisions).
+func TestReduceSlugUpdatesContentCapWritesThroughMetaPath(t *testing.T) {
+	db, err := gorm.Open(
+		sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())),
+		&gorm.Config{},
+	)
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&types.WikiFolder{}, &types.WikiPage{}, &types.WikiPageRevision{}))
+	wikiSvc := NewWikiPageService(repository.NewWikiPageRepository(db), nil, nil, nil, nil)
+
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+	body := strings.Repeat("x", 4096)
+	created, err := wikiSvc.CreatePage(ctx, &types.WikiPage{
+		KnowledgeBaseID: "kb-1", TenantID: 1, Slug: "hub-page",
+		Title: "Hub Page", PageType: types.WikiPageTypeEntity,
+		Content: body, Aliases: types.StringArray{"known-alias"},
+		SourceRefs: types.StringArray{"old-kid|Old Report"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, created.Version)
+
+	model := &countingChatModel{response: "SUMMARY: unused\nunused"}
+	svc := &wikiIngestService{
+		wikiService:  wikiSvc,
+		knowledgeSvc: &capKnowledgeServiceStub{},
+		chunkRepo:    &capChunkRepoStub{contents: map[string]string{"c2": "chunk two"}},
+	}
+
+	add := capTestAddition("new-kid", "c2")
+	add.Item.Aliases = []string{"brand-new-alias"}
+
+	_, _, _, err = svc.reduceSlugUpdates(
+		ctx, model, "kb-1", "hub-page",
+		[]SlugUpdate{add},
+		1, capTestBatchCtx(1024, 0), nil,
+	)
+	require.NoError(t, err)
+	require.Zero(t, model.calls)
+
+	stored, err := wikiSvc.GetPageBySlug(ctx, "kb-1", "hub-page")
+	require.NoError(t, err)
+	require.Equal(t, 1, stored.Version, "capped bookkeeping write must not bump the version")
+	require.Equal(t, body, stored.Content)
+	require.Contains(t, []string(stored.SourceRefs), "new-kid|New Report")
+	require.Equal(t, types.StringArray{"c2"}, stored.ChunkRefs)
+
+	revisions, err := wikiSvc.ListRevisions(ctx, "kb-1", "hub-page", 50, 0)
+	require.NoError(t, err)
+	require.Zero(t, revisions.Total,
+		"capped bookkeeping write must not snapshot the unchanged body into wiki_page_revisions")
 }
 
 func TestCapRecentStringArray(t *testing.T) {

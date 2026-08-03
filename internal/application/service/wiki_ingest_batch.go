@@ -1896,6 +1896,28 @@ func (s *wikiIngestService) reduceSlugUpdates(
 		page.SourceRefs = newRefs
 	}
 
+	// Hub-page write-amplification guard: when a page is already at/over the
+	// configured content cap and this batch only ADDS information (no
+	// retractions), skip the LLM re-synthesis and the content rewrite. The
+	// page keeps its existing body, so UpdatePage detects "content unchanged"
+	// and routes to the content-preserving UpdateMeta path — the expensive
+	// fulltext-GIN reindex is never triggered. Only the bookkeeping refs
+	// below are refreshed. Retractions are never capped: they shrink the
+	// page and must regenerate it.
+	//
+	// Resolved before the addition merge below because it also decides which
+	// page fields may be mutated: UpdatePage classifies a write as a real
+	// edit when ANY user-visible field differs, aliases included. Absorbing a
+	// new alias would therefore drag the capped write back onto the versioned
+	// UpdateWithRevision path — bumping `version` and snapshotting the whole
+	// (unchanged) body into wiki_page_revisions, which is exactly the write
+	// amplification the cap exists to avoid. A capped page freezes its
+	// user-visible identity along with its body; the new alias stays
+	// retrievable through its own source document.
+	contentCapped := batchCtx != nil && batchCtx.MaxPageContentBytes > 0 && exists &&
+		len(retracts) == 0 && len(additions) > 0 &&
+		len(page.Content) >= batchCtx.MaxPageContentBytes
+
 	if len(additions) > 0 {
 		language = additions[0].Language
 
@@ -1943,8 +1965,10 @@ func (s *wikiIngestService) reduceSlugUpdates(
 			}
 			docTitles = appendUnique(docTitles, add.DocTitle)
 
-			for _, alias := range add.Item.Aliases {
-				page.Aliases = appendUnique(page.Aliases, alias)
+			if !contentCapped {
+				for _, alias := range add.Item.Aliases {
+					page.Aliases = appendUnique(page.Aliases, alias)
+				}
 			}
 			page.SourceRefs = appendUnique(page.SourceRefs, add.SourceRef)
 
@@ -1965,18 +1989,6 @@ func (s *wikiIngestService) reduceSlugUpdates(
 			sharedSourceContexts.WriteString(sourceContextByRef[key])
 		}
 	}
-
-	// Hub-page write-amplification guard: when a page is already at/over the
-	// configured content cap and this batch only ADDS information (no
-	// retractions), skip the LLM re-synthesis and the content rewrite. The
-	// page keeps its existing body, so UpdatePage detects "content unchanged"
-	// and routes to the content-preserving UpdateMeta path — the expensive
-	// fulltext-GIN reindex is never triggered. Only the bookkeeping refs
-	// below are refreshed. Retractions are never capped: they shrink the
-	// page and must regenerate it.
-	contentCapped := batchCtx != nil && batchCtx.MaxPageContentBytes > 0 && exists &&
-		len(retracts) == 0 && len(additions) > 0 &&
-		len(page.Content) >= batchCtx.MaxPageContentBytes
 
 	if (len(additions) > 0 || len(retracts) > 0) && !contentCapped {
 		titles := batchCtx.SlugTitleMany(ctx, []string(page.OutLinks))
