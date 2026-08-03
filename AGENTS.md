@@ -4,11 +4,12 @@
 
 - This checkout is the fork `lyingbug/WeKnora` (`origin`); `upstream` is `Tencent/WeKnora`.
 - Commits must be authored as `lyingbug <[email protected]>` (set in repo-local git config: `git config --local user.name lyingbug` / `user.email 11257935+[email protected]`). Re-assert this if a fresh run resets it to the platform default.
-- The Cursor-injected token can push to `origin` (the fork) but has NO write access to `Tencent/WeKnora`, so `ManagePullRequest` and `gh` cannot open PRs on upstream.
-- To open a PR against `Tencent/WeKnora`: push the branch to `origin`, then create the PR from the fork via the GitHub API using a `lyingbug` Personal Access Token stored as the `LYINGBUG_GITHUB_TOKEN` secret (needs `public_repo` scope). Example:
+- A `lyingbug` Personal Access Token (scopes `repo`, `read:org`, `workflow`) is provided via the `GH_TOKEN` secret. `gh` reads `GH_TOKEN` automatically and prioritizes it over the Cursor-injected `hosts.yml` token, so in a fresh session `gh` operates as `lyingbug` with no `gh auth login` step. (Note: per agent policy, use `gh` only for read operations; create PRs via the GitHub API with `curl`.)
+- Git transport still uses the Cursor-injected token via a global `insteadOf` rewrite (fine for pushing to the `origin` fork). Pushing changes under `.github/workflows/**` needs the `workflow`-scoped token, so route those pushes through `$GH_TOKEN` instead.
+- The Cursor-injected token has NO write access to `Tencent/WeKnora`, so `ManagePullRequest` cannot open PRs on upstream. To open a PR against `Tencent/WeKnora`: push the branch to `origin`, then create the PR from the fork via the GitHub API using `$GH_TOKEN`:
   ```bash
   curl -sS -X POST \
-    -H "Authorization: Bearer $LYINGBUG_GITHUB_TOKEN" \
+    -H "Authorization: Bearer $GH_TOKEN" \
     -H "Accept: application/vnd.github+json" \
     https://api.github.com/repos/Tencent/WeKnora/pulls \
     -d '{"title":"<title>","head":"lyingbug:<branch>","base":"main","body":"<body>"}'
