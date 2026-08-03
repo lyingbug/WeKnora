@@ -129,13 +129,31 @@ export interface WikiIssueListResponse {
   page_size: number;
 }
 
+/** What a health scan is allowed to do. `static` runs the deterministic rules
+ * (free), `ai` runs the bounded model review, `full` runs both. */
+export type WikiLintMode = 'static' | 'ai' | 'full';
+
 export interface WikiLintRun {
   id: string;
   knowledge_base_id: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | string;
+  mode: WikiLintMode | string;
+  scope: 'kb' | 'page' | string;
+  scope_key: string;
+  target_slugs?: string[] | null;
   rule_version?: string;
   progress: number;
   finding_count: number;
+  /** Model-spend telemetry. A "unit" is whatever a detector judges in one call:
+   * one page, a page and its source document, or a pair of pages. Skipped units
+   * cost nothing because none of their inputs had changed since the last
+   * review. */
+  ai_units_reviewed: number;
+  ai_units_skipped: number;
+  ai_calls: number;
+  ai_finding_count: number;
+  /** The detectors that contributed to this run, for its audit trail. */
+  ai_detectors?: string[] | null;
   error_message: string;
   created_at: string;
   started_at?: string;
@@ -418,12 +436,23 @@ export function updateWikiIssueStatus(kbId: string, issueId: string, status: str
   return put(`/api/v1/knowledgebase/${kbId}/wiki/issues/${issueId}/status`, { status, summary });
 }
 
-export function startWikiLintRun(kbId: string) {
-  return post(`/api/v1/knowledgebase/${kbId}/wiki/lint-runs`, {});
+/** Starts a whole-wiki health scan. Omitting the mode gets the free
+ * deterministic rules, never model calls. */
+export function startWikiLintRun(kbId: string, mode: WikiLintMode = 'static') {
+  return post(`/api/v1/knowledgebase/${kbId}/wiki/lint-runs`, { mode });
 }
 
-export function getWikiLintRun(kbId: string, runId = 'latest') {
-  return get(`/api/v1/knowledgebase/${kbId}/wiki/lint-runs/${runId}`);
+/** Starts a health check scoped to a single page. It uses the same durable run
+ * machinery as a full scan, so the caller polls it the same way. */
+export function startWikiPageCheck(kbId: string, slug: string, mode: WikiLintMode = 'full') {
+  return post(`/api/v1/knowledgebase/${kbId}/wiki/page-checks/${slug}`, { mode });
+}
+
+/** Reads a run by id. `latest` resolves to the newest whole-wiki scan, or —
+ * with a slug — to the newest check of that page. */
+export function getWikiLintRun(kbId: string, runId = 'latest', slug?: string) {
+  const query = slug ? `?slug=${encodeURIComponent(slug)}` : '';
+  return get(`/api/v1/knowledgebase/${kbId}/wiki/lint-runs/${runId}${query}`);
 }
 
 export function startWikiIssueRepair(kbId: string, issueId: string, mode = 'auto') {

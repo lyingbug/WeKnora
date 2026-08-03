@@ -27,6 +27,7 @@ aliases: [Home, Index, wiki首页]
 | [内置MCP服务管理](核心功能/内置MCP服务管理.md) | 内置 MCP 服务的系统级管理 |
 | [内置模型管理](核心功能/内置模型管理.md) | 内置模型的系统级管理 |
 | [Agent技能系统](核心功能/Agent技能系统.md) | Agent Skills 扩展机制与预加载技能 |
+| [Wiki构建与质量巡检](核心功能/Wiki构建与质量巡检.md) | Wiki 页面的生成链路，以及规则巡检 + AI 内容巡检的检测、修复与验证闭环 |
 
 ## 集成与扩展
 
@@ -88,6 +89,7 @@ graph TB
     核心功能 --> BuiltinMCP[内置MCP服务管理]
     核心功能 --> BuiltinModel[内置模型管理]
     核心功能 --> Skills[Agent技能系统]
+    核心功能 --> WikiLint[Wiki构建与质量巡检]
 
     集成扩展 --> IM[IM集成开发]
     集成扩展 --> DS[数据源导入开发]

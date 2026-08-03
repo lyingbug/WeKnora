@@ -1103,12 +1103,38 @@ CREATE TABLE IF NOT EXISTS wiki_lint_runs (
     tenant_id INTEGER NOT NULL,
     knowledge_base_id VARCHAR(36) NOT NULL,
     status VARCHAR(20) NOT NULL,
+    mode VARCHAR(16) NOT NULL DEFAULT 'static',
+    scope VARCHAR(16) NOT NULL DEFAULT 'kb',
+    scope_key VARCHAR(280) NOT NULL DEFAULT 'kb',
+    target_slugs TEXT DEFAULT '[]',
     rule_version VARCHAR(32) NOT NULL DEFAULT '',
     progress INTEGER NOT NULL DEFAULT 0,
     finding_count INTEGER NOT NULL DEFAULT 0,
+    ai_units_reviewed INTEGER NOT NULL DEFAULT 0,
+    ai_units_skipped INTEGER NOT NULL DEFAULT 0,
+    ai_calls INTEGER NOT NULL DEFAULT 0,
+    ai_finding_count INTEGER NOT NULL DEFAULT 0,
+    ai_detectors TEXT DEFAULT '[]',
     error_message TEXT NOT NULL DEFAULT '',
     started_at DATETIME,
     finished_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS wiki_review_ledger (
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    knowledge_base_id VARCHAR(36) NOT NULL,
+    detector_id VARCHAR(48) NOT NULL,
+    unit_key VARCHAR(160) NOT NULL,
+    unit_hash VARCHAR(64) NOT NULL DEFAULT '',
+    reviewer_version VARCHAR(32) NOT NULL DEFAULT '',
+    primary_slug VARCHAR(255) NOT NULL DEFAULT '',
+    finding_count INTEGER NOT NULL DEFAULT 0,
+    run_id VARCHAR(36) NOT NULL DEFAULT '',
+    model_id VARCHAR(36) NOT NULL DEFAULT '',
+    reviewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -1135,8 +1161,13 @@ CREATE TABLE IF NOT EXISTS wiki_repair_attempts (
 
 CREATE INDEX IF NOT EXISTS idx_wiki_lint_runs_kb_created
     ON wiki_lint_runs(knowledge_base_id, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_lint_runs_one_active
-    ON wiki_lint_runs(knowledge_base_id) WHERE status IN ('queued', 'running');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_lint_runs_one_active_scope
+    ON wiki_lint_runs(knowledge_base_id, scope_key) WHERE status IN ('queued', 'running');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_review_ledger_unit
+    ON wiki_review_ledger(knowledge_base_id, detector_id, unit_key);
+CREATE INDEX IF NOT EXISTS idx_wiki_review_ledger_slug
+    ON wiki_review_ledger(knowledge_base_id, primary_slug);
+CREATE INDEX IF NOT EXISTS idx_wiki_review_ledger_run ON wiki_review_ledger(run_id);
 CREATE INDEX IF NOT EXISTS idx_wiki_repair_attempts_issue_created
     ON wiki_repair_attempts(issue_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wiki_repair_attempts_active

@@ -743,6 +743,8 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       embeddingModelId: '',
       wikiSynthesisModelId: '',
       wikiRepairModelId: '',
+      wikiLintModelId: '',
+      wikiLintAiMaxPages: 0,
     },
     chunkingConfig: {
       chunkSize: 512,
@@ -866,7 +868,9 @@ const loadKBData = async (kbIdOverride?: string) => {
         llmModelId: kb.summary_model_id || '',
         embeddingModelId: kb.embedding_model_id || '',
         wikiSynthesisModelId: kb.wiki_config?.synthesis_model_id || '',
-        wikiRepairModelId: kb.wiki_config?.repair_model_id || ''
+        wikiRepairModelId: kb.wiki_config?.repair_model_id || '',
+        wikiLintModelId: kb.wiki_config?.lint_model_id || '',
+        wikiLintAiMaxPages: kb.wiki_config?.lint_ai_max_pages || 0
       },
       chunkingConfig: {
         chunkSize: kb.chunking_config?.chunk_size || 512,
@@ -1281,6 +1285,8 @@ const buildSubmitData = () => {
     data.wiki_config = {
       synthesis_model_id: formData.value.modelConfig?.wikiSynthesisModelId || '',
       repair_model_id: formData.value.modelConfig?.wikiRepairModelId || '',
+      lint_model_id: formData.value.modelConfig?.wikiLintModelId || '',
+      lint_ai_max_pages: formData.value.modelConfig?.wikiLintAiMaxPages || 0,
       max_pages_per_ingest: formData.value.wikiConfig?.maxPagesPerIngest || 0,
       extraction_granularity: formData.value.wikiConfig?.extractionGranularity || 'standard',
       content_instructions: formData.value.wikiConfig?.contentInstructions || '',
@@ -1387,6 +1393,8 @@ const doSubmit = async () => {
         updateConfig.wiki_config = {
           synthesis_model_id: formData.value.modelConfig?.wikiSynthesisModelId || '',
           repair_model_id: formData.value.modelConfig?.wikiRepairModelId || '',
+          lint_model_id: formData.value.modelConfig?.wikiLintModelId || '',
+          lint_ai_max_pages: formData.value.modelConfig?.wikiLintAiMaxPages || 0,
           max_pages_per_ingest: formData.value.wikiConfig.maxPagesPerIngest || 0,
           extraction_granularity: formData.value.wikiConfig.extractionGranularity || 'standard',
           content_instructions: formData.value.wikiConfig.contentInstructions || '',
@@ -1449,6 +1457,8 @@ const doSubmit = async () => {
         },
         wikiSynthesisModelId: formData.value.modelConfig?.wikiSynthesisModelId || '',
         wikiRepairModelId: formData.value.modelConfig?.wikiRepairModelId || '',
+        wikiLintModelId: formData.value.modelConfig?.wikiLintModelId || '',
+        wikiLintAiMaxPages: formData.value.modelConfig?.wikiLintAiMaxPages || 0,
       }
 
       await updateKBConfig(kbId, config)

@@ -991,8 +991,8 @@ func (h *WikiPageHandler) UpdateIssueStatus(c *gin.Context) {
 	// Only the transitions a client may request. repairing and verifying are
 	// absent because they are owned by the repair lifecycle, not by callers.
 	validStatuses := map[string]bool{
-		types.WikiIssueStatusOpen:    true,
-		types.WikiIssueStatusIgnored: true,
+		types.WikiIssueStatusOpen:     true,
+		types.WikiIssueStatusIgnored:  true,
 		types.WikiIssueStatusResolved: true,
 	}
 	if !validStatuses[req.Status] {
@@ -1016,20 +1016,67 @@ func (h *WikiPageHandler) UpdateIssueStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Issue status updated successfully"})
 }
 
-// StartLintRun queues a durable full-KB lint scan.
+// StartLintRun queues a durable lint scan.
+//
+// The request body chooses what the run is allowed to do: `mode` selects the
+// static rules, the AI review, or both, and `slugs` narrows it to specific
+// pages. Both default to the cheapest option — static rules over the whole
+// wiki — so a client that sends nothing cannot spend model calls.
 func (h *WikiPageHandler) StartLintRun(c *gin.Context) {
 	kbID, tenantID, err := h.validateWikiKB(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	run, err := h.lintService.StartRun(c.Request.Context(), tenantID, kbID)
+	var req struct {
+		Mode  string   `json:"mode"`
+		Slugs []string `json:"slugs"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	h.startLintRun(c, tenantID, kbID, service.WikiLintRunRequest{Mode: req.Mode, Slugs: req.Slugs})
+}
+
+// CheckPage queues a lint run scoped to one page.
+//
+// This is the same durable run machinery as a full scan, just narrowed, so a
+// single-page check reports progress, persists findings, and reconciles its own
+// page through exactly one code path rather than a parallel implementation.
+func (h *WikiPageHandler) CheckPage(c *gin.Context) {
+	kbID, tenantID, err := h.validateWikiKB(c)
 	if err != nil {
-		if stderrors.Is(err, repository.ErrWikiIssueConflict) {
-			c.JSON(http.StatusConflict, gin.H{"error": "a wiki lint run is already active"})
-			return
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	slug := getSlugParam(c)
+	if slug == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "page slug is required"})
+		return
+	}
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	h.startLintRun(c, tenantID, kbID, service.WikiLintRunRequest{Mode: req.Mode, Slugs: []string{slug}})
+}
+
+// startLintRun creates and enqueues a run, mapping the service's refusals onto
+// status codes. Shared by the full-scan and single-page entry points so both
+// enforce the same budget and conflict rules.
+func (h *WikiPageHandler) startLintRun(
+	c *gin.Context, tenantID uint64, kbID string, req service.WikiLintRunRequest,
+) {
+	run, err := h.lintService.StartRun(c.Request.Context(), tenantID, kbID, req)
+	if err != nil {
+		switch {
+		case stderrors.Is(err, repository.ErrWikiIssueConflict):
+			c.JSON(http.StatusConflict, gin.H{"error": "a wiki lint run is already active for this scope"})
+		case stderrors.Is(err, service.ErrWikiAIReviewUnavailable):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "wiki_lint_model_missing"})
+		case stderrors.Is(err, service.ErrWikiLintTooManyPages):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	payload, _ := json.Marshal(service.WikiLintTaskPayload{TenantID: tenantID, KnowledgeBaseID: kbID, RunID: run.ID})
@@ -1054,9 +1101,14 @@ func (h *WikiPageHandler) GetLintRun(c *gin.Context) {
 	}
 	runID := strings.TrimSpace(c.Param("run_id"))
 	var run *types.WikiLintRun
-	if runID == "latest" {
-		run, err = h.lintService.GetLatestRun(c.Request.Context(), kbID)
-	} else {
+	switch {
+	case runID == "latest" && strings.TrimSpace(c.Query("slug")) != "":
+		run, err = h.lintService.GetLatestPageRun(c.Request.Context(), kbID, strings.TrimSpace(c.Query("slug")))
+	case runID == "latest":
+		// Restricted to full-wiki scans so a single-page check never overwrites
+		// the reported state of the last whole-wiki scan.
+		run, err = h.lintService.GetLatestRun(c.Request.Context(), kbID, types.WikiLintScopeKB)
+	default:
 		run, err = h.lintService.GetRun(c.Request.Context(), kbID, runID)
 	}
 	if err != nil {

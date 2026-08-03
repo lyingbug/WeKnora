@@ -324,6 +324,9 @@ func RegisterWikiPageRoutes(r *gin.RouterGroup, wikiHandler *handler.WikiPageHan
 		wikiRead.GET("/lint", g.Viewer(), g.KBAccessRead("kb_id"), wikiHandler.Lint)
 		wiki.POST("/lint-runs", g.OwnedWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.StartLintRun)
 		wikiRead.GET("/lint-runs/:run_id", g.Viewer(), g.KBAccessRead("kb_id"), wikiHandler.GetLintRun)
+		// Page-scoped check. The slug is a catch-all for the same reason
+		// /pages/*slug is: wiki slugs contain path separators.
+		wiki.POST("/page-checks/*slug", g.OwnedWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.CheckPage)
 		wiki.POST("/auto-fix", g.OwnedWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.AutoFix)
 
 		// Issues

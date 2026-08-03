@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -174,7 +175,7 @@ func TestExpireStaleLintRunsFreesTheActiveSlot(t *testing.T) {
 	assert.Equal(t, int64(1), retired)
 
 	require.NoError(t, repo.CreateLintRun(ctx, next))
-	latest, err := repo.GetLatestLintRun(ctx, kbID)
+	latest, err := repo.GetLatestLintRun(ctx, kbID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "run-next", latest.ID)
 
@@ -182,4 +183,216 @@ func TestExpireStaleLintRunsFreesTheActiveSlot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "failed", reaped.Status)
 	assert.Equal(t, "expired", reaped.ErrorMessage)
+}
+
+// TestLintRunActiveSlotIsPerScope covers the reason the slot moved from the
+// knowledge base to the scope key: a user checking one page must not be told
+// the whole wiki is busy, and the latest full-wiki scan must stay reportable
+// even after several page checks ran on top of it.
+func TestLintRunActiveSlotIsPerScope(t *testing.T) {
+	db := setupWikiPagesTestDB(t)
+	repo := NewWikiPageRepository(db)
+	ctx := context.Background()
+	kbID := "kb-scoped-runs"
+
+	fullScan := &types.WikiLintRun{
+		ID: "run-kb", TenantID: 1, KnowledgeBaseID: kbID, Status: "running",
+		Mode: types.WikiLintModeStatic, Scope: types.WikiLintScopeKB, ScopeKey: types.WikiLintScopeKB,
+	}
+	require.NoError(t, repo.CreateLintRun(ctx, fullScan))
+
+	pageCheck := &types.WikiLintRun{
+		ID: "run-page", TenantID: 1, KnowledgeBaseID: kbID, Status: "queued",
+		Mode: types.WikiLintModeFull, Scope: types.WikiLintScopePage,
+		ScopeKey: "page:concept/rag", TargetSlugs: types.StringArray{"concept/rag"},
+	}
+	require.NoError(t, repo.CreateLintRun(ctx, pageCheck),
+		"a page check must not contend with a full-wiki scan")
+
+	assert.ErrorIs(t, repo.CreateLintRun(ctx, &types.WikiLintRun{
+		ID: "run-page-dup", TenantID: 1, KnowledgeBaseID: kbID, Status: "queued",
+		Scope: types.WikiLintScopePage, ScopeKey: "page:concept/rag",
+	}), ErrWikiIssueConflict, "two checks of the same page still collapse into one")
+
+	latestKB, err := repo.GetLatestLintRun(ctx, kbID, types.WikiLintScopeKB)
+	require.NoError(t, err)
+	assert.Equal(t, "run-kb", latestKB.ID,
+		"a page check must not become the reported state of the last full scan")
+
+	latestPage, err := repo.GetLatestLintRun(ctx, kbID, "page:concept/rag")
+	require.NoError(t, err)
+	assert.Equal(t, "run-page", latestPage.ID)
+}
+
+// TestListPagesPendingReviewSpendsTheBudgetWhereItCanFindSomething exercises the
+// candidate query every detector's cost profile depends on: never-reviewed pages
+// first, pages a detector has already judged since their last write excluded, and
+// the page-type / source-document filters that stop a detector paying for pages
+// its defect class cannot apply to.
+func TestListPagesPendingReviewSpendsTheBudgetWhereItCanFindSomething(t *testing.T) {
+	db := setupWikiPagesTestDB(t)
+	repo := NewWikiPageRepository(db)
+	ctx := context.Background()
+	kbID := "kb-pending-review"
+	now := time.Now()
+
+	seed := func(slug, pageType string, updatedAt time.Time, sourceRefs types.StringArray) *types.WikiPage {
+		page := &types.WikiPage{
+			ID: "page-" + slug, TenantID: 1, KnowledgeBaseID: kbID, Slug: slug,
+			Title: slug, PageType: pageType, Status: types.WikiPageStatusPublished,
+			Version: 1, Content: "body", SourceRefs: sourceRefs,
+			CreatedAt: now, UpdatedAt: updatedAt,
+		}
+		require.NoError(t, repo.Create(ctx, page))
+		// Create() stamps its own timestamps, so the ordering column is set
+		// explicitly afterwards.
+		require.NoError(t, db.Model(&types.WikiPage{}).Where("id = ?", page.ID).
+			UpdateColumn("updated_at", updatedAt).Error)
+		return page
+	}
+
+	const detectorID = "page-content"
+	const version = "test-v1"
+
+	oldest := seed("entity/oldest", types.WikiPageTypeEntity, now.Add(-3*time.Hour), types.StringArray{"doc-1"})
+	newest := seed("entity/newest", types.WikiPageTypeEntity, now.Add(-time.Minute), nil)
+	seed("index", types.WikiPageTypeIndex, now, types.StringArray{"doc-1"})
+	summary := seed("summary/doc", types.WikiPageTypeSummary, now.Add(-2*time.Hour), types.StringArray{"doc-2"})
+
+	// The newest page was already judged after its last write, so it must drop
+	// out even though it would otherwise sort first.
+	require.NoError(t, repo.UpsertReviewLedger(ctx, &types.WikiReviewLedger{
+		ID: "ledger-1", TenantID: 1, KnowledgeBaseID: kbID, DetectorID: detectorID,
+		UnitKey: newest.ID, UnitHash: "hash-1", ReviewerVersion: version,
+		PrimarySlug: newest.Slug, ReviewedAt: now,
+	}))
+
+	pages, err := repo.ListPagesPendingReview(ctx, types.WikiPendingReviewQuery{
+		KnowledgeBaseID: kbID, DetectorID: detectorID, ReviewerVersion: version, Limit: 10,
+	})
+	require.NoError(t, err)
+	slugs := make([]string, 0, len(pages))
+	for _, page := range pages {
+		slugs = append(slugs, page.Slug)
+	}
+	assert.Equal(t, []string{summary.Slug, oldest.Slug}, slugs,
+		"the index page is excluded, the already-judged page drops out, and the rest come newest first")
+
+	// A different detector has judged nothing, so the same pages are pending for
+	// it — the ledger is per detector, not per page.
+	pages, err = repo.ListPagesPendingReview(ctx, types.WikiPendingReviewQuery{
+		KnowledgeBaseID: kbID, DetectorID: "duplicate-pages", ReviewerVersion: version,
+		PageTypes: []string{types.WikiPageTypeEntity, types.WikiPageTypeConcept}, Limit: 10,
+	})
+	require.NoError(t, err)
+	assert.Len(t, pages, 2, "the page-type filter keeps the summary page out of pair detection")
+
+	// Grounding has nothing to compare against without a source document.
+	pages, err = repo.ListPagesPendingReview(ctx, types.WikiPendingReviewQuery{
+		KnowledgeBaseID: kbID, DetectorID: "source-grounding", ReviewerVersion: version,
+		RequireSourceRefs: true, Limit: 10,
+	})
+	require.NoError(t, err)
+	for _, page := range pages {
+		assert.NotEmpty(t, page.SourceRefs, "page %s has no source document to check against", page.Slug)
+	}
+	assert.Len(t, pages, 2)
+
+	assert.Empty(t, mustPendingReview(t, repo, types.WikiPendingReviewQuery{
+		KnowledgeBaseID: kbID, DetectorID: detectorID, ReviewerVersion: version, Limit: 0,
+	}), "a zero budget asks for nothing")
+}
+
+func mustPendingReview(
+	t *testing.T, repo interfaces.WikiPageRepository, query types.WikiPendingReviewQuery,
+) []*types.WikiPage {
+	t.Helper()
+	pages, err := repo.ListPagesPendingReview(context.Background(), query)
+	require.NoError(t, err)
+	return pages
+}
+
+// TestReviewLedgerIsKeyedByDetectorAndUnit covers why the ledger is not keyed by
+// page: the review units are not all pages, and two detectors judging the same
+// page are two independent questions.
+func TestReviewLedgerIsKeyedByDetectorAndUnit(t *testing.T) {
+	db := setupWikiPagesTestDB(t)
+	repo := NewWikiPageRepository(db)
+	ctx := context.Background()
+	kbID := "kb-ledger"
+	now := time.Now()
+
+	write := func(id, detectorID, unitKey, hash string) {
+		require.NoError(t, repo.UpsertReviewLedger(ctx, &types.WikiReviewLedger{
+			ID: id, TenantID: 1, KnowledgeBaseID: kbID, DetectorID: detectorID,
+			UnitKey: unitKey, UnitHash: hash, ReviewerVersion: "v1",
+			PrimarySlug: "entity/a", ReviewedAt: now,
+		}))
+	}
+	write("l1", "page-content", "page-a", "hash-a")
+	write("l2", "source-grounding", "page-a", "hash-b")
+	write("l3", "duplicate-pages", "pair:abcdef", "hash-c")
+
+	entries, err := repo.ListReviewLedger(ctx, kbID, "page-content", []string{"page-a", "pair:abcdef"})
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "another detector's judgement of the same page is not this one's")
+	assert.Equal(t, "hash-a", entries["page-a"].UnitHash)
+
+	// Re-judging the same unit updates in place rather than accumulating rows.
+	write("l4", "page-content", "page-a", "hash-a2")
+	entries, err = repo.ListReviewLedger(ctx, kbID, "page-content", []string{"page-a"})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "hash-a2", entries["page-a"].UnitHash)
+	assert.Equal(t, "l1", entries["page-a"].ID, "the original row survives the upsert")
+
+	empty, err := repo.ListReviewLedger(ctx, kbID, "page-content", nil)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+}
+
+// TestResolveMissingLintIssuesRespectsSourceAndPageScope is the invariant that
+// keeps two detector families from erasing each other's findings, and keeps a
+// single-page check from closing issues on pages it never read.
+func TestResolveMissingLintIssuesRespectsSourceAndPageScope(t *testing.T) {
+	db := setupWikiPagesTestDB(t)
+	repo := NewWikiPageRepository(db)
+	ctx := context.Background()
+	kbID := "kb-reconcile-scope"
+	seenAt := time.Now()
+
+	seed := func(fingerprint, slug, source string) string {
+		issue := makeLintIssue(kbID, fingerprint, seenAt)
+		issue.Slug = slug
+		issue.Source = source
+		require.NoError(t, repo.UpsertLintIssue(ctx, issue))
+		return issue.ID
+	}
+	staticOnPage := seed("fp-static-a", "concept/a", types.WikiIssueSourceLint)
+	aiOnPage := seed("fp-ai-a", "concept/a", types.WikiIssueSourceAI)
+	staticElsewhere := seed("fp-static-b", "concept/b", types.WikiIssueSourceLint)
+
+	// A page-scoped static run of concept/a reported nothing.
+	require.NoError(t, repo.ResolveMissingLintIssues(ctx, types.WikiLintReconcileScope{
+		KnowledgeBaseID: kbID, RunID: "run-page-a",
+		Sources: []string{types.WikiIssueSourceLint}, Slugs: []string{"concept/a"},
+	}, seenAt))
+
+	status := func(id string) string {
+		issue, err := repo.GetIssue(ctx, kbID, id)
+		require.NoError(t, err)
+		return issue.Status
+	}
+	assert.Equal(t, types.WikiIssueStatusResolved, status(staticOnPage))
+	assert.Equal(t, types.WikiIssueStatusOpen, status(aiOnPage),
+		"a static run may not close a finding only the AI review can detect")
+	assert.Equal(t, types.WikiIssueStatusOpen, status(staticElsewhere),
+		"a page-scoped run may only speak for its own pages")
+
+	// An empty (but non-nil) page set means the run covered no pages at all.
+	require.NoError(t, repo.ResolveMissingLintIssues(ctx, types.WikiLintReconcileScope{
+		KnowledgeBaseID: kbID, RunID: "run-empty",
+		Sources: []string{types.WikiIssueSourceAI}, Slugs: []string{},
+	}, seenAt))
+	assert.Equal(t, types.WikiIssueStatusOpen, status(aiOnPage))
 }

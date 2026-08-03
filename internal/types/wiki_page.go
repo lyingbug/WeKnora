@@ -503,6 +503,20 @@ type WikiConfig struct {
 	// RepairModelID is the LLM model ID used by the built-in wiki fixer agent when
 	// repairing issues on this knowledge base. Required for agent-mode repairs.
 	RepairModelID string `yaml:"repair_model_id" json:"repair_model_id"`
+	// LintModelID is the LLM used by the AI health review. It is separate from
+	// RepairModelID so a KB can review with a small, cheap model and repair
+	// with a stronger one; empty falls back to RepairModelID.
+	LintModelID string `yaml:"lint_model_id" json:"lint_model_id,omitempty"`
+	// LintAIMaxPages caps how many review units one AI review may examine. This
+	// is the primary cost control: a detector spends at most one bounded model
+	// call per unit, so this number is the whole run's call budget, shared out
+	// across the enabled detectors. 0 uses the default.
+	LintAIMaxPages int `yaml:"lint_ai_max_pages" json:"lint_ai_max_pages,omitempty"`
+	// LintAIDetectors selects which review detectors may run, by id. Empty
+	// enables all of them. Operators use it to turn off a detector whose defect
+	// class does not apply to their wiki rather than paying for its share of
+	// the budget on every run.
+	LintAIDetectors StringArray `yaml:"lint_ai_detectors" json:"lint_ai_detectors,omitempty"`
 	// MaxPagesPerIngest limits pages created/updated per ingest operation (0 = no limit)
 	MaxPagesPerIngest int `yaml:"max_pages_per_ingest" json:"max_pages_per_ingest"`
 	// ExtractionGranularity controls how many candidate slugs Pass 0 extracts
@@ -753,13 +767,49 @@ const (
 	WikiIssueStatusIgnored   = "ignored"
 	WikiIssueStatusFailed    = "failed"
 
+	// WikiIssueSourceLint marks findings produced by the deterministic rule
+	// scanner, WikiIssueSourceAI those produced by the bounded model review,
+	// and WikiIssueSourceAgent those a conversational agent flagged in passing.
+	// Each source owns its own reconciliation: a static run may only close
+	// static findings, and an AI review may only close AI findings on the
+	// pages it actually re-read.
 	WikiIssueSourceLint  = "lint"
+	WikiIssueSourceAI    = "ai"
 	WikiIssueSourceAgent = "agent"
 	WikiIssueSourceUser  = "user"
 
 	WikiIssueRepairDeterministic = "deterministic"
 	WikiIssueRepairAgent         = "agent"
 	WikiIssueRepairManual        = "manual"
+)
+
+// Semantic wiki issue types. These describe defects in what a page says, or in
+// how a page relates to its sources and to its neighbours, rather than in how it
+// is wired into the link graph. No deterministic rule can detect them, so they
+// come from the AI review or from an agent that noticed the problem while
+// answering a question.
+//
+// They are grouped by the unit of judgement a detector needs, because that is
+// what decides which detector can find them at all:
+//
+//   - page-internal: readable from one page body alone.
+//   - page vs source: needs the page and the document it was derived from.
+//   - page pair: needs two pages side by side.
+const (
+	// Page-internal.
+	WikiIssueTypeMixedEntities    = "mixed_entities"
+	WikiIssueTypeContradictory    = "contradictory_facts"
+	WikiIssueTypeOutOfDate        = "out_of_date"
+	WikiIssueTypeUnsupportedClaim = "unsupported_claim"
+
+	// Page vs its source document.
+	WikiIssueTypeFactualError      = "factual_error"
+	WikiIssueTypeIncompleteSummary = "incomplete_summary"
+
+	// Page pair.
+	WikiIssueTypeDuplicatePages = "duplicate_pages"
+
+	WikiIssueTypeOther = "other"
 )
 
 // Wiki issue status sets.
@@ -800,26 +850,163 @@ var (
 	}
 )
 
+// Wiki lint run modes.
+//
+// A run declares up-front which detectors it is allowed to use, because the
+// two families have completely different cost profiles: the static rules are
+// pure database work, while the AI review spends one bounded model call per
+// page it decides to re-read. Making the mode explicit keeps "scan the wiki"
+// from silently becoming a model-spend decision.
+const (
+	WikiLintModeStatic = "static"
+	WikiLintModeAI     = "ai"
+	WikiLintModeFull   = "full"
+)
+
+// Wiki lint run scopes. A page-scoped run checks exactly the slugs it was
+// given, which is what makes "check this page" a first-class operation rather
+// than a full-KB scan the client filters afterwards.
+const (
+	WikiLintScopeKB   = "kb"
+	WikiLintScopePage = "page"
+)
+
+// NormalizeWikiLintMode maps an arbitrary client value onto a supported mode,
+// defaulting to the free one.
+func NormalizeWikiLintMode(mode string) string {
+	switch mode {
+	case WikiLintModeAI, WikiLintModeFull:
+		return mode
+	default:
+		return WikiLintModeStatic
+	}
+}
+
+// WikiLintModeRunsStatic reports whether mode includes the rule scanner.
+func WikiLintModeRunsStatic(mode string) bool {
+	return mode == WikiLintModeStatic || mode == WikiLintModeFull
+}
+
+// WikiLintModeRunsAI reports whether mode includes the model review.
+func WikiLintModeRunsAI(mode string) bool {
+	return mode == WikiLintModeAI || mode == WikiLintModeFull
+}
+
 // WikiLintRun records one complete, restart-observable health scan. Findings
 // are reconciled only after a run reaches completed, so a partial walk can
 // never make old issues disappear.
 type WikiLintRun struct {
-	ID              string     `json:"id" gorm:"type:varchar(36);primaryKey"`
-	TenantID        uint64     `json:"tenant_id" gorm:"index"`
-	KnowledgeBaseID string     `json:"knowledge_base_id" gorm:"type:varchar(36);index"`
-	Status          string     `json:"status" gorm:"type:varchar(20);index"`
-	RuleVersion     string     `json:"rule_version" gorm:"type:varchar(32)"`
-	Progress        int        `json:"progress"`
-	FindingCount    int        `json:"finding_count"`
-	ErrorMessage    string     `json:"error_message" gorm:"type:text"`
-	StartedAt       *time.Time `json:"started_at"`
-	FinishedAt      *time.Time `json:"finished_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID              string `json:"id" gorm:"type:varchar(36);primaryKey"`
+	TenantID        uint64 `json:"tenant_id" gorm:"index"`
+	KnowledgeBaseID string `json:"knowledge_base_id" gorm:"type:varchar(36);index"`
+	Status          string `json:"status" gorm:"type:varchar(20);index"`
+	Mode            string `json:"mode" gorm:"type:varchar(16);default:'static'"`
+	Scope           string `json:"scope" gorm:"type:varchar(16);default:'kb'"`
+	// ScopeKey is what the one-active-run constraint is keyed on: "kb" for a
+	// whole-wiki scan and "page:<slug>" for a single-page check. Without it a
+	// page check and a full scan would contend for the same slot, and a user
+	// inspecting one page would be told the wiki is busy.
+	ScopeKey    string      `json:"scope_key" gorm:"type:varchar(280);default:'kb'"`
+	TargetSlugs StringArray `json:"target_slugs" gorm:"type:json"`
+	RuleVersion string      `json:"rule_version" gorm:"type:varchar(32)"`
+	Progress    int         `json:"progress"`
+	// FindingCount counts persisted findings across both phases; the AI
+	// counters below make the model spend of a run auditable after the fact.
+	// A "unit" is whatever a detector judges in one call: one page, a page and
+	// its source document, or a pair of pages.
+	FindingCount    int         `json:"finding_count"`
+	AIUnitsReviewed int         `json:"ai_units_reviewed"`
+	AIUnitsSkipped  int         `json:"ai_units_skipped"`
+	AICalls         int         `json:"ai_calls"`
+	AIFindingCount  int         `json:"ai_finding_count"`
+	AIDetectors     StringArray `json:"ai_detectors" gorm:"type:json"`
+	ErrorMessage    string      `json:"error_message" gorm:"type:text"`
+	StartedAt       *time.Time  `json:"started_at"`
+	FinishedAt      *time.Time  `json:"finished_at"`
+	CreatedAt       time.Time   `json:"created_at"`
+	UpdatedAt       time.Time   `json:"updated_at"`
 }
 
 // TableName returns the lint-run table name.
 func (WikiLintRun) TableName() string { return "wiki_lint_runs" }
+
+// WikiPageMergeRequest folds one page into another.
+//
+// Content is required rather than derived: deciding what the merged page should
+// say is a judgement about two bodies of prose, and silently concatenating them
+// would produce a page no one wrote. The caller (today, the wiki fixer agent)
+// composes it and this operation performs the transfer.
+type WikiPageMergeRequest struct {
+	KnowledgeBaseID string
+	// TargetSlug survives the merge; SourceSlug is absorbed and removed.
+	TargetSlug string
+	SourceSlug string
+	Content    string
+	// Summary is optional; the target keeps its own when this is empty.
+	Summary string
+}
+
+// WikiPendingReviewQuery selects the pages a review detector should consider.
+//
+// PageTypes and RequireSourceRefs exist so a detector only ever pays for pages
+// its defect class can apply to: a grounding review needs a source document to
+// compare against, and duplicate detection only makes sense between the page
+// types the ingest pipeline creates per subject.
+type WikiPendingReviewQuery struct {
+	KnowledgeBaseID   string
+	DetectorID        string
+	ReviewerVersion   string
+	PageTypes         []string
+	RequireSourceRefs bool
+	Limit             int
+}
+
+// WikiLintReconcileScope describes what a completed run is entitled to close by
+// absence.
+//
+// Every field narrows the claim the run is making. Sources names the detector
+// families it executed, IssueTypes the specific defects it looked for, and Slugs
+// the pages it read — a nil Slugs means the whole knowledge base, which only a
+// complete walk may pass. Closing an issue outside the scope would discard a
+// finding nobody re-examined.
+type WikiLintReconcileScope struct {
+	KnowledgeBaseID string
+	RunID           string
+	Sources         []string
+	IssueTypes      []string
+	Slugs           []string
+}
+
+// WikiReviewLedger records that a detector has already judged one unit of work
+// at a given set of inputs.
+//
+// It is what keeps the AI review affordable on repeat runs: a unit whose inputs
+// have not changed is answered from this table instead of from the model. The
+// key is (detector, unit) rather than (page) because the review units are not
+// all pages — grounding judges a page against its source document, duplicate
+// detection judges a pair of pages — and each has its own notion of unchanged.
+type WikiReviewLedger struct {
+	ID              string `json:"id" gorm:"type:varchar(36);primaryKey"`
+	TenantID        uint64 `json:"tenant_id" gorm:"index"`
+	KnowledgeBaseID string `json:"knowledge_base_id" gorm:"type:varchar(36);index;uniqueIndex:ui_wrl_unit"`
+	DetectorID      string `json:"detector_id" gorm:"type:varchar(48);uniqueIndex:ui_wrl_unit"`
+	UnitKey         string `json:"unit_key" gorm:"type:varchar(160);uniqueIndex:ui_wrl_unit"`
+	// UnitHash covers every input the judgement depended on, so a unit is
+	// re-reviewed exactly when one of its inputs changed — not merely when the
+	// primary page's version was bumped by unrelated link maintenance.
+	UnitHash        string    `json:"unit_hash" gorm:"type:varchar(64)"`
+	ReviewerVersion string    `json:"reviewer_version" gorm:"type:varchar(32)"`
+	PrimarySlug     string    `json:"primary_slug" gorm:"type:varchar(255);index"`
+	FindingCount    int       `json:"finding_count"`
+	RunID           string    `json:"run_id" gorm:"type:varchar(36);index"`
+	ModelID         string    `json:"model_id" gorm:"type:varchar(36)"`
+	ReviewedAt      time.Time `json:"reviewed_at"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// TableName returns the review ledger table name.
+func (WikiReviewLedger) TableName() string { return "wiki_review_ledger" }
 
 // WikiRepairAttempt is the durable bridge between an issue, an optional Agent
 // session, and the exact page versions changed while resolving it.

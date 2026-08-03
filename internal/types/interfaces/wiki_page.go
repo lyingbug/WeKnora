@@ -226,6 +226,12 @@ type WikiPageService interface {
 	// attributed to WikiEditSourceRevert.
 	RevertPageToVersion(ctx context.Context, kbID string, slug string, version int) (*types.WikiPage, error)
 
+	// MergePages folds the source page into the target: the target takes on the
+	// merged content plus the source's aliases, source documents and citations,
+	// and the source page is removed. Callers are responsible for rewriting
+	// inbound links to the source before calling.
+	MergePages(ctx context.Context, req types.WikiPageMergeRequest) (*types.WikiPage, error)
+
 	// CreateIssue logs a new issue for a wiki page.
 	CreateIssue(ctx context.Context, issue *types.WikiPageIssue) (*types.WikiPageIssue, error)
 
@@ -322,6 +328,12 @@ type WikiPageRepository interface {
 	// paginated by an opaque numeric cursor. Used by lint to stream
 	// the KB without loading every page at once.
 	ListPagesCursor(ctx context.Context, kbID string, cursor string, limit int) ([]*types.WikiPage, string, error)
+
+	// ListPagesPendingReview returns up to `query.Limit` pages a review detector
+	// has not judged since their last write, never-reviewed pages first. Used to
+	// spend the AI review's per-run call budget where it can still find
+	// something.
+	ListPagesPendingReview(ctx context.Context, query types.WikiPendingReviewQuery) ([]*types.WikiPage, error)
 
 	// ListByTypeRecent returns the most-recently-updated pages of the
 	// given type, projected to slug/title/summary, capped at `limit`.
@@ -435,7 +447,20 @@ type WikiPageRepository interface {
 	// UpsertLintIssues persists a batch of findings in one statement. Callers
 	// must deduplicate fingerprints within the slice.
 	UpsertLintIssues(ctx context.Context, issues []*types.WikiPageIssue) error
-	ResolveMissingLintIssues(ctx context.Context, kbID, runID string, resolvedAt time.Time) error
+	// ResolveMissingLintIssues closes findings a completed run no longer sees,
+	// restricted to the detector families and pages the run actually covered.
+	ResolveMissingLintIssues(ctx context.Context, scope types.WikiLintReconcileScope, resolvedAt time.Time) error
+	// ResolveReviewedUnitIssues closes findings by exact fingerprint, for the
+	// findings whose unit of judgement is not a single page.
+	ResolveReviewedUnitIssues(
+		ctx context.Context, kbID, runID string, fingerprints []string, resolvedAt time.Time,
+	) error
+	// ListReviewLedger returns the review ledger rows for a detector's units.
+	ListReviewLedger(
+		ctx context.Context, kbID, detectorID string, unitKeys []string,
+	) (map[string]*types.WikiReviewLedger, error)
+	// UpsertReviewLedger records that a detector judged a unit at a set of inputs.
+	UpsertReviewLedger(ctx context.Context, entry *types.WikiReviewLedger) error
 	// ExpireStaleRepairAttempts retires repair attempts that stopped reporting
 	// before cutoff, releasing the issues they held.
 	ExpireStaleRepairAttempts(ctx context.Context, cutoff time.Time, message string, now time.Time) (int64, error)
@@ -450,5 +475,7 @@ type WikiPageRepository interface {
 	CreateLintRun(ctx context.Context, run *types.WikiLintRun) error
 	UpdateLintRun(ctx context.Context, run *types.WikiLintRun) error
 	GetLintRun(ctx context.Context, kbID, runID string) (*types.WikiLintRun, error)
-	GetLatestLintRun(ctx context.Context, kbID string) (*types.WikiLintRun, error)
+	// GetLatestLintRun returns the newest run for a knowledge base; a non-empty
+	// scopeKey restricts it to full-wiki scans or to one page's checks.
+	GetLatestLintRun(ctx context.Context, kbID, scopeKey string) (*types.WikiLintRun, error)
 }

@@ -40,7 +40,7 @@ This will log an issue for human review or automated maintenance.`,
     },
     "issue_type": {
       "type": "string",
-      "enum": ["mixed_entities", "contradictory_facts", "out_of_date", "other"],
+      "enum": ["mixed_entities", "contradictory_facts", "out_of_date", "unsupported_claim", "other"],
       "description": "The category of the issue"
     },
     "description": {

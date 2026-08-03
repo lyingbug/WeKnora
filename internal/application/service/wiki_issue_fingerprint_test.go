@@ -117,7 +117,7 @@ func TestDeterministicRepairAvailableEscalatesWhenTargetIsGone(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	}))
 
-	lintSvc := NewWikiLintService(wikiSvc, nil, nil, wikiSvc.repo)
+	lintSvc := NewWikiLintService(wikiSvc, nil, nil, nil, nil, wikiSvc.repo)
 	issue := &types.WikiPageIssue{
 		IssueType: string(LintIssueBrokenLink), KnowledgeBaseID: kbID, Slug: page.Slug,
 		RepairMode: types.WikiIssueRepairDeterministic,
@@ -155,7 +155,7 @@ func TestDeterministicRepairAvailableWhenMangledSlugExists(t *testing.T) {
 	}
 	require.NoError(t, wikiSvc.repo.Create(ctx, page))
 
-	lintSvc := NewWikiLintService(wikiSvc, nil, nil, wikiSvc.repo)
+	lintSvc := NewWikiLintService(wikiSvc, nil, nil, nil, nil, wikiSvc.repo)
 	issue := &types.WikiPageIssue{
 		IssueType: string(LintIssueBrokenLink), KnowledgeBaseID: kbID, Slug: page.Slug,
 		RepairMode: types.WikiIssueRepairDeterministic,

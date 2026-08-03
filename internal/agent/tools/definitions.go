@@ -27,6 +27,7 @@ const (
 	ToolWikiReplaceText   = "wiki_replace_text"
 	ToolWikiRenamePage    = "wiki_rename_page"
 	ToolWikiDeletePage    = "wiki_delete_page"
+	ToolWikiMergePages    = "wiki_merge_pages"
 	ToolWikiSearch        = "wiki_search"
 	ToolWikiReadSourceDoc = "wiki_read_source_doc"
 	ToolWikiFlagIssue     = "wiki_flag_issue"
@@ -65,6 +66,7 @@ func AvailableToolDefinitions() []AvailableTool {
 		{Name: ToolWikiReplaceText, Label: "局部替换Wiki", Description: "替换Wiki页面中的特定文本"},
 		{Name: ToolWikiRenamePage, Label: "重命名Wiki", Description: "重命名Wiki页面并自动更新关联链接"},
 		{Name: ToolWikiDeletePage, Label: "删除Wiki", Description: "删除Wiki页面并自动清理关联死链"},
+		{Name: ToolWikiMergePages, Label: "合并Wiki页面", Description: "将描述同一主题的两个页面合并为一个，并迁移别名、来源与链接"},
 		{Name: ToolWikiReadIssue, Label: "查看Wiki问题", Description: "查看特定的Wiki页面问题详情"},
 		{Name: ToolWikiUpdateIssue, Label: "更新Wiki问题状态", Description: "更新特定的Wiki页面问题状态"},
 	}

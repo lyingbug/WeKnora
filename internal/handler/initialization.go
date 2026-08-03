@@ -149,6 +149,13 @@ type KBModelConfigRequest struct {
 	// Wiki LLM bindings (optional; merged into wiki_config when wiki indexing is enabled)
 	WikiSynthesisModelID string `json:"wikiSynthesisModelId"`
 	WikiRepairModelID    string `json:"wikiRepairModelId"`
+	// WikiLintModelID is optional: the AI health review falls back to the
+	// repair model when it is empty, so enabling the review needs no extra
+	// configuration step.
+	WikiLintModelID string `json:"wikiLintModelId"`
+	// WikiLintAIMaxPages caps the pages one AI review may examine, which is
+	// also its model-call budget. 0 uses the built-in default.
+	WikiLintAIMaxPages int `json:"wikiLintAiMaxPages"`
 }
 
 // InitializationRequest 初始化请求结构
@@ -371,12 +378,14 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 	}
 
 	if kb.IndexingStrategy.WikiEnabled || strings.TrimSpace(req.WikiSynthesisModelID) != "" ||
-		strings.TrimSpace(req.WikiRepairModelID) != "" {
+		strings.TrimSpace(req.WikiRepairModelID) != "" || strings.TrimSpace(req.WikiLintModelID) != "" {
 		if kb.WikiConfig == nil {
 			kb.WikiConfig = &types.WikiConfig{}
 		}
 		kb.WikiConfig.SynthesisModelID = strings.TrimSpace(req.WikiSynthesisModelID)
 		kb.WikiConfig.RepairModelID = strings.TrimSpace(req.WikiRepairModelID)
+		kb.WikiConfig.LintModelID = strings.TrimSpace(req.WikiLintModelID)
+		kb.WikiConfig.LintAIMaxPages = req.WikiLintAIMaxPages
 	}
 
 	// Bind the concrete storage instance. Provider remains a compatibility

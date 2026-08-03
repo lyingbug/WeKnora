@@ -220,6 +220,7 @@ builtin_agents:
         - "wiki_replace_text"
         - "wiki_rename_page"
         - "wiki_delete_page"
+        - "wiki_merge_pages"
         - "wiki_read_issue"
         - "wiki_update_issue"
       web_search_enabled: false

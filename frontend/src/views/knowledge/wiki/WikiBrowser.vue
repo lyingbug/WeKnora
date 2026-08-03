@@ -455,67 +455,24 @@
                         </p>
 
                         <div class="wiki-page-issues-popup__list">
-                          <article
+                          <WikiIssueCard
                             v-for="issue in pageIssues"
                             :key="issue.id"
-                            class="wiki-health-card wiki-page-issues-card"
-                          >
-                            <header class="wiki-health-card__header">
-                              <div class="wiki-health-card__tags">
-                                <span
-                                  class="wiki-health-tag wiki-health-tag--type"
-                                  :class="`is-${wikiIssueTypeMeta(issue).theme}`"
-                                >
-                                  <t-icon :name="wikiIssueTypeIcon(issue.issue_type)" />
-                                  {{ wikiIssueTypeMeta(issue).label }}
-                                </span>
-                                <span
-                                  class="wiki-health-tag wiki-health-tag--severity"
-                                  :class="`is-${wikiIssueSeverityMeta(issue).theme}`"
-                                >
-                                  {{ wikiIssueSeverityMeta(issue).label }}
-                                </span>
-                                <span class="wiki-health-tag wiki-health-tag--neutral">
-                                  {{ wikiIssueRepairModeLabel(issue) }}
-                                </span>
-                              </div>
-                            </header>
-
-                            <p class="wiki-page-issues-card__desc">{{ issue.description }}</p>
-
-                            <footer class="wiki-page-issues-card__footer">
-                              <span class="wiki-page-issues-card__source">
-                                {{ wikiIssueSourceLabel(issue) }}
-                              </span>
-                              <div v-if="props.canEdit" class="wiki-page-issues-card__actions">
-                                <t-tooltip
-                                  v-if="issueCanAutoRepair(issue)"
-                                  :content="issueCanStartRepair(issue)
-                                    ? $t('knowledgeEditor.wikiBrowser.issueFixBtn')
-                                    : issueRepairBlockedReason(issue)"
-                                  placement="top"
-                                >
-                                  <button
-                                    type="button"
-                                    class="wiki-health-card__action wiki-health-card__action--primary"
-                                    :class="{ 'is-disabled': !issueCanStartRepair(issue) }"
-                                    :disabled="!issueCanStartRepair(issue)"
-                                    @click="triggerFixIssue(issue)"
-                                  >
-                                    <t-icon name="tools" />
-                                    <span>{{ $t('knowledgeEditor.wikiBrowser.issueFixBtn') }}</span>
-                                  </button>
-                                </t-tooltip>
-                                <button
-                                  type="button"
-                                  class="wiki-health-card__action wiki-health-card__action--ghost"
-                                  @click="handleIssueIgnore(issue.id)"
-                                >
-                                  {{ $t('knowledgeEditor.wikiBrowser.issueIgnore') }}
-                                </button>
-                              </div>
-                            </footer>
-                          </article>
+                            :issue="issue"
+                            :can-edit="props.canEdit"
+                            :selected="false"
+                            :selectable="false"
+                            :show-repair="issueCanAutoRepair(issue)"
+                            :show-ignore="true"
+                            :show-restore="false"
+                            :show-resolution="false"
+                            :repair-blocked-reason="issueRepairBlockedReason(issue)"
+                            :slug-display-name="slugDisplayName"
+                            @repair="triggerFixIssue(issue)"
+                            @ignore="handleIssueIgnore(issue.id)"
+                            @open-page="showIssuesBox = false"
+                            @open-target="navigateToEvidenceTarget"
+                          />
                         </div>
                       </div>
                     </template>
@@ -576,6 +533,13 @@
                     <template #prefixIcon><t-icon name="chart-bubble" /></template>
                     {{ $t('knowledgeEditor.wikiBrowser.viewInGraph') }}
                   </t-link>
+                  <WikiPageCheckBar
+                    v-if="props.canEdit"
+                    :kb-id="props.knowledgeBaseId"
+                    :slug="selectedPage.slug"
+                    :ai-available="wikiAiReviewAvailable"
+                    @completed="onPageCheckCompleted"
+                  />
                 </div>
               </div>
 
@@ -757,25 +721,53 @@
           </button>
         </div>
 
+        <WikiHealthScanPanel
+          v-if="props.canEdit"
+          :run="lintRun"
+          :busy="lintRunBusy"
+          :ai-available="wikiAiReviewAvailable"
+          scope="kb"
+          @run="runWikiLint"
+        />
+
+        <!-- Status is the primary axis of the problem centre, so it is a tab
+             strip with counts rather than one chip row among three. -->
+        <div class="wiki-health-tabs" role="tablist">
+          <button
+            v-for="opt in healthIssueStatusOptions"
+            :key="`tab-${opt.value}`"
+            type="button"
+            role="tab"
+            :aria-selected="globalIssueStatusFilter === opt.value"
+            class="wiki-health-tab"
+            :class="{ 'is-active': globalIssueStatusFilter === opt.value }"
+            @click="setGlobalIssueStatusFilter(opt.value)"
+          >
+            <span>{{ opt.label }}</span>
+            <em v-if="globalIssueStatusFilter === opt.value && globalIssueTotal > 0">{{ globalIssueTotal }}</em>
+          </button>
+        </div>
+
         <div class="wiki-health-controls-head">
           <div class="wiki-health-controls-left">
-            <div class="wiki-health-controls-title">
-              <span>{{ $t('knowledgeEditor.wikiBrowser.healthDrawerIssuesSection') }}</span>
-              <span v-if="globalIssueTotal > 0" class="wiki-health-section-count">{{ globalIssueTotal }}</span>
-            </div>
-            <t-tooltip :content="$t('knowledgeEditor.wikiBrowser.runLintTooltip')" placement="top">
-              <t-button
-                v-if="props.canEdit"
-                size="small"
-                variant="outline"
-                :loading="lintRunBusy"
-                :disabled="lintRunBusy"
-                class="wiki-health-scan-btn"
-                @click="runWikiLint"
-              >
-                {{ $t('knowledgeEditor.wikiBrowser.runLint') }}
-              </t-button>
-            </t-tooltip>
+            <button
+              type="button"
+              class="wiki-health-filter-toggle"
+              :class="{ 'is-active': healthFiltersExpanded || hasActiveHealthFilters }"
+              @click="healthFiltersExpanded = !healthFiltersExpanded"
+            >
+              <t-icon name="filter" />
+              <span>{{ $t('knowledgeEditor.wikiBrowser.healthDrawerMoreFilters') }}</span>
+              <em v-if="activeHealthFilterCount > 0">{{ activeHealthFilterCount }}</em>
+            </button>
+            <button
+              v-if="hasActiveHealthFilters"
+              type="button"
+              class="wiki-health-filter-clear"
+              @click="clearHealthFilters"
+            >
+              {{ $t('knowledgeEditor.wikiBrowser.healthDrawerClearFilters') }}
+            </button>
           </div>
           <div v-if="props.canEdit && globalIssues.length > 0 && !viewingResolvedIssues" class="wiki-health-batch-bar">
             <t-checkbox
@@ -840,24 +832,7 @@
             </template>
           </div>
         </div>
-        <p class="wiki-health-scan-hint">{{ $t('knowledgeEditor.wikiBrowser.healthDrawerScanHint') }}</p>
-
-        <div class="wiki-health-filters">
-          <div class="wiki-health-filter-row">
-            <span class="wiki-health-filter-label">{{ $t('knowledgeEditor.wikiBrowser.healthDrawerFilterStatus') }}</span>
-            <div class="wiki-health-filter-chips">
-              <button
-                v-for="opt in healthIssueStatusOptions"
-                :key="`status-${opt.value}`"
-                type="button"
-                class="wiki-health-filter-chip"
-                :class="{ 'is-active': globalIssueStatusFilter === opt.value }"
-                @click.stop="setGlobalIssueStatusFilter(opt.value)"
-              >
-                {{ opt.label }}
-              </button>
-            </div>
-          </div>
+        <div v-if="healthFiltersExpanded" class="wiki-health-filters">
           <div class="wiki-health-filter-row">
             <span class="wiki-health-filter-label">{{ $t('knowledgeEditor.wikiBrowser.healthDrawerFilterType') }}</span>
             <div class="wiki-health-filter-chips">
@@ -917,142 +892,26 @@
         </div>
 
         <div v-else class="wiki-health-issue-list">
-          <article
+          <WikiIssueCard
             v-for="issue in globalIssues"
             :key="issue.id"
-            class="wiki-health-card"
-            :class="{ 'is-selected': healthIssueSelectedIds.includes(issue.id) }"
-          >
-            <header class="wiki-health-card__header">
-              <div class="wiki-health-card__tags">
-                <span
-                  class="wiki-health-tag wiki-health-tag--type"
-                  :class="`is-${wikiIssueTypeMeta(issue).theme}`"
-                >
-                  <t-icon :name="wikiIssueTypeIcon(issue.issue_type)" />
-                  {{ wikiIssueTypeMeta(issue).label }}
-                </span>
-                <span
-                  class="wiki-health-tag wiki-health-tag--severity"
-                  :class="`is-${wikiIssueSeverityMeta(issue).theme}`"
-                >
-                  {{ wikiIssueSeverityMeta(issue).label }}
-                </span>
-                <span class="wiki-health-tag wiki-health-tag--neutral">
-                  {{ wikiIssueRepairModeLabel(issue) }}
-                </span>
-                <span
-                  v-if="issue.status === 'failed'"
-                  class="wiki-health-tag is-danger"
-                >
-                  {{ $t('knowledgeEditor.wikiBrowser.repairFailed') }}
-                </span>
-              </div>
-              <div class="wiki-health-card__actions">
-                <button
-                  type="button"
-                  class="wiki-health-card__action"
-                  @click.stop="navigateToSlugAndFix(issue.slug)"
-                >
-                  <t-icon name="jump" />
-                  <span>{{ $t('knowledgeEditor.wikiBrowser.healthCardViewPage') }}</span>
-                </button>
-                <template v-if="props.canEdit">
-                  <t-tooltip
-                    v-if="issueCanAutoRepair(issue) && !viewingIgnoredIssues && !viewingResolvedIssues"
-                    :content="issueCanStartRepair(issue)
-                      ? $t('knowledgeEditor.wikiBrowser.issueFixBtn')
-                      : issueRepairBlockedReason(issue)"
-                    placement="top"
-                  >
-                    <button
-                      type="button"
-                      class="wiki-health-card__action wiki-health-card__action--primary"
-                      :class="{ 'is-disabled': !issueCanStartRepair(issue) }"
-                      :disabled="!issueCanStartRepair(issue)"
-                      @click.stop="startGlobalIssueRepair(issue)"
-                    >
-                      <t-icon name="tools" />
-                      <span>{{ $t('knowledgeEditor.wikiBrowser.issueFixBtn') }}</span>
-                    </button>
-                  </t-tooltip>
-                  <button
-                    v-if="viewingIgnoredIssues"
-                    type="button"
-                    class="wiki-health-card__action"
-                    @click.stop="handleGlobalIssueRestore(issue.id)"
-                  >
-                    <t-icon name="rollback" />
-                    <span>{{ $t('knowledgeEditor.wikiBrowser.issueRestore') }}</span>
-                  </button>
-                  <button
-                    v-else-if="!viewingResolvedIssues"
-                    type="button"
-                    class="wiki-health-card__action wiki-health-card__action--ghost"
-                    @click.stop="handleGlobalIssueIgnore(issue.id)"
-                  >
-                    {{ $t('knowledgeEditor.wikiBrowser.issueIgnore') }}
-                  </button>
-                </template>
-              </div>
-            </header>
-
-            <div class="wiki-health-card__page">
-              <t-checkbox
-                v-if="props.canEdit && !viewingResolvedIssues"
-                class="wiki-health-card__check"
-                :checked="healthIssueSelectedIds.includes(issue.id)"
-                @change="(checked: boolean) => toggleHealthIssueSelected(issue.id, checked)"
-              />
-              <div class="wiki-health-card__page-main">
-                <button
-                  type="button"
-                  class="wiki-health-card__page-title"
-                  @click="navigateToSlugAndFix(issue.slug)"
-                >
-                  {{ slugDisplayName(issue.slug) }}
-                </button>
-                <code class="wiki-health-card__page-slug">{{ issue.slug }}</code>
-              </div>
-            </div>
-
-            <p class="wiki-health-card__desc">{{ issue.description }}</p>
-
-            <div
-              v-if="wikiIssueEvidenceTarget(issue)"
-              class="wiki-health-card__evidence"
-            >
-              <span class="wiki-health-card__evidence-label">
-                {{ $t('knowledgeEditor.wikiBrowser.issueEvidenceTarget') }}
-              </span>
-              <button
-                type="button"
-                class="wiki-health-card__evidence-link"
-                @click.stop="navigateToEvidenceTarget(wikiIssueEvidenceTarget(issue)!)"
-              >
-                <t-icon name="link" />
-                {{ slugDisplayName(wikiIssueEvidenceTarget(issue)!) }}
-              </button>
-            </div>
-
-            <div
-              v-if="viewingResolvedIssues && issue.resolution_summary"
-              class="wiki-health-card__resolution"
-            >
-              <t-icon name="check-circle" />
-              <span>{{ issue.resolution_summary }}</span>
-            </div>
-
-            <footer class="wiki-health-card__footer">
-              <span class="wiki-health-card__footer-source">{{ wikiIssueSourceLabel(issue) }}</span>
-              <span
-                v-if="wikiIssueTimingLabel(issue)"
-                class="wiki-health-card__footer-timing"
-              >
-                {{ wikiIssueTimingLabel(issue) }}
-              </span>
-            </footer>
-          </article>
+            :issue="issue"
+            :can-edit="props.canEdit"
+            :selected="healthIssueSelectedIds.includes(issue.id)"
+            :selectable="props.canEdit && !viewingResolvedIssues"
+            :show-repair="issueCanAutoRepair(issue) && !viewingIgnoredIssues && !viewingResolvedIssues"
+            :show-ignore="!viewingResolvedIssues"
+            :show-restore="viewingIgnoredIssues"
+            :show-resolution="viewingResolvedIssues"
+            :repair-blocked-reason="issueRepairBlockedReason(issue)"
+            :slug-display-name="slugDisplayName"
+            @select="(checked) => toggleHealthIssueSelected(issue.id, checked)"
+            @repair="startGlobalIssueRepair(issue)"
+            @ignore="handleGlobalIssueIgnore(issue.id)"
+            @restore="handleGlobalIssueRestore(issue.id)"
+            @open-page="navigateToSlugAndFix(issue.slug)"
+            @open-target="navigateToEvidenceTarget"
+          />
         </div>
 
         <div v-if="globalIssuesLoading && globalIssues.length > 0" class="wiki-health-loading-more">
@@ -1199,9 +1058,14 @@ import {
   type WikiPageIssue,
   type WikiRepairAttempt,
   type WikiLintRun,
+  type WikiLintMode,
   type WikiIndexGroup,
   type WikiIndexEntryDTO,
 } from '@/api/wiki'
+import WikiHealthScanPanel from './health/WikiHealthScanPanel.vue'
+import WikiIssueCard from './health/WikiIssueCard.vue'
+import WikiPageCheckBar from './health/WikiPageCheckBar.vue'
+import { WIKI_ISSUE_TYPES, wikiIssueTypeLabel } from './health/issueMeta'
 
 const route = useRoute()
 
@@ -1571,98 +1435,6 @@ const healthDrawerLintSubtitle = computed(() => {
   return t('knowledgeEditor.wikiBrowser.healthDrawerDesc')
 })
 
-type WikiIssueTagTheme = 'default' | 'primary' | 'warning' | 'danger' | 'success'
-
-function wikiIssueTypeMeta(issue: WikiPageIssue): { label: string; theme: WikiIssueTagTheme } {
-  const presets: Record<string, { key: string; theme: WikiIssueTagTheme }> = {
-    mixed_entities: { key: 'issueMixed', theme: 'warning' },
-    contradictory_facts: { key: 'issueConflict', theme: 'danger' },
-    out_of_date: { key: 'issueOutdated', theme: 'default' },
-    broken_link: { key: 'issueBrokenLink', theme: 'danger' },
-    orphan_page: { key: 'issueOrphanPage', theme: 'warning' },
-    empty_content: { key: 'issueEmptyContent', theme: 'warning' },
-    stale_ref: { key: 'issueStaleRef', theme: 'danger' },
-    missing_cross_ref: { key: 'issueMissingCrossRef', theme: 'primary' },
-  }
-  const preset = presets[issue.issue_type] || { key: 'issueAttention', theme: 'primary' as const }
-  return {
-    label: t(`knowledgeEditor.wikiBrowser.${preset.key}`),
-    theme: preset.theme,
-  }
-}
-
-function wikiIssueSourceLabel(issue: WikiPageIssue): string {
-  if (issue.source === 'lint' || issue.reported_by === 'wiki-lint') {
-    return t('knowledgeEditor.wikiBrowser.issueSourceLintReport')
-  }
-  if (issue.reported_by === 'wiki-researcher-agent') {
-    return t('knowledgeEditor.wikiBrowser.issueAiLinter')
-  }
-  if (issue.reported_by) {
-    return t('knowledgeEditor.wikiBrowser.issueReportedBy', { reporter: issue.reported_by })
-  }
-  return t('knowledgeEditor.wikiBrowser.issueSourceLintReport')
-}
-
-function wikiIssueSeverityMeta(issue: WikiPageIssue): { label: string; theme: WikiIssueTagTheme } {
-  const presets: Record<string, { key: string; theme: WikiIssueTagTheme }> = {
-    error: { key: 'issueSeverityError', theme: 'danger' },
-    high: { key: 'issueSeverityError', theme: 'danger' },
-    warning: { key: 'issueSeverityWarning', theme: 'warning' },
-    info: { key: 'issueSeverityInfo', theme: 'default' },
-    low: { key: 'issueSeverityInfo', theme: 'default' },
-  }
-  const preset = presets[issue.severity] || presets.warning
-  return {
-    label: t(`knowledgeEditor.wikiBrowser.${preset.key}`),
-    theme: preset.theme,
-  }
-}
-
-function wikiIssueTypeIcon(issueType: string): string {
-  const icons: Record<string, string> = {
-    broken_link: 'link-unlink',
-    orphan_page: 'root-list',
-    empty_content: 'file-1',
-    stale_ref: 'history',
-    missing_cross_ref: 'link',
-    mixed_entities: 'layers',
-    contradictory_facts: 'error-circle',
-    out_of_date: 'time',
-  }
-  return icons[issueType] || 'error-circle'
-}
-
-function wikiIssueRepairModeLabel(issue: WikiPageIssue): string {
-  const keys: Record<string, string> = {
-    deterministic: 'issueRepairModeDeterministic',
-    agent: 'issueRepairModeAgent',
-    manual: 'issueRepairModeManual',
-  }
-  const key = keys[issue.repair_mode] || 'issueRepairModeAgent'
-  return t(`knowledgeEditor.wikiBrowser.${key}`)
-}
-
-function wikiIssueEvidenceTarget(issue: WikiPageIssue): string | null {
-  const slug = issue.evidence?.target_slug
-  if (typeof slug !== 'string' || !slug.trim()) return null
-  return slug.trim()
-}
-
-function wikiIssueTimingLabel(issue: WikiPageIssue): string {
-  const parts: string[] = []
-  if (issue.last_seen_at) {
-    parts.push(t('knowledgeEditor.wikiBrowser.issueLastSeen', { time: formatHealthTime(issue.last_seen_at) }))
-  }
-  if (issue.occurrence_count > 1) {
-    parts.push(t('knowledgeEditor.wikiBrowser.issueOccurrenceCount', { count: issue.occurrence_count }))
-  }
-  if (issue.detected_page_version > 0) {
-    parts.push(t('knowledgeEditor.wikiBrowser.issueDetectedVersion', { version: issue.detected_page_version }))
-  }
-  return parts.join(' · ')
-}
-
 function formatHealthTime(dateStr: string): string {
   if (!dateStr) return ''
   const d = new Date(dateStr)
@@ -1762,25 +1534,36 @@ const healthIssueStatusOptions = computed(() => [
   { label: t('knowledgeEditor.wikiBrowser.healthDrawerFilterStatusResolved'), value: 'resolved' as const },
 ])
 
-const healthIssueTypeOptions = computed(() => {
-  const types = [
-    'broken_link', 'orphan_page', 'empty_content', 'stale_ref', 'missing_cross_ref',
-    'mixed_entities', 'contradictory_facts', 'out_of_date',
-  ]
-  return [
-    { label: t('knowledgeEditor.wikiBrowser.healthDrawerFilterTypeAll'), value: '' },
-    ...types.map((value) => ({
-      label: wikiIssueTypeMeta({ issue_type: value } as WikiPageIssue).label,
-      value,
-    })),
-  ]
-})
+const healthIssueTypeOptions = computed(() => [
+  { label: t('knowledgeEditor.wikiBrowser.healthDrawerFilterTypeAll'), value: '' },
+  ...WIKI_ISSUE_TYPES.map((value) => ({ label: wikiIssueTypeLabel(t, value).label, value })),
+])
 
+// The three detector families a user can tell apart when triaging: the rule
+// scanner, the bounded AI review, and an agent that flagged a page in passing.
 const healthIssueSourceOptions = computed(() => [
   { label: t('knowledgeEditor.wikiBrowser.healthDrawerFilterSourceAll'), value: '' },
   { label: t('knowledgeEditor.wikiBrowser.healthDrawerFilterSourceLint'), value: 'lint' },
+  { label: t('knowledgeEditor.wikiBrowser.healthDrawerFilterSourceAi'), value: 'ai' },
   { label: t('knowledgeEditor.wikiBrowser.healthDrawerFilterSourceAgent'), value: 'agent' },
 ])
+
+// Type and source live behind a toggle so the default view is the issue list,
+// not three rows of chips above it.
+const healthFiltersExpanded = ref(false)
+
+const activeHealthFilterCount = computed(
+  () => (globalIssueTypeFilter.value ? 1 : 0) + (globalIssueSourceFilter.value ? 1 : 0),
+)
+
+const hasActiveHealthFilters = computed(() => activeHealthFilterCount.value > 0)
+
+function clearHealthFilters() {
+  if (!hasActiveHealthFilters.value) return
+  globalIssueTypeFilter.value = ''
+  globalIssueSourceFilter.value = ''
+  void reloadGlobalIssuesForFilters()
+}
 
 const healthIssueSelectAll = computed(
   () => globalIssues.value.length > 0 && healthIssueSelectedIds.value.length === globalIssues.value.length,
@@ -1812,6 +1595,15 @@ const effectiveWikiRepairModelId = computed(
 
 const wikiRepairModelConfigured = computed(() => !!effectiveWikiRepairModelId.value)
 
+const wikiLintModelIdLocal = ref('')
+
+// The AI review reuses the repair model unless the knowledge base names a
+// cheaper one for reviewing, which mirrors the backend's fallback so the UI
+// never offers a mode the server will refuse.
+const wikiAiReviewAvailable = computed(
+  () => !!(wikiLintModelIdLocal.value.trim() || effectiveWikiRepairModelId.value),
+)
+
 async function loadWikiRepairModelConfig() {
   if (!props.knowledgeBaseId) return
   try {
@@ -1819,6 +1611,7 @@ async function loadWikiRepairModelConfig() {
     const kb = res?.data ?? res
     const modelId = (kb?.wiki_config?.repair_model_id || '').trim()
     if (modelId) wikiRepairModelIdLocal.value = modelId
+    wikiLintModelIdLocal.value = (kb?.wiki_config?.lint_model_id || '').trim()
   } catch (e) {
     console.error('Failed to load Wiki repair model config:', e)
   }
@@ -2023,14 +1816,30 @@ function startLintPolling() {
   lintPollTimer = setInterval(pollLintRun, 1500)
 }
 
-async function runWikiLint() {
+async function runWikiLint(mode: WikiLintMode = 'static') {
   if (lintRunBusy.value) return
   try {
-    const res = await startWikiLintRun(props.knowledgeBaseId)
+    const res = await startWikiLintRun(props.knowledgeBaseId, mode)
     lintRun.value = ((res as any).data || res) as WikiLintRun
     startLintPolling()
   } catch (e: any) {
     MessagePlugin.error(e?.message || t('knowledgeEditor.wikiBrowser.lintFailed'))
+  }
+}
+
+// A page check writes into the same problem centre as a full scan, so its
+// results have to land in both this page's issue list and any open drawer.
+async function onPageCheckCompleted(run: WikiLintRun) {
+  if (run.status === 'failed') {
+    MessagePlugin.error(run.error_message || t('knowledgeEditor.wikiBrowser.pageCheckFailed'))
+    return
+  }
+  const slug = selectedPage.value?.slug
+  if (slug) await loadPageIssues(slug)
+  await loadStats()
+  if (showGlobalIssuesDrawer.value) await loadGlobalIssues(true)
+  if ((run.finding_count ?? 0) > 0) {
+    showIssuesBox.value = true
   }
 }
 
@@ -6023,7 +5832,8 @@ onMounted(() => {
 })
 
 watch(() => props.wikiRepairModelId, (modelId) => {
-  if ((modelId || '').trim()) wikiRepairModelIdLocal.value = modelId.trim()
+  const trimmed = (modelId || '').trim()
+  if (trimmed) wikiRepairModelIdLocal.value = trimmed
 })
 
 watch(() => props.knowledgeBaseId, () => {
@@ -7685,45 +7495,6 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
-.wiki-page-issues-card {
-  gap: 8px;
-  padding: 12px 14px;
-  box-shadow: none;
-
-  .wiki-health-card__header {
-    margin-bottom: 0;
-  }
-}
-
-.wiki-page-issues-card__desc {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--td-text-color-primary);
-  word-break: break-word;
-}
-
-.wiki-page-issues-card__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-top: 8px;
-  margin-top: 2px;
-  border-top: 1px dashed var(--td-component-stroke);
-}
-
-.wiki-page-issues-card__source {
-  font-size: 11px;
-  color: var(--td-text-color-placeholder);
-}
-
-.wiki-page-issues-card__actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
 </style>
 
 <style lang="less">
@@ -7907,25 +7678,96 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.wiki-health-scan-btn {
-  flex-shrink: 0;
+/* Status tabs. Status is the axis a user changes most often when triaging, so
+   it reads as a tab strip instead of competing with the type/source chips. */
+.wiki-health-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-bottom: 1px solid var(--td-component-stroke);
 }
 
-.wiki-health-scan-hint {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--td-text-color-placeholder);
-}
-
-.wiki-health-controls-title {
+.wiki-health-tab {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  padding: 7px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--td-text-color-secondary);
   font-size: 13px;
-  font-weight: 600;
-  color: var(--td-text-color-primary);
-  line-height: 1.4;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+
+  em {
+    font-style: normal;
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--td-bg-color-component);
+    color: var(--td-text-color-primary);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 17px;
+    text-align: center;
+  }
+
+  &:hover {
+    color: var(--td-text-color-primary);
+  }
+
+  &.is-active {
+    color: var(--td-brand-color);
+    border-bottom-color: var(--td-brand-color);
+    font-weight: 500;
+  }
+}
+
+.wiki-health-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  cursor: pointer;
+
+  em {
+    font-style: normal;
+    min-width: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--td-brand-color-light);
+    color: var(--td-brand-color);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
+    text-align: center;
+  }
+
+  &:hover,
+  &.is-active {
+    border-color: var(--td-component-stroke);
+    color: var(--td-text-color-primary);
+  }
+}
+
+.wiki-health-filter-clear {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--td-brand-color);
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 .wiki-health-batch-bar {
@@ -8085,21 +7927,6 @@ onUnmounted(() => {
   -webkit-overflow-scrolling: touch;
 }
 
-.wiki-health-section-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--td-warning-color) 14%, var(--td-bg-color-container));
-  color: var(--td-warning-color-8);
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
 .wiki-health-loading {
   display: flex;
   justify-content: center;
@@ -8182,312 +8009,6 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.wiki-health-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 10px;
-  background: var(--td-bg-color-container);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-
-  &:hover {
-    border-color: color-mix(in srgb, var(--td-brand-color) 22%, var(--td-component-stroke));
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
-  }
-
-  &.is-selected {
-    border-color: color-mix(in srgb, var(--td-brand-color) 45%, var(--td-component-stroke));
-    background: color-mix(in srgb, var(--td-brand-color) 3%, var(--td-bg-color-container));
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--td-brand-color) 12%, transparent);
-  }
-}
-
-.wiki-health-card__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-}
-
-.wiki-health-card__tags {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.wiki-health-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-
-  .t-icon {
-    font-size: 12px;
-  }
-
-  &.is-danger {
-    color: var(--td-error-color);
-    background: color-mix(in srgb, var(--td-error-color) 10%, var(--td-bg-color-container));
-  }
-
-  &.is-warning {
-    color: var(--td-warning-color-8);
-    background: color-mix(in srgb, var(--td-warning-color) 10%, var(--td-bg-color-container));
-  }
-
-  &.is-primary {
-    color: var(--td-brand-color);
-    background: color-mix(in srgb, var(--td-brand-color) 10%, var(--td-bg-color-container));
-  }
-
-  &.is-default {
-    color: var(--td-text-color-secondary);
-    background: var(--td-bg-color-secondarycontainer);
-  }
-}
-
-.wiki-health-tag--type {
-  font-weight: 600;
-}
-
-.wiki-health-tag--severity {
-  border: 1px solid currentColor;
-  background: transparent;
-  opacity: 0.92;
-}
-
-.wiki-health-tag--neutral {
-  color: var(--td-text-color-secondary);
-  background: var(--td-bg-color-secondarycontainer);
-}
-
-.wiki-health-card__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.wiki-health-card__action {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 6px;
-  background: var(--td-bg-color-container);
-  color: var(--td-text-color-secondary);
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-
-  .t-icon {
-    font-size: 14px;
-  }
-
-  &:hover {
-    color: var(--td-text-color-primary);
-    border-color: color-mix(in srgb, var(--td-brand-color) 30%, var(--td-component-stroke));
-    background: var(--td-bg-color-secondarycontainer);
-  }
-
-  &--primary {
-    color: var(--td-brand-color);
-    border-color: color-mix(in srgb, var(--td-brand-color) 35%, var(--td-component-stroke));
-    background: color-mix(in srgb, var(--td-brand-color) 6%, var(--td-bg-color-container));
-
-    &:hover {
-      background: color-mix(in srgb, var(--td-brand-color) 12%, var(--td-bg-color-container));
-    }
-  }
-
-  &:disabled,
-  &.is-disabled {
-    color: var(--td-text-color-disabled);
-    border-color: var(--td-component-stroke);
-    background: var(--td-bg-color-secondarycontainer);
-    cursor: not-allowed;
-    opacity: 0.65;
-
-    &:hover {
-      color: var(--td-text-color-disabled);
-      border-color: var(--td-component-stroke);
-      background: var(--td-bg-color-secondarycontainer);
-    }
-  }
-
-  &--ghost {
-    border-color: transparent;
-    background: transparent;
-    color: var(--td-text-color-placeholder);
-
-    &:hover {
-      color: var(--td-text-color-secondary);
-      background: var(--td-bg-color-secondarycontainer);
-      border-color: transparent;
-    }
-  }
-}
-
-.wiki-health-card__page {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-width: 0;
-}
-
-.wiki-health-card__check {
-  flex-shrink: 0;
-  margin-top: 2px;
-
-  :deep(.t-checkbox__label) {
-    display: none;
-  }
-}
-
-.wiki-health-card__page-main {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.wiki-health-card__page-title {
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--td-text-color-primary);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.35;
-  text-align: left;
-  cursor: pointer;
-
-  &:hover {
-    color: var(--td-brand-color);
-  }
-}
-
-.wiki-health-card__page-slug {
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  line-height: 1.3;
-  color: var(--td-text-color-placeholder);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.wiki-health-card__desc {
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: 6px;
-  background: var(--td-bg-color-secondarycontainer);
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--td-text-color-secondary);
-  word-break: break-word;
-}
-
-.wiki-health-card__evidence {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px dashed color-mix(in srgb, var(--td-component-stroke) 90%, transparent);
-  border-radius: 6px;
-  font-size: 12px;
-}
-
-.wiki-health-card__evidence-label {
-  color: var(--td-text-color-placeholder);
-}
-
-.wiki-health-card__evidence-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--td-brand-color);
-  font-family: inherit;
-  font-size: inherit;
-  font-weight: 500;
-  cursor: pointer;
-
-  .t-icon {
-    font-size: 13px;
-  }
-
-  &:hover {
-    text-decoration: underline;
-  }
-}
-
-.wiki-health-card__resolution {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--td-success-color) 8%, var(--td-bg-color-container));
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--td-success-color-7, var(--td-success-color));
-
-  .t-icon {
-    flex-shrink: 0;
-    margin-top: 1px;
-    font-size: 14px;
-  }
-}
-
-.wiki-health-card__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding-top: 8px;
-  border-top: 1px solid color-mix(in srgb, var(--td-component-stroke) 70%, transparent);
-  font-size: 11px;
-  line-height: 1.3;
-  color: var(--td-text-color-placeholder);
-}
-
-.wiki-health-card__footer-source {
-  flex-shrink: 0;
-}
-
-.wiki-health-card__footer-timing {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
 }
 
 /* Fix Embedded Chat UI (unscoped because drawer attaches to body) */

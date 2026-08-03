@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/assert"
@@ -51,6 +52,17 @@ func (f *fakeLintWikiService) ListAllSlugs(_ context.Context, _ string) ([]strin
 	return f.slugs, nil
 }
 
+func (f *fakeLintWikiService) GetPageBySlug(
+	_ context.Context, _ string, slug string,
+) (*types.WikiPage, error) {
+	for _, page := range f.pages {
+		if page.Slug == slug {
+			return page, nil
+		}
+	}
+	return nil, repository.ErrWikiPageNotFound
+}
+
 // ListPagesCursor pages through f.pages using the page index as the cursor,
 // mirroring the id-asc contract of the real implementation.
 func (f *fakeLintWikiService) ListPagesCursor(
@@ -79,11 +91,24 @@ type fakeLintRepo struct {
 	run *types.WikiLintRun
 	// batches records each upsert window so a test can assert on batching
 	// itself, not merely on the union of persisted rows.
-	batches      [][]*types.WikiPageIssue
-	progress     []int
-	reconciled   []string
-	upsertErr    error
-	upsertErrsAt int
+	batches         [][]*types.WikiPageIssue
+	progress        []int
+	reconciled      []string
+	reconcileScopes []types.WikiLintReconcileScope
+	upsertErr       error
+	upsertErrsAt    int
+	// aiCandidates is the pool ListPagesPendingAIReview draws from, and
+	// aiBudget records the limit the run actually asked for.
+	aiCandidates []*types.WikiPage
+	aiBudget     int
+	aiLedger     map[string]*types.WikiReviewLedger
+	ledgerWrites []*types.WikiReviewLedger
+	createdRuns  []*types.WikiLintRun
+}
+
+func (f *fakeLintRepo) CreateLintRun(_ context.Context, run *types.WikiLintRun) error {
+	f.createdRuns = append(f.createdRuns, run)
+	return nil
 }
 
 func (f *fakeLintRepo) GetLintRun(_ context.Context, _, _ string) (*types.WikiLintRun, error) {
@@ -106,9 +131,36 @@ func (f *fakeLintRepo) UpsertLintIssues(_ context.Context, issues []*types.WikiP
 }
 
 func (f *fakeLintRepo) ResolveMissingLintIssues(
-	_ context.Context, _, runID string, _ time.Time,
+	_ context.Context, scope types.WikiLintReconcileScope, _ time.Time,
 ) error {
-	f.reconciled = append(f.reconciled, runID)
+	f.reconciled = append(f.reconciled, scope.RunID)
+	f.reconcileScopes = append(f.reconcileScopes, scope)
+	return nil
+}
+
+func (f *fakeLintRepo) ListPagesPendingReview(
+	_ context.Context, query types.WikiPendingReviewQuery,
+) ([]*types.WikiPage, error) {
+	limit := query.Limit
+	if limit > len(f.aiCandidates) {
+		limit = len(f.aiCandidates)
+	}
+	f.aiBudget = limit
+	return f.aiCandidates[:limit], nil
+}
+
+func (f *fakeLintRepo) ListReviewLedger(
+	_ context.Context, _, _ string, _ []string,
+) (map[string]*types.WikiReviewLedger, error) {
+	return f.aiLedger, nil
+}
+
+func (f *fakeLintRepo) UpsertReviewLedger(_ context.Context, entry *types.WikiReviewLedger) error {
+	if f.aiLedger == nil {
+		f.aiLedger = map[string]*types.WikiReviewLedger{}
+	}
+	f.aiLedger[entry.UnitKey] = entry
+	f.ledgerWrites = append(f.ledgerWrites, entry)
 	return nil
 }
 
@@ -148,7 +200,7 @@ func newLintRunFixture(pages []*types.WikiPage) (*WikiLintService, *fakeLintRepo
 	repo := &fakeLintRepo{run: &types.WikiLintRun{
 		ID: "run-1", TenantID: 7, KnowledgeBaseID: "kb-1", Status: "queued",
 	}}
-	svc := NewWikiLintService(wiki, &fakeLintKBService{wikiEnabled: true}, nil, repo)
+	svc := NewWikiLintService(wiki, &fakeLintKBService{wikiEnabled: true}, nil, nil, nil, repo)
 	return svc, repo
 }
 
@@ -308,6 +360,65 @@ func TestProcessRunPublishesCoarseProgress(t *testing.T) {
 	assert.LessOrEqual(t, len(repo.progress), 21)
 	assert.Less(t, len(repo.progress), wiki.cursorCalls,
 		"progress writes are throttled, not one per page window")
+}
+
+// TestProcessRunPageScopeReadsOnlyItsOwnPages is what makes "check this page" a
+// real operation rather than a full scan the client filters afterwards: the run
+// must fetch the named page directly and never walk the knowledge base.
+func TestProcessRunPageScopeReadsOnlyItsOwnPages(t *testing.T) {
+	pages := orphanPages(50)
+	svc, repo := newLintRunFixture(pages)
+	wiki := svc.wikiService.(*fakeLintWikiService)
+	repo.run.Scope = types.WikiLintScopePage
+	repo.run.ScopeKey = "page:" + pages[3].Slug
+	repo.run.TargetSlugs = types.StringArray{pages[3].Slug}
+
+	require.NoError(t, svc.ProcessRun(context.Background(), WikiLintTaskPayload{
+		TenantID: 7, KnowledgeBaseID: "kb-1", RunID: "run-1",
+	}))
+
+	assert.Zero(t, wiki.cursorCalls, "a page-scoped run must not walk the knowledge base")
+	persisted := repo.persisted()
+	require.Len(t, persisted, 1)
+	assert.Equal(t, pages[3].Slug, persisted[0].Slug)
+
+	require.Len(t, repo.reconcileScopes, 1)
+	assert.Equal(t, []string{pages[3].Slug}, repo.reconcileScopes[0].Slugs,
+		"reconciliation may only close findings on the page the run actually read")
+	assert.Equal(t, []string{types.WikiIssueSourceLint}, repo.reconcileScopes[0].Sources)
+}
+
+// TestStartRunRejectsAIModeWithoutAModel puts the refusal at the click that
+// would have spent the calls. Discovering the missing configuration from a
+// failed run minutes later is the behaviour this prevents.
+func TestStartRunRejectsAIModeWithoutAModel(t *testing.T) {
+	svc, _ := newLintRunFixture(orphanPages(1))
+
+	_, err := svc.StartRun(context.Background(), 7, "kb-1", WikiLintRunRequest{
+		Mode: types.WikiLintModeAI,
+	})
+	require.ErrorIs(t, err, ErrWikiAIReviewUnavailable)
+}
+
+// TestStartRunDefaultsToTheFreeMode pins the safe default: a client that sends
+// no mode gets the deterministic rules, never model calls.
+func TestStartRunDefaultsToTheFreeMode(t *testing.T) {
+	svc, repo := newLintRunFixture(orphanPages(1))
+	repo.createdRuns = nil
+
+	run, err := svc.StartRun(context.Background(), 7, "kb-1", WikiLintRunRequest{Mode: "please-use-ai"})
+	require.NoError(t, err)
+	assert.Equal(t, types.WikiLintModeStatic, run.Mode)
+	assert.Equal(t, types.WikiLintScopeKB, run.ScopeKey)
+
+	scoped, err := svc.StartRun(context.Background(), 7, "kb-1", WikiLintRunRequest{
+		Slugs: []string{" concept/b ", "concept/a", "concept/a"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, types.WikiLintScopePage, scoped.Scope)
+	assert.Equal(t, types.StringArray{"concept/a", "concept/b"}, scoped.TargetSlugs,
+		"targets are deduplicated and ordered so the same request reuses one slot")
+	assert.Equal(t, "page:concept/a,concept/b", scoped.ScopeKey)
 }
 
 // TestProcessRunRejectsNonWikiKnowledgeBase keeps a lint run from silently
