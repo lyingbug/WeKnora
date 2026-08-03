@@ -108,7 +108,7 @@ func (s *WikiLintService) runAIPhase(
 	run.AIDetectors = types.StringArray(plan.detectorIDs)
 	run.AIUnitsSkipped += plan.skipped
 	if len(plan.units) == 0 {
-		run.Progress = 95
+		run.Progress = wikiLintProgressCeiling
 		_ = s.repo.UpdateLintRun(ctx, run)
 		return result, nil
 	}
@@ -118,11 +118,19 @@ func (s *WikiLintService) runAIPhase(
 		detectorByID[detector.ID()] = detector
 	}
 
+	// Planning is the slow part of an AI-only run — it walks candidates and, for
+	// pair detection, probes the title index once per seed. Publishing the phase
+	// boundary here is what makes the bar move when that finishes, instead of
+	// sitting at the static phase's opening value until the first call returns.
+	run.Progress = wikiReviewProgressFloor
+	_ = s.repo.UpdateLintRun(ctx, run)
+
 	completed := 0
 	var firstErr error
 	runner.execute(ctx, env, plan, func(outcome wikiReviewOutcome) {
 		completed++
-		run.Progress = 40 + completed*55/len(plan.units)
+		run.Progress = wikiReviewProgressFloor +
+			completed*(wikiLintProgressCeiling-wikiReviewProgressFloor)/len(plan.units)
 		run.AICalls++
 
 		if outcome.Err != nil {

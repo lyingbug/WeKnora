@@ -339,7 +339,7 @@ func (s *WikiLintService) scanWiki(
 			}
 		}
 		if progress != nil {
-			progress(95)
+			progress(wikiLintProgressCeiling)
 		}
 		return scan, nil
 	}
@@ -591,9 +591,25 @@ func wikiLintSummary(scan *wikiLintScan) string {
 	)
 }
 
+// The progress band a run publishes. 0 stays reserved for "queued" and 100 for
+// "committed and reconciled", so neither is ever reported by work in flight.
+//
+// wikiReviewProgressFloor is also the phase boundary of a full run: everything
+// below it is the rule scan, everything above it is the AI review. The frontend
+// reads the same boundary to label which phase is running, so the two cannot
+// disagree about what a given percentage means.
+const (
+	wikiLintProgressFloor   = 5
+	wikiReviewProgressFloor = 40
+	wikiLintProgressCeiling = 95
+	// wikiLintProgressStep throttles publication: the number of progress writes
+	// is bounded by the band rather than by the size of the knowledge base.
+	wikiLintProgressStep = 5
+)
+
 // wikiLintProgress converts "pages walked" into the coarse percentage a lint
 // run publishes. Two passes over totalPages make up the scan, and the band is
-// deliberately narrow (5-95) so the caller keeps 0 for "queued" and 100 for
+// deliberately narrow so the caller keeps 0 for "queued" and 100 for
 // "committed and reconciled".
 type wikiLintProgress struct {
 	totalUnits int64
@@ -613,11 +629,15 @@ func (p *wikiLintProgress) advance(pages int) {
 		return
 	}
 	p.done += int64(pages)
-	percent := 5 + int(float64(p.done)/float64(p.totalUnits)*90)
-	if percent > 95 {
-		percent = 95
+	percent := wikiLintProgressFloor + int(
+		float64(p.done)/float64(p.totalUnits)*float64(wikiLintProgressCeiling-wikiLintProgressFloor),
+	)
+	if percent > wikiLintProgressCeiling {
+		percent = wikiLintProgressCeiling
 	}
-	if percent-p.last < 5 {
+	// Publish only on a visible step, so a large knowledge base does not issue
+	// one progress write per page window.
+	if percent-p.last < wikiLintProgressStep {
 		return
 	}
 	p.last = percent
@@ -866,7 +886,7 @@ func (s *WikiLintService) ProcessRun(ctx context.Context, payload WikiLintTaskPa
 	ctx = context.WithValue(ctx, types.TenantIDContextKey, payload.TenantID)
 
 	now := time.Now()
-	run.Status, run.Progress, run.StartedAt = "running", 5, &now
+	run.Status, run.Progress, run.StartedAt = "running", wikiLintProgressFloor, &now
 	if err := s.repo.UpdateLintRun(ctx, run); err != nil {
 		return err
 	}
@@ -963,10 +983,10 @@ func (s *WikiLintService) runStaticPhase(
 	}
 
 	// A full run splits its progress bar between the two phases so the AI
-	// review, which is the slow one, is not reported as a stall at 95%.
-	staticCeiling := 95
+	// review, which is the slow one, is not reported as a stall near the end.
+	staticCeiling := wikiLintProgressCeiling
 	if types.WikiLintModeRunsAI(types.NormalizeWikiLintMode(run.Mode)) {
-		staticCeiling = 40
+		staticCeiling = wikiReviewProgressFloor
 	}
 
 	_, err := s.scanWiki(ctx, payload.KnowledgeBaseID, run.TargetSlugs, func(finding WikiLintIssue) error {
@@ -984,7 +1004,7 @@ func (s *WikiLintService) runStaticPhase(
 		}
 		return flush()
 	}, func(percent int) {
-		run.Progress = percent * staticCeiling / 95
+		run.Progress = percent * staticCeiling / wikiLintProgressCeiling
 		_ = s.repo.UpdateLintRun(ctx, run)
 	})
 	if err != nil {

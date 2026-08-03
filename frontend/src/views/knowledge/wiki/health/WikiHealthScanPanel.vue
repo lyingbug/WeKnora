@@ -132,13 +132,19 @@ const activeBlockedReason = computed(
   () => modeOptions.value.find((option) => option.value === selectedMode.value)?.blockedReason || '',
 )
 
-// The static rules are the fast phase and the review is the slow one, so the
-// progress bar is labelled by phase — otherwise a long review reads as a stall.
+/** The progress value that separates the rule scan from the AI review in a full
+ * run. It mirrors wikiReviewProgressFloor in the backend, which is what makes a
+ * percentage mean the same thing on both sides. */
+const AI_PHASE_FLOOR = 40
+
+// The rules are the fast phase and the review is the slow one, so the bar is
+// labelled by phase — otherwise a long review reads as a stall. A run that only
+// does one of the two is always in that phase, whatever the percentage.
 const phaseLabel = computed(() => {
   const run = props.run
-  if (!run) return t('knowledgeEditor.wikiBrowser.lintQueued')
-  if (run.status === 'queued') return t('knowledgeEditor.wikiBrowser.lintQueued')
-  if (run.mode !== 'static' && run.progress >= 40) {
+  if (!run || run.status === 'queued') return t('knowledgeEditor.wikiBrowser.lintQueued')
+  if (run.mode === 'ai') return t('knowledgeEditor.wikiBrowser.scanPhaseAi')
+  if (run.mode === 'full' && run.progress >= AI_PHASE_FLOOR) {
     return t('knowledgeEditor.wikiBrowser.scanPhaseAi')
   }
   return t('knowledgeEditor.wikiBrowser.scanPhaseStatic')
