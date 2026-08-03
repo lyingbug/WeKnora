@@ -765,6 +765,41 @@ func applyRetryableSummaryFailureState(
 	return fallback
 }
 
+// handleSummaryRefreshFailure maps a failed refresh onto the value returned to
+// the task executor, and guarantees a terminal delivery never leaves the row in
+// pending/processing — the frontend renders both as "generating summary", so a
+// refresh that dies on a path which never writes a status (tenant lookup, KB
+// lookup, unconfigured summary model, chunk listing, freshness verification)
+// would otherwise spin the placeholder forever.
+//
+// Stale and insufficient-content outcomes are deliberately swallowed: a newer
+// refresh owns the status in the first case, and the second already persisted
+// failed before returning.
+func (s *knowledgeService) handleSummaryRefreshFailure(
+	ctx context.Context, knowledgeID string, err error,
+) error {
+	if errors.Is(err, ErrSummaryRefreshStale) {
+		logger.Infof(ctx, "Discarding stale summary refresh for knowledge %s", knowledgeID)
+		return nil
+	}
+	logger.Warnf(ctx, "Summary refresh failed for knowledge %s: %v", knowledgeID, err)
+	if errors.Is(err, errInsufficientSummaryContent) {
+		return nil
+	}
+	if !summaryTaskWillRetry(ctx) && s.repo != nil {
+		// Column update rather than a full row write: RegenerateKnowledgeSummary
+		// may already have published a first-chunk fallback description that
+		// must survive this status write.
+		if updateErr := s.repo.UpdateKnowledgeColumn(
+			ctx, knowledgeID, "summary_status", types.SummaryStatusFailed,
+		); updateErr != nil {
+			logger.Warnf(ctx, "Failed to mark summary refresh failed for knowledge %s: %v",
+				knowledgeID, updateErr)
+		}
+	}
+	return err
+}
+
 // summaryTaskWillRetry reports whether the current Asynq delivery has another
 // configured attempt remaining. Calls outside an Asynq worker are terminal.
 func summaryTaskWillRetry(ctx context.Context) bool {
@@ -1038,15 +1073,7 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 			_, err = s.RegenerateKnowledgeSummary(ctx, payload.KnowledgeID)
 		}
 		if err != nil {
-			if errors.Is(err, ErrSummaryRefreshStale) {
-				logger.Infof(ctx, "Discarding stale summary refresh for knowledge %s", payload.KnowledgeID)
-				return nil
-			}
-			logger.Warnf(ctx, "Summary refresh failed for knowledge %s: %v", payload.KnowledgeID, err)
-			if errors.Is(err, errInsufficientSummaryContent) {
-				return nil
-			}
-			return err
+			return s.handleSummaryRefreshFailure(ctx, payload.KnowledgeID, err)
 		}
 		return nil
 	}
