@@ -226,6 +226,12 @@ type WikiPageService interface {
 	// attributed to WikiEditSourceRevert.
 	RevertPageToVersion(ctx context.Context, kbID string, slug string, version int) (*types.WikiPage, error)
 
+	// MergePages folds the source page into the target: the target takes on the
+	// merged content plus the source's aliases, source documents and citations,
+	// and the source page is removed. Callers are responsible for rewriting
+	// inbound links to the source before calling.
+	MergePages(ctx context.Context, req types.WikiPageMergeRequest) (*types.WikiPage, error)
+
 	// CreateIssue logs a new issue for a wiki page.
 	CreateIssue(ctx context.Context, issue *types.WikiPageIssue) (*types.WikiPageIssue, error)
 
@@ -323,11 +329,11 @@ type WikiPageRepository interface {
 	// the KB without loading every page at once.
 	ListPagesCursor(ctx context.Context, kbID string, cursor string, limit int) ([]*types.WikiPage, string, error)
 
-	// ListPagesPendingAIReview returns up to `limit` pages whose recorded AI
-	// review no longer covers their current version, never-reviewed pages
-	// first. Used to spend the AI review's per-run call budget where it can
-	// still find something.
-	ListPagesPendingAIReview(ctx context.Context, kbID string, reviewerVersion string, limit int) ([]*types.WikiPage, error)
+	// ListPagesPendingReview returns up to `query.Limit` pages a review detector
+	// has not judged since their last write, never-reviewed pages first. Used to
+	// spend the AI review's per-run call budget where it can still find
+	// something.
+	ListPagesPendingReview(ctx context.Context, query types.WikiPendingReviewQuery) ([]*types.WikiPage, error)
 
 	// ListByTypeRecent returns the most-recently-updated pages of the
 	// given type, projected to slug/title/summary, capped at `limit`.
@@ -444,10 +450,17 @@ type WikiPageRepository interface {
 	// ResolveMissingLintIssues closes findings a completed run no longer sees,
 	// restricted to the detector families and pages the run actually covered.
 	ResolveMissingLintIssues(ctx context.Context, scope types.WikiLintReconcileScope, resolvedAt time.Time) error
-	// ListPageAIReviews returns the AI review ledger for the given slugs.
-	ListPageAIReviews(ctx context.Context, kbID string, slugs []string) (map[string]*types.WikiPageAIReview, error)
-	// UpsertPageAIReview records that a page was examined at a content hash.
-	UpsertPageAIReview(ctx context.Context, review *types.WikiPageAIReview) error
+	// ResolveReviewedUnitIssues closes findings by exact fingerprint, for the
+	// findings whose unit of judgement is not a single page.
+	ResolveReviewedUnitIssues(
+		ctx context.Context, kbID, runID string, fingerprints []string, resolvedAt time.Time,
+	) error
+	// ListReviewLedger returns the review ledger rows for a detector's units.
+	ListReviewLedger(
+		ctx context.Context, kbID, detectorID string, unitKeys []string,
+	) (map[string]*types.WikiReviewLedger, error)
+	// UpsertReviewLedger records that a detector judged a unit at a set of inputs.
+	UpsertReviewLedger(ctx context.Context, entry *types.WikiReviewLedger) error
 	// ExpireStaleRepairAttempts retires repair attempts that stopped reporting
 	// before cutoff, releasing the issues they held.
 	ExpireStaleRepairAttempts(ctx context.Context, cutoff time.Time, message string, now time.Time) (int64, error)

@@ -452,6 +452,96 @@ func (s *wikiPageService) RenamePage(
 	return page, nil
 }
 
+// MergePages folds one page into another and removes the absorbed page.
+//
+// This exists because "these two pages are the same subject" was previously a
+// finding with no repair: an agent could rewrite one page and delete the other,
+// but the absorbed page's provenance — which documents it came from, which
+// chunks it cited, what people called it — was lost in the process, and a later
+// ingest of those same documents would simply recreate the duplicate.
+//
+// So a merge is a transfer, not a delete: the surviving page takes on the other's
+// aliases, source documents, and citations, which is also what makes the ingest
+// pipeline's dedup recognise the subject as already covered next time round.
+//
+// The order of writes is deliberate. The survivor is updated before the other
+// page is removed, so a failure in between leaves a merged page and a still-live
+// duplicate — untidy, re-detectable, and recoverable — rather than a deleted page
+// whose content went nowhere.
+func (s *wikiPageService) MergePages(
+	ctx context.Context, req types.WikiPageMergeRequest,
+) (*types.WikiPage, error) {
+	if strings.TrimSpace(req.Content) == "" {
+		return nil, errors.New("merged content is required")
+	}
+	if req.TargetSlug == req.SourceSlug {
+		return nil, errors.New("a page cannot be merged into itself")
+	}
+	target, err := s.repo.GetBySlug(ctx, req.KnowledgeBaseID, req.TargetSlug)
+	if err != nil {
+		return nil, fmt.Errorf("load merge target %s: %w", req.TargetSlug, err)
+	}
+	source, err := s.repo.GetBySlug(ctx, req.KnowledgeBaseID, req.SourceSlug)
+	if err != nil {
+		return nil, fmt.Errorf("load merged page %s: %w", req.SourceSlug, err)
+	}
+	// The index page is generated, is every page's entry point, and has no
+	// subject of its own — merging it away is never what anyone meant.
+	if target.PageType == types.WikiPageTypeIndex || source.PageType == types.WikiPageTypeIndex {
+		return nil, errors.New("the wiki index page cannot take part in a merge")
+	}
+
+	target.Content = req.Content
+	if summary := strings.TrimSpace(req.Summary); summary != "" {
+		target.Summary = summary
+	}
+	// The absorbed page's title becomes an alias so searches and cross-link
+	// injection keep resolving the name readers already know.
+	target.Aliases = mergeWikiAliases(target, source)
+	target.SourceRefs = appendUniqueAll(target.SourceRefs, source.SourceRefs)
+	target.ChunkRefs = appendUniqueAll(target.ChunkRefs, source.ChunkRefs)
+
+	merged, err := s.UpdatePage(ctx, target)
+	if err != nil {
+		return nil, fmt.Errorf("write merged page %s: %w", req.TargetSlug, err)
+	}
+	if err := s.DeletePage(ctx, req.KnowledgeBaseID, req.SourceSlug); err != nil {
+		return nil, fmt.Errorf(
+			"merged content was written to %s but %s could not be removed: %w",
+			req.TargetSlug, req.SourceSlug, err,
+		)
+	}
+	logger.Infof(ctx, "wiki merge: %s absorbed %s in KB %s",
+		req.TargetSlug, req.SourceSlug, req.KnowledgeBaseID)
+	return merged, nil
+}
+
+// mergeWikiAliases collects the surface forms the surviving page must answer to,
+// dropping any that duplicate its own title.
+func mergeWikiAliases(target, source *types.WikiPage) types.StringArray {
+	aliases := appendUniqueAll(target.Aliases, source.Aliases)
+	aliases = appendUnique(aliases, source.Title)
+	out := make(types.StringArray, 0, len(aliases))
+	for _, alias := range aliases {
+		if strings.EqualFold(strings.TrimSpace(alias), strings.TrimSpace(target.Title)) {
+			continue
+		}
+		out = append(out, alias)
+	}
+	return out
+}
+
+// appendUniqueAll folds every value of extra into arr, skipping duplicates.
+func appendUniqueAll(arr types.StringArray, extra types.StringArray) types.StringArray {
+	for _, value := range extra {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		arr = appendUnique(arr, value)
+	}
+	return arr
+}
+
 // GetIndex returns the index page for a knowledge base
 func (s *wikiPageService) GetIndex(ctx context.Context, kbID string) (*types.WikiPage, error) {
 	page, err := s.repo.GetBySlug(ctx, kbID, "index")

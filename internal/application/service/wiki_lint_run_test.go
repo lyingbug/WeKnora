@@ -101,8 +101,8 @@ type fakeLintRepo struct {
 	// aiBudget records the limit the run actually asked for.
 	aiCandidates []*types.WikiPage
 	aiBudget     int
-	aiLedger     map[string]*types.WikiPageAIReview
-	ledgerWrites []*types.WikiPageAIReview
+	aiLedger     map[string]*types.WikiReviewLedger
+	ledgerWrites []*types.WikiReviewLedger
 	createdRuns  []*types.WikiLintRun
 }
 
@@ -138,9 +138,10 @@ func (f *fakeLintRepo) ResolveMissingLintIssues(
 	return nil
 }
 
-func (f *fakeLintRepo) ListPagesPendingAIReview(
-	_ context.Context, _ string, _ string, limit int,
+func (f *fakeLintRepo) ListPagesPendingReview(
+	_ context.Context, query types.WikiPendingReviewQuery,
 ) ([]*types.WikiPage, error) {
+	limit := query.Limit
 	if limit > len(f.aiCandidates) {
 		limit = len(f.aiCandidates)
 	}
@@ -148,18 +149,18 @@ func (f *fakeLintRepo) ListPagesPendingAIReview(
 	return f.aiCandidates[:limit], nil
 }
 
-func (f *fakeLintRepo) ListPageAIReviews(
-	_ context.Context, _ string, _ []string,
-) (map[string]*types.WikiPageAIReview, error) {
+func (f *fakeLintRepo) ListReviewLedger(
+	_ context.Context, _, _ string, _ []string,
+) (map[string]*types.WikiReviewLedger, error) {
 	return f.aiLedger, nil
 }
 
-func (f *fakeLintRepo) UpsertPageAIReview(_ context.Context, review *types.WikiPageAIReview) error {
+func (f *fakeLintRepo) UpsertReviewLedger(_ context.Context, entry *types.WikiReviewLedger) error {
 	if f.aiLedger == nil {
-		f.aiLedger = map[string]*types.WikiPageAIReview{}
+		f.aiLedger = map[string]*types.WikiReviewLedger{}
 	}
-	f.aiLedger[review.Slug] = review
-	f.ledgerWrites = append(f.ledgerWrites, review)
+	f.aiLedger[entry.UnitKey] = entry
+	f.ledgerWrites = append(f.ledgerWrites, entry)
 	return nil
 }
 
@@ -199,7 +200,7 @@ func newLintRunFixture(pages []*types.WikiPage) (*WikiLintService, *fakeLintRepo
 	repo := &fakeLintRepo{run: &types.WikiLintRun{
 		ID: "run-1", TenantID: 7, KnowledgeBaseID: "kb-1", Status: "queued",
 	}}
-	svc := NewWikiLintService(wiki, &fakeLintKBService{wikiEnabled: true}, nil, nil, repo)
+	svc := NewWikiLintService(wiki, &fakeLintKBService{wikiEnabled: true}, nil, nil, nil, repo)
 	return svc, repo
 }
 

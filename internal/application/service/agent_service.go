@@ -495,6 +495,7 @@ func (s *agentService) registerTools(
 			tools.ToolWikiReplaceText:   true,
 			tools.ToolWikiRenamePage:    true,
 			tools.ToolWikiDeletePage:    true,
+			tools.ToolWikiMergePages:    true,
 			tools.ToolWikiReadIssue:     true,
 			tools.ToolWikiUpdateIssue:   true,
 		}
@@ -542,6 +543,7 @@ func (s *agentService) registerTools(
 		tools.ToolWikiReplaceText:   true,
 		tools.ToolWikiRenamePage:    true,
 		tools.ToolWikiDeletePage:    true,
+		tools.ToolWikiMergePages:    true,
 		tools.ToolWikiReadIssue:     true,
 		tools.ToolWikiUpdateIssue:   true,
 	}
@@ -665,6 +667,8 @@ func (s *agentService) registerTools(
 			toolToRegister = tools.NewWikiRenamePageTool(s.wikiPageService, wikiKBIDs, wikiRoutes)
 		case tools.ToolWikiDeletePage:
 			toolToRegister = tools.NewWikiDeletePageTool(s.wikiPageService, wikiKBIDs, wikiRoutes)
+		case tools.ToolWikiMergePages:
+			toolToRegister = tools.NewWikiMergePagesTool(s.wikiPageService, wikiKBIDs, wikiRoutes)
 
 		default:
 			logger.Warnf(ctx, "Unknown tool: %s", toolName)
@@ -693,6 +697,7 @@ func filterSharedAgentWriteTools(allowed []string) []string {
 		tools.ToolWikiReplaceText: true,
 		tools.ToolWikiRenamePage:  true,
 		tools.ToolWikiDeletePage:  true,
+		tools.ToolWikiMergePages:  true,
 	}
 	filtered := make([]string, 0, len(allowed))
 	for _, name := range allowed {

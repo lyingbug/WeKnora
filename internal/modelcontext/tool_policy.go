@@ -134,6 +134,9 @@ var toolHandlePolicies = map[string]toolHandlePolicy{
 	"wiki_delete_page": {
 		sourceOutput: true,
 	},
+	"wiki_merge_pages": {
+		sourceOutput: true,
+	},
 	// Agent-private bookkeeping tools echo model-authored text. They need
 	// compaction so a durable ID quoted back by the model is re-compacted, but
 	// never structured source rendering.

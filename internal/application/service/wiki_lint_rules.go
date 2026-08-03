@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -234,27 +235,22 @@ func verifyWikiIssuePostcondition(ctx context.Context, in wikiVerifyInput) error
 
 // verifyWikiAIFindingResolved closes the loop on an AI finding.
 //
-// AI findings are the one class of semantic finding that carries a machine-
-// checkable anchor: the reviewer had to quote the page verbatim, so the cheapest
-// and strongest signal is whether that exact span survived the repair. When it
-// did not, the finding is resolved with no model call at all — which is the
-// common case, because the flagged text is what an editor rewrites.
+// Every AI finding gets a cheap, deterministic first check, chosen by what the
+// finding is actually about. That check is what keeps repair verification free in
+// the common case, and it is only ever allowed to answer "resolved" — never to
+// pass a repair it could not confirm.
 //
-// A surviving quote is genuinely ambiguous rather than a failure: a contradiction
-// can be resolved by editing the other side of it. Only then do we spend one
-// bounded recheck call. If no reviewer is configured, or the recheck itself
-// fails, we fall back to requiring that the page really advanced — the same
-// answer agent-reported findings get, never a silent pass.
+// When the cheap check cannot settle the question, one bounded recheck call asks
+// the detector whether it still reports the same finding. If no reviewer is
+// configured, or the recheck itself fails, we fall back to requiring that the
+// page really advanced — the same answer agent-reported findings get, never a
+// silent pass.
 func verifyWikiAIFindingResolved(ctx context.Context, in wikiVerifyInput) error {
 	if err := verifyWikiSemanticProgress(in); err != nil {
 		return err
 	}
-	quote := strings.TrimSpace(in.EvidenceQuote)
-	if quote == "" {
-		return nil
-	}
-	if !strings.Contains(normalizeWikiEvidence(in.Page.Content), normalizeWikiEvidence(quote)) {
-		return nil
+	if settled, err := wikiAICheapPostcondition(ctx, in); settled {
+		return err
 	}
 	if in.Recheck == nil {
 		return nil
@@ -267,6 +263,130 @@ func verifyWikiAIFindingResolved(ctx context.Context, in wikiVerifyInput) error 
 		return errors.New("the AI review still reports this problem on the page after the repair")
 	}
 	return nil
+}
+
+// wikiAICheapPostcondition applies the deterministic check for an AI finding's
+// type. It reports settled=true when the check reached a verdict, so an
+// inconclusive result falls through to the recheck rather than being treated as
+// either success or failure.
+func wikiAICheapPostcondition(ctx context.Context, in wikiVerifyInput) (settled bool, err error) {
+	switch in.Issue.IssueType {
+	case types.WikiIssueTypeIncompleteSummary:
+		return verifyWikiCoverageGrew(in)
+	case types.WikiIssueTypeDuplicatePages:
+		return verifyWikiPairDisambiguated(ctx, in)
+	default:
+		return verifyWikiEvidenceRewritten(in)
+	}
+}
+
+// verifyWikiEvidenceRewritten is the check for findings anchored to a quote.
+//
+// The reviewer had to copy the span it objected to, so a rewritten span is proof
+// on its own — and it is the common case, because the flagged text is exactly
+// what an editor rewrites. A surviving quote is genuinely ambiguous rather than a
+// failure: a contradiction can be resolved by editing the other side of it.
+func verifyWikiEvidenceRewritten(in wikiVerifyInput) (bool, error) {
+	quote := strings.TrimSpace(in.EvidenceQuote)
+	if quote == "" {
+		return true, nil
+	}
+	if !strings.Contains(normalizeWikiEvidence(in.Page.Content), normalizeWikiEvidence(quote)) {
+		return true, nil
+	}
+	return false, nil
+}
+
+// verifyWikiCoverageGrew is the check for an incomplete summary.
+//
+// The finding was recorded with the measurements it was made at, so the
+// postcondition is arithmetic rather than judgement: the page must have taken on
+// materially more of its source, either as prose or as new citations. Requiring
+// growth is what stops a repair from closing the issue by merely rewording a page
+// that still omits the same subject.
+func verifyWikiCoverageGrew(in wikiVerifyInput) (bool, error) {
+	evidence := wikiIssueEvidenceMap(in.Issue)
+	recordedRunes := wikiEvidenceInt(evidence, "content_runes")
+	recordedCitations := wikiEvidenceInt(evidence, "cited_chunks")
+	if recordedRunes <= 0 && recordedCitations <= 0 {
+		return false, nil
+	}
+	if len(in.Page.ChunkRefs) > recordedCitations {
+		return true, nil
+	}
+	if recordedRunes > 0 {
+		grown := float64(wikiContentRunes(in.Page.Content)) >=
+			float64(recordedRunes)*wikiCoverageGrowthFactor
+		if grown {
+			return true, nil
+		}
+		return true, fmt.Errorf(
+			"the page still covers no more of its source than when the issue was found (%d characters, %d citations)",
+			wikiContentRunes(in.Page.Content), len(in.Page.ChunkRefs),
+		)
+	}
+	return false, nil
+}
+
+// wikiCoverageGrowthFactor is how much longer a page must get before an
+// incomplete-summary finding counts as addressed. Set well above rewording noise
+// so a genuine addition clears it and a copy-edit does not.
+const wikiCoverageGrowthFactor = 1.15
+
+// verifyWikiPairDisambiguated is the check for a duplicate-page finding.
+//
+// A duplicate is resolved in one of two legitimate ways, and both are observable:
+// the pages were merged, so one of them is gone, or an editor decided they are
+// distinct after all and linked them, which is the same signal the detector uses
+// to stop proposing the pair.
+func verifyWikiPairDisambiguated(ctx context.Context, in wikiVerifyInput) (bool, error) {
+	evidence := wikiIssueEvidenceMap(in.Issue)
+	otherSlug, _ := evidence["other_slug"].(string)
+	otherSlug = strings.TrimSpace(otherSlug)
+	if otherSlug == "" || in.Pages == nil {
+		return false, nil
+	}
+	other, err := in.Pages.GetBySlug(ctx, in.Issue.KnowledgeBaseID, otherSlug)
+	if errors.Is(err, repository.ErrWikiPageNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, nil
+	}
+	if other.Status == types.WikiPageStatusArchived {
+		return true, nil
+	}
+	if containsWikiRef(in.Page.OutLinks, otherSlug) || containsWikiRef(other.OutLinks, in.Page.Slug) {
+		return true, nil
+	}
+	return true, fmt.Errorf(
+		"page %s still exists and neither page links to the other, so the duplicate is unresolved",
+		otherSlug,
+	)
+}
+
+// wikiIssueEvidenceMap decodes a finding's evidence, tolerating the empty and
+// malformed forms on historical rows.
+func wikiIssueEvidenceMap(issue *types.WikiPageIssue) map[string]interface{} {
+	evidence := map[string]interface{}{}
+	if issue == nil || len(issue.Evidence) == 0 {
+		return evidence
+	}
+	_ = json.Unmarshal(issue.Evidence, &evidence)
+	return evidence
+}
+
+// wikiEvidenceInt reads a number out of evidence JSON, where every number
+// arrives as a float64.
+func wikiEvidenceInt(evidence map[string]interface{}, key string) int {
+	switch value := evidence[key].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	default:
+		return 0
+	}
 }
 
 // verifyWikiSemanticProgress is the fallback postcondition for findings whose

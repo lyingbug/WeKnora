@@ -107,7 +107,7 @@ func setupWikiPagesTestDB(t *testing.T) *gorm.DB {
 	}
 	require.NoError(t, db.AutoMigrate(
 		&types.WikiPageIssue{}, &types.WikiRepairAttempt{},
-		&types.WikiLintRun{}, &types.WikiPageAIReview{},
+		&types.WikiLintRun{}, &types.WikiReviewLedger{},
 	))
 	return db
 }

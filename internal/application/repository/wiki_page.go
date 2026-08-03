@@ -1076,40 +1076,56 @@ func (r *wikiPageRepository) ListPagesCursor(
 	return pages, nextCursor, nil
 }
 
-// ListPagesPendingAIReview returns the pages most worth spending an AI review
-// call on, newest work first.
+// ListPagesPendingReview returns the pages most worth spending a review call
+// on, newest work first.
 //
 // The AI review has a per-run call budget, so page selection is where that
-// budget is actually spent. Two things decide the order: a page nobody has
-// ever reviewed comes before one that only changed, and within each group the
-// most recently updated page comes first — freshly ingested content is where
-// semantic defects are introduced. Pages whose recorded review already covers
-// their current version are excluded outright, which is what makes a repeat
-// scan of an unchanged wiki nearly free.
+// budget is actually spent. Two things decide the order: a page nobody has ever
+// reviewed comes before one that only changed, and within each group the most
+// recently updated page comes first — freshly ingested content is where defects
+// are introduced. Pages whose ledger entry is newer than their last write are
+// excluded outright, which is what makes a repeat scan of an unchanged wiki
+// nearly free.
 //
-// The index page is skipped: its body is generated boilerplate, not prose an
-// editor would fix.
-func (r *wikiPageRepository) ListPagesPendingAIReview(
-	ctx context.Context, kbID string, reviewerVersion string, limit int,
+// The exclusion is deliberately coarse (a timestamp, not a content hash) so it
+// can be a single indexed join; the runner still compares the exact unit hash
+// before spending a call, so a page touched only by link maintenance is skipped
+// there rather than here.
+//
+// The index page is always excluded: its body is generated boilerplate, not
+// prose an editor would fix.
+func (r *wikiPageRepository) ListPagesPendingReview(
+	ctx context.Context, query types.WikiPendingReviewQuery,
 ) ([]*types.WikiPage, error) {
-	if limit <= 0 {
+	if query.Limit <= 0 {
 		return nil, nil
 	}
-	var pages []*types.WikiPage
-	err := r.db.WithContext(ctx).
+	db := r.db.WithContext(ctx).
 		Table("wiki_pages AS p").
 		Select("p.*").
-		Joins(`LEFT JOIN wiki_page_ai_reviews AS r
+		Joins(`LEFT JOIN wiki_review_ledger AS r
 			ON r.knowledge_base_id = p.knowledge_base_id
-			AND r.page_id = p.id
-			AND r.reviewer_version = ?`, reviewerVersion).
+			AND r.detector_id = ?
+			AND r.unit_key = p.id
+			AND r.reviewer_version = ?`, query.DetectorID, query.ReviewerVersion).
 		Where("p.knowledge_base_id = ? AND p.status <> ? AND p.page_type <> ?",
-			kbID, types.WikiPageStatusArchived, types.WikiPageTypeIndex).
+			query.KnowledgeBaseID, types.WikiPageStatusArchived, types.WikiPageTypeIndex).
 		Where("p.deleted_at IS NULL").
-		Where("r.id IS NULL OR r.reviewed_version < p.version").
+		Where("r.id IS NULL OR r.reviewed_at < p.updated_at")
+	if len(query.PageTypes) > 0 {
+		db = db.Where("p.page_type IN ?", query.PageTypes)
+	}
+	if query.RequireSourceRefs {
+		// A grounding review has nothing to compare against without a source
+		// document, so those pages must never consume its budget.
+		db = db.Where("p.source_refs IS NOT NULL AND CAST(p.source_refs AS TEXT) NOT IN ?",
+			[]string{"", "[]", "null"})
+	}
+	var pages []*types.WikiPage
+	err := db.
 		Order("CASE WHEN r.id IS NULL THEN 0 ELSE 1 END ASC").
 		Order("p.updated_at DESC").
-		Limit(limit).
+		Limit(query.Limit).
 		Find(&pages).Error
 	if err != nil {
 		return nil, err
@@ -1591,13 +1607,41 @@ func (r *wikiPageRepository) ResolveMissingLintIssues(
 		Where("knowledge_base_id = ? AND source IN ?", scope.KnowledgeBaseID, scope.Sources).
 		Where("last_seen_run_id <> ?", scope.RunID).
 		Where("status IN ?", types.WikiIssueActionableStatuses)
+	if len(scope.IssueTypes) > 0 {
+		query = query.Where("issue_type IN ?", scope.IssueTypes)
+	}
 	if scope.Slugs != nil {
 		if len(scope.Slugs) == 0 {
 			return nil
 		}
 		query = query.Where("slug IN ?", scope.Slugs)
 	}
-	return query.Updates(map[string]interface{}{
+	return query.Updates(wikiLintReconcileUpdates(resolvedAt)).Error
+}
+
+// ResolveReviewedUnitIssues closes findings by exact fingerprint.
+//
+// Some findings do not belong to a page — a duplicate pair, a page measured
+// against its source — so only a review of that same unit can retire them.
+// Naming the fingerprints the reviewed units own is what lets absence close them
+// without a page-scoped query ever touching a unit nobody looked at.
+func (r *wikiPageRepository) ResolveReviewedUnitIssues(
+	ctx context.Context, kbID, runID string, fingerprints []string, resolvedAt time.Time,
+) error {
+	if len(fingerprints) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&types.WikiPageIssue{}).
+		Where("knowledge_base_id = ? AND fingerprint IN ?", kbID, fingerprints).
+		Where("last_seen_run_id <> ?", runID).
+		Where("status IN ?", types.WikiIssueActionableStatuses).
+		Updates(wikiLintReconcileUpdates(resolvedAt)).Error
+}
+
+// wikiLintReconcileUpdates is the single column set both reconciliation paths
+// apply, so a finding closed by absence looks the same however it was scoped.
+func wikiLintReconcileUpdates(resolvedAt time.Time) map[string]interface{} {
+	return map[string]interface{}{
 		"status":                types.WikiIssueStatusResolved,
 		"resolved_at":           resolvedAt,
 		"resolution_action":     "lint_no_longer_detected",
@@ -1605,40 +1649,42 @@ func (r *wikiPageRepository) ResolveMissingLintIssues(
 		"active_attempt_id":     "",
 		"resolved_page_version": gorm.Expr("detected_page_version"),
 		"updated_at":            resolvedAt,
-	}).Error
+	}
 }
 
-// ListPageAIReviews returns the review ledger rows for the given slugs, keyed
-// by slug. The AI reviewer reads it to skip pages whose body has not changed
-// since the last review.
-func (r *wikiPageRepository) ListPageAIReviews(
-	ctx context.Context, kbID string, slugs []string,
-) (map[string]*types.WikiPageAIReview, error) {
-	out := make(map[string]*types.WikiPageAIReview, len(slugs))
-	if len(slugs) == 0 {
+// ListReviewLedger returns the ledger rows for the given detector and unit
+// keys. The review runner reads it to skip units whose inputs have not changed
+// since they were last judged.
+func (r *wikiPageRepository) ListReviewLedger(
+	ctx context.Context, kbID, detectorID string, unitKeys []string,
+) (map[string]*types.WikiReviewLedger, error) {
+	out := make(map[string]*types.WikiReviewLedger, len(unitKeys))
+	if len(unitKeys) == 0 {
 		return out, nil
 	}
-	var rows []*types.WikiPageAIReview
+	var rows []*types.WikiReviewLedger
 	if err := r.db.WithContext(ctx).
-		Where("knowledge_base_id = ? AND slug IN ?", kbID, slugs).
+		Where("knowledge_base_id = ? AND detector_id = ? AND unit_key IN ?", kbID, detectorID, unitKeys).
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
-		out[row.Slug] = row
+		out[row.UnitKey] = row
 	}
 	return out, nil
 }
 
-// UpsertPageAIReview records that a page was examined at a given content hash.
-func (r *wikiPageRepository) UpsertPageAIReview(ctx context.Context, review *types.WikiPageAIReview) error {
+// UpsertReviewLedger records that a detector judged a unit at a set of inputs.
+func (r *wikiPageRepository) UpsertReviewLedger(ctx context.Context, entry *types.WikiReviewLedger) error {
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "knowledge_base_id"}, {Name: "page_id"}},
+		Columns: []clause.Column{
+			{Name: "knowledge_base_id"}, {Name: "detector_id"}, {Name: "unit_key"},
+		},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"slug", "content_hash", "reviewer_version", "reviewed_version",
+			"unit_hash", "reviewer_version", "primary_slug",
 			"finding_count", "run_id", "model_id", "reviewed_at", "updated_at",
 		}),
-	}).Create(review).Error
+	}).Create(entry).Error
 }
 
 func (r *wikiPageRepository) ClaimIssueAndCreateAttempt(
@@ -1851,8 +1897,9 @@ func (r *wikiPageRepository) UpdateLintRun(ctx context.Context, run *types.WikiL
 		Where("id = ? AND knowledge_base_id = ?", run.ID, run.KnowledgeBaseID).
 		Updates(map[string]interface{}{
 			"status": run.Status, "progress": run.Progress, "finding_count": run.FindingCount,
-			"ai_pages_scanned": run.AIPagesScanned, "ai_pages_skipped": run.AIPagesSkipped,
+			"ai_units_reviewed": run.AIUnitsReviewed, "ai_units_skipped": run.AIUnitsSkipped,
 			"ai_calls": run.AICalls, "ai_finding_count": run.AIFindingCount,
+			"ai_detectors":  run.AIDetectors,
 			"error_message": run.ErrorMessage, "started_at": run.StartedAt,
 			"finished_at": run.FinishedAt, "updated_at": time.Now(),
 		})
