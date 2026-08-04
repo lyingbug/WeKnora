@@ -8,6 +8,7 @@ const inputField = read('../components/Input-field.vue')
 const createChat = read('./creatChat/creatChat.vue')
 const knowledgeBase = read('./knowledge/KnowledgeBase.vue')
 const platform = read('./platform/index.vue')
+const settings = read('./settings/Settings.vue')
 
 // The composer used to be sized by its host pages at four hard-coded
 // breakpoints, which left a dead gap between the typing area and the box
@@ -37,6 +38,16 @@ test('the control bar stays on one row on phones', () => {
   // row, growing the composer and moving send out of thumb reach.
   assert.match(inputField, /\.mobile\(\{[\s\S]*?\.control-bar\s*\{[^}]*flex-wrap:\s*nowrap;/)
   assert.match(inputField, /\.mobile\(\{[\s\S]*?\.control-left\s*\{[^}]*overflow-x:\s*auto;/)
+})
+
+test('settings rows stack their label above the control on phones', () => {
+  // The setting pages pin the control column to min-width: 280px and give
+  // the select an inline width, which crushes the label column to one
+  // character per line at 360px.
+  const phoneBlock = /@media screen and \(max-width: 767px\) \{[\s\S]*?\n\}/.exec(settings)?.[0] ?? ''
+  assert.match(phoneBlock, /:deep\(\.settings-content \.setting-row\)\s*\{[^}]*flex-direction:\s*column;/)
+  assert.match(phoneBlock, /\.setting-row > \.setting-control\)\s*\{[^}]*min-width:\s*0;/)
+  assert.match(phoneBlock, /\.setting-row > \.setting-control > \*\)\s*\{[^}]*width:\s*100%\s*!important;/)
 })
 
 test('the tablet sidebar collapse watcher runs on first render', () => {

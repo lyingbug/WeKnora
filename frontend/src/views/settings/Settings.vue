@@ -1011,6 +1011,33 @@ onUnmounted(() => {
     }
   }
 
+  // 设置项在手机上改为「说明在上、控件在下」。子页面把控件列固定成
+  // min-width: 280px 并给 t-select 写了行内 width，360px 下会把说明列压到
+  // 一个字一行。后代选择器多一层是为了压过子组件 scoped 规则的同等权重，
+  // 行内宽度只能用 !important 覆盖。
+  :deep(.settings-content .setting-row) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  :deep(.settings-content .setting-row > .setting-info) {
+    max-width: 100%;
+    padding-right: 0;
+  }
+
+  :deep(.settings-content .setting-row > .setting-control) {
+    min-width: 0;
+    width: 100%;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+  :deep(.settings-content .setting-row > .setting-control > *) {
+    width: 100% !important;
+    max-width: 100%;
+  }
+
   .close-btn {
     top: 6px;
     right: 6px;
