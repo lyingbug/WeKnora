@@ -565,6 +565,7 @@ export default {
     noResources: '未找到可同步的知识库空间',
     noResourcesDesc: '应用需要通过群聊获得知识库访问权限才能拉取内容',
     noResourcesDesc_notion: '应用需要获得 Notion 页面的访问权限才能拉取内容',
+    noResourcesDesc_dingtalk: "请确认应用已开通知识库和文件读取权限，且操作人可以访问目标知识库。",
     retryLoadResources: '重新加载',
     guideStep1: '在飞书中创建一个群聊，在群设置「群机器人」中添加你的应用',
     guideStep2: '打开知识库「设置」→「成员设置」→ 添加成员，搜索该群聊名称并添加',
@@ -572,7 +573,11 @@ export default {
     guideStep1_notion: '在 Notion 中打开你想要同步的页面或数据库',
     guideStep2_notion: '点击右上角的「···」菜单，选择「Connect to」或「Add connections」',
     guideStep3_notion: '搜索并选择你的集成应用（Integration），然后回到这里点重新加载',
+    guideStep1_dingtalk: "在钉钉开放平台创建企业内部应用",
+    guideStep2_dingtalk: "开通知识库读、知识库节点读和企业存储文件读权限，并发布应用版本",
+    guideStep3_dingtalk: "确认操作人可以访问目标知识库，然后回到这里重新加载",
     permissionDocLink: '查看飞书知识库权限配置文档',
+    permissionDocLink_dingtalk: "查看钉钉知识库 API 文档",
     syncScheduleLabel: '同步频率',
     conflictLabel: '冲突策略',
     syncDeletions: '同步删除（源端删除时同步删除知识库中的条目）',
@@ -596,10 +601,18 @@ export default {
     prereqStep3Brief_yuque: '（可选）企业版填写 Base URL',
     prereqStep3Desc_yuque: '公有云用户无需填写；语雀企业版或私有部署请填写企业域名',
     prereqOpenConsole_yuque: '前往语雀 Token 设置',
+    prereqBarText_dingtalk: "首次使用？点击查看钉钉应用配置指引",
+    prereqStep1Brief_dingtalk: "创建企业内部应用",
+    prereqStep1Desc_dingtalk: "在钉钉开放平台创建应用，并获取 Client ID 和 Client Secret。",
+    prereqStep2Brief_dingtalk: "开通三个只读权限",
+    prereqStep2Desc_dingtalk: "开通知识库读、知识库节点读、企业存储文件读权限，并发布应用版本。",
+    prereqStep3Brief_dingtalk: "准备操作人 UnionID",
+    prereqStep3Desc_dingtalk: "使用一个对目标知识库和文档具有读取权限的用户 unionId。",
     prereqBotBrief: '为应用添加「机器人」能力',
     prereqBotDesc: '开放平台 → 添加应用能力 → 机器人 → 创建版本并发布',
     prereqPermBrief: '开通 API 权限',
     prereqOpenConsole: '前往飞书开放平台配置',
+    prereqOpenConsole_dingtalk: "前往钉钉开放平台配置",
     prereqMemberBrief: '通过群聊添加为知识库成员',
     prereqMemberDesc: '创建群聊 → 添加应用为群机器人 → 将群聊添加为知识库成员',
     back: '上一步',
@@ -615,10 +628,20 @@ export default {
     minutesAgo: '{n} 分钟前',
     hoursAgo: '{n} 小时前',
     daysAgo: '{n} 天前',
+    syncError: {
+      dingtalk_auth_or_permission: "钉钉鉴权或权限不足，请检查凭证、应用权限及操作人访问权限",
+      dingtalk_rate_limited: "钉钉接口限流，下次同步时将重试",
+      dingtalk_timeout: "钉钉接口请求超时，下次同步时将重试",
+      dingtalk_unavailable: "钉钉服务暂时不可用，下次同步时将重试",
+      dingtalk_api_error: "钉钉接口错误（code={code}），下次同步时将重试",
+      dingtalk_api_error_generic: "钉钉接口错误，下次同步时将重试"
+    },
     resourceType: {
       wikiSpace: '知识库空间',
       docCategory: '文档标签',
-      book: '语雀知识库'
+      book: '语雀知识库',
+      folder: "文件夹",
+      document: "在线文档"
     },
     scheduleHuman: {
       '30min': '每 30 分钟',
@@ -630,6 +653,10 @@ export default {
     field: {
       appId: 'App ID',
       appSecret: 'App Secret',
+      clientId: "Client ID（AppKey）",
+      clientSecret: "Client Secret（AppSecret）",
+      operatorId: "操作人 UnionID",
+      operatorIdHint: "填写一个对目标知识库具有读取权限的用户 unionId。",
       integrationToken: 'Integration Token',
       apiToken: 'API Token',
       baseUrl: 'Base URL（可选）',
@@ -644,14 +671,16 @@ export default {
       lark: '同步 Lark 知识库中的文档、表格、文件（飞书国际版）',
       notion: '同步 Notion 中的页面和数据库',
       yuque: '同步语雀知识库中的文档',
-      rss: '同步 RSS / Atom 订阅源中的文章'
+      rss: '同步 RSS / Atom 订阅源中的文章',
+      dingtalk: "同步钉钉知识库中的在线文档"
     },
     connector: {
       feishu: '飞书',
       lark: 'Lark（飞书国际版）',
       notion: 'Notion',
       yuque: '语雀',
-      rss: 'RSS / Atom 订阅'
+      rss: 'RSS / Atom 订阅',
+      dingtalk: "钉钉文档"
     },
     logDetail: {
       startTime: '开始时间',

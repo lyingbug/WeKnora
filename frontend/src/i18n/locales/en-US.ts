@@ -5077,6 +5077,7 @@ export default {
     noResources: 'No wiki spaces found',
     noResourcesDesc: 'The app needs wiki access via a group chat to fetch content',
     noResourcesDesc_notion: 'The app needs Notion page access permissions to fetch content',
+    noResourcesDesc_dingtalk: 'Check the app wiki/file read permissions and ensure the operator can access the target knowledge base.',
     retryLoadResources: 'Retry',
     guideStep1: 'Create a group chat in Feishu, then add your app as a bot in the group settings',
     guideStep2: 'Open wiki "Settings" > "Member Settings" > "Add Member", search for the group chat and add it',
@@ -5084,7 +5085,11 @@ export default {
     guideStep1_notion: 'Open the page or database you want to sync in Notion',
     guideStep2_notion: 'Click the "···" menu at the top right, select "Connect to" or "Add connections"',
     guideStep3_notion: 'Search and select your Integration app, then come back and click Retry',
+    guideStep1_dingtalk: 'Create an enterprise internal app in DingTalk Open Platform',
+    guideStep2_dingtalk: 'Grant knowledge-base, node, and enterprise-file read permissions, then publish an app version',
+    guideStep3_dingtalk: 'Ensure the operator can access the target knowledge base, then reload resources',
     permissionDocLink: 'View Feishu wiki permission docs',
+    permissionDocLink_dingtalk: 'View DingTalk knowledge-base API docs',
     syncScheduleLabel: 'Sync schedule',
     conflictLabel: 'Conflict strategy',
     conflict: {
@@ -5136,18 +5141,24 @@ export default {
       lark: 'Lark',
       notion: 'Notion',
       yuque: 'Yuque',
-      rss: 'RSS / Atom Feed'
+      rss: 'RSS / Atom Feed',
+      dingtalk: 'DingTalk Docs'
     },
     connectorDesc: {
       feishu: 'Sync documents, spreadsheets and files from Feishu Wiki',
       lark: 'Sync documents, spreadsheets and files from Lark Wiki (Feishu international)',
       notion: 'Sync pages and databases from Notion',
       yuque: 'Sync documents from Yuque knowledge bases',
-      rss: 'Sync articles from RSS / Atom feeds'
+      rss: 'Sync articles from RSS / Atom feeds',
+      dingtalk: 'Sync online documents from DingTalk knowledge bases'
     },
     field: {
       appId: 'App ID',
       appSecret: 'App Secret',
+      clientId: 'Client ID (AppKey)',
+      clientSecret: 'Client Secret (AppSecret)',
+      operatorId: 'Operator UnionID',
+      operatorIdHint: 'Use the unionId of a user who can read the target knowledge base.',
       integrationToken: 'Integration Token',
       apiToken: 'API Token',
       baseUrl: 'Base URL (optional)',
@@ -5169,10 +5180,18 @@ export default {
     prereqStep3Brief_yuque: '(Optional) Enter Base URL for enterprise deployments',
     prereqStep3Desc_yuque: 'Leave empty for public cloud; for Yuque Enterprise or self-hosted, enter your company domain.',
     prereqOpenConsole_yuque: 'Open Yuque Token settings',
+    prereqBarText_dingtalk: 'First time? Open the DingTalk app setup guide',
+    prereqStep1Brief_dingtalk: 'Create an enterprise internal app',
+    prereqStep1Desc_dingtalk: 'Create an app in DingTalk Open Platform and obtain its Client ID and Client Secret.',
+    prereqStep2Brief_dingtalk: 'Grant three read permissions',
+    prereqStep2Desc_dingtalk: 'Grant knowledge-base read, node read, and enterprise-file read permissions, then publish the app version.',
+    prereqStep3Brief_dingtalk: 'Prepare an operator UnionID',
+    prereqStep3Desc_dingtalk: 'Use the unionId of a user who can read the target knowledge base and documents.',
     prereqBotBrief: 'Add "Bot" capability to your app',
     prereqBotDesc: 'Open Platform > Add App Capability > Bot > create version and publish',
     prereqPermBrief: 'Grant API permissions',
     prereqOpenConsole: 'Open Feishu Developer Console',
+    prereqOpenConsole_dingtalk: 'Open DingTalk Developer Console',
     prereqMemberBrief: 'Add app to wiki via group chat',
     prereqMemberDesc: 'Create group chat > add app as bot > add group chat as wiki member',
     back: 'Back',
@@ -5190,10 +5209,20 @@ export default {
       '12h': 'Every 12 hours',
       '24h': 'Daily'
     },
+    syncError: {
+      dingtalk_auth_or_permission: 'DingTalk authentication or permission error; check credentials, app permissions, and operator access',
+      dingtalk_rate_limited: 'DingTalk API rate limited; will retry on the next sync',
+      dingtalk_timeout: 'DingTalk request timed out; will retry on the next sync',
+      dingtalk_unavailable: 'DingTalk is temporarily unavailable; will retry on the next sync',
+      dingtalk_api_error: 'DingTalk API error (code={code}); will retry on the next sync',
+      dingtalk_api_error_generic: 'DingTalk API error; will retry on the next sync'
+    },
     resourceType: {
       wikiSpace: 'Wiki Space',
       docCategory: 'Document Tag',
-      book: 'Yuque Book'
+      book: 'Yuque Book',
+      folder: 'Folder',
+      document: 'Online Document'
     },
     neverSynced: 'Never synced',
     justNow: 'Just now',
