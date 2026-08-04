@@ -29,7 +29,12 @@ async function waitFor(condition: () => boolean) {
 
 function createRecorder(overrides: {
   read?: (messageId: string) => Promise<ChatFeedbackValue>
-  submit?: (messageId: string, isPositive: boolean, dislikeReason?: string) => Promise<void>
+  submit?: (
+    messageId: string,
+    isPositive: boolean,
+    dislikeReason?: string,
+    dislikeReasonDetail?: string,
+  ) => Promise<void>
   cancel?: (messageId: string) => Promise<void>
 } = {}) {
   const values: ChatFeedbackValue[] = []
@@ -60,7 +65,9 @@ test('a read started before a mutation cannot overwrite the successful value', a
 
   assert.deepEqual(state.values, [null, true])
   assert.deepEqual(state.pending, [true, false])
-  assert.deepEqual(state.successes, [{ value: true, dislikeReason: undefined }])
+  assert.deepEqual(state.successes, [
+    { value: true, dislikeReason: undefined, dislikeReasonDetail: undefined },
+  ])
 })
 
 test('batch-hydrated history seeds feedback without a per-message read', () => {
@@ -119,7 +126,9 @@ test('rapid feedback changes are serialized and only the last intent reaches the
 
   assert.equal(maximumActiveRequests, 1)
   assert.deepEqual(state.values, [null, false])
-  assert.deepEqual(state.successes, [{ value: false, dislikeReason: 'irrelevant' }])
+  assert.deepEqual(state.successes, [
+    { value: false, dislikeReason: 'irrelevant', dislikeReasonDetail: undefined },
+  ])
   assert.deepEqual(state.pending, [true, false])
 })
 
@@ -165,7 +174,9 @@ test('only the last queued intent survives while an earlier mutation is active',
   await Promise.all([like, dislike, cancel])
 
   assert.equal(maximumActiveRequests, 1)
-  assert.deepEqual(state.successes, [{ value: null, dislikeReason: undefined }])
+  assert.deepEqual(state.successes, [
+    { value: null, dislikeReason: undefined, dislikeReasonDetail: undefined },
+  ])
   assert.deepEqual(state.pending, [true, false])
 })
 
@@ -187,4 +198,34 @@ test('a response for the previous message cannot update the active message', asy
   await oldLoad
 
   assert.deepEqual(state.values, [null, null, true])
+})
+
+test('the dislike reason detail travels with the reason code and distinguishes intents', async () => {
+  const calls: Array<{ reason?: string; detail?: string }> = []
+  const state = createRecorder({
+    submit: async (_messageId, _value, reason, detail) => {
+      calls.push({ reason, detail })
+    },
+  })
+  state.controller.setMessage('message-1')
+
+  await state.controller.request({
+    value: false,
+    dislikeReason: 'other',
+    dislikeReasonDetail: '引用的片段是旧版本文档',
+  })
+  await state.controller.request({
+    value: false,
+    dislikeReason: 'other',
+    dislikeReasonDetail: '其实是权限问题',
+  })
+
+  assert.deepEqual(calls, [
+    { reason: 'other', detail: '引用的片段是旧版本文档' },
+    { reason: 'other', detail: '其实是权限问题' },
+  ])
+  assert.deepEqual(state.successes, [
+    { value: false, dislikeReason: 'other', dislikeReasonDetail: '引用的片段是旧版本文档' },
+    { value: false, dislikeReason: 'other', dislikeReasonDetail: '其实是权限问题' },
+  ])
 })

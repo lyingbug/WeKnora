@@ -57,6 +57,9 @@ export default {
     feedbackFailed: 'Не удалось отправить отзыв. Повторите попытку позже',
     dislikeReasonTitle: 'Выберите причину',
     dislikeReasonPlaceholder: 'Выберите или укажите причину',
+    dislikeReasonRequired: 'Выберите причину',
+    dislikeReasonDetailPlaceholder: 'Дополнительные сведения (необязательно)',
+    dislikeReasonDetailRequired: 'Укажите подробности при выборе «Другое»',
     submitReason: 'Отправить',
     cancel: 'Отмена',
     dislikeReasons: {

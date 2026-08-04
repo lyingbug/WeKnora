@@ -5753,6 +5753,9 @@ export default {
     feedbackFailed: 'Failed to submit feedback, please try again later',
     dislikeReasonTitle: 'Select a reason',
     dislikeReasonPlaceholder: 'Please select or enter a reason',
+    dislikeReasonRequired: 'Please select a reason',
+    dislikeReasonDetailPlaceholder: 'Additional details (optional)',
+    dislikeReasonDetailRequired: 'Please add details when choosing "Other"',
     dislikeReasons: {
       inaccurate: 'Inaccurate answer',
       incomplete: 'Incomplete information',

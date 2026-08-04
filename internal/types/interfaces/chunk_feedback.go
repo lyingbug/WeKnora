@@ -24,7 +24,13 @@ type QAReplyChunkRefRepository interface {
 type ChunkFeedbackRepository interface {
 	Create(ctx context.Context, feedback *types.ChunkFeedback) error
 	Update(ctx context.Context, feedback *types.ChunkFeedback) error
-	Upsert(ctx context.Context, messageID, sessionID, userID string, tenantID uint64, isPositive bool, dislikeReason string) (*types.ChunkFeedback, error)
+	Upsert(
+		ctx context.Context,
+		messageID, sessionID, userID string,
+		tenantID uint64,
+		isPositive bool,
+		dislike types.DislikeReasonInput,
+	) (*types.ChunkFeedback, error)
 	GetByMessageID(ctx context.Context, tenantID uint64, messageID string) (*types.ChunkFeedback, error)
 	GetByMessageAndUser(ctx context.Context, tenantID uint64, messageID, userID string) (*types.ChunkFeedback, error)
 	Delete(ctx context.Context, tenantID uint64, id string) error

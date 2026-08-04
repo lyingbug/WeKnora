@@ -57,6 +57,9 @@ export default {
     feedbackFailed: '反馈提交失败，请稍后重试',
     dislikeReasonTitle: '选择原因',
     dislikeReasonPlaceholder: '请选择或输入原因',
+    dislikeReasonRequired: '请选择一个原因',
+    dislikeReasonDetailPlaceholder: '补充说明（可选）',
+    dislikeReasonDetailRequired: '选择「其他」时请补充说明',
     submitReason: '提交原因',
     cancel: '取消',
     dislikeReasons: {

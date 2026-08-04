@@ -149,27 +149,31 @@ func TestChunkFeedbackUpsertIsIdempotentAndTracksDirectionChanges(t *testing.T) 
 	ctx := context.Background()
 	repo := NewChunkFeedbackRepository(db)
 
-	first, err := repo.Upsert(ctx, "message-1", "session-1", "user-1", 7, true, "")
+	first, err := repo.Upsert(ctx, "message-1", "session-1", "user-1", 7, true, types.DislikeReasonInput{})
 	require.NoError(t, err)
 	require.True(t, first.WasCreated)
 	require.True(t, first.IsChanged)
 
-	second, err := repo.Upsert(ctx, "message-1", "session-1", "user-1", 7, false, "inaccurate")
+	second, err := repo.Upsert(ctx, "message-1", "session-1", "user-1", 7, false,
+		types.DislikeReasonInput{Reason: types.DislikeReasonInaccurate})
 	require.NoError(t, err)
 	require.Equal(t, first.ID, second.ID)
 	require.False(t, second.WasCreated)
 	require.True(t, second.PreviousIsPositive)
 	require.True(t, second.IsChanged)
 
-	third, err := repo.Upsert(ctx, "message-1", "session-1", "user-1", 7, false, "unclear")
+	third, err := repo.Upsert(ctx, "message-1", "session-1", "user-1", 7, false,
+		types.DislikeReasonInput{Reason: types.DislikeReasonUnclear, Detail: "答案漏掉了配置项"})
 	require.NoError(t, err)
 	require.Equal(t, first.ID, third.ID)
 	require.False(t, third.WasCreated)
 	require.False(t, third.PreviousIsPositive)
 	require.False(t, third.IsChanged)
 	require.Equal(t, "unclear", third.DislikeReason)
+	require.Equal(t, "答案漏掉了配置项", third.DislikeReasonDetail)
 
-	firstNegative, err := repo.Upsert(ctx, "message-2", "session-2", "user-1", 7, false, "inaccurate")
+	firstNegative, err := repo.Upsert(ctx, "message-2", "session-2", "user-1", 7, false,
+		types.DislikeReasonInput{Reason: types.DislikeReasonInaccurate})
 	require.NoError(t, err)
 	require.True(t, firstNegative.WasCreated)
 	require.False(t, firstNegative.IsPositive)

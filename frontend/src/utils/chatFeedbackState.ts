@@ -3,6 +3,7 @@ export type ChatFeedbackValue = boolean | null
 export interface ChatFeedbackIntent {
   value: ChatFeedbackValue
   dislikeReason?: string
+  dislikeReasonDetail?: string
 }
 
 interface QueuedChatFeedbackIntent extends ChatFeedbackIntent {
@@ -11,7 +12,12 @@ interface QueuedChatFeedbackIntent extends ChatFeedbackIntent {
 
 export interface ChatFeedbackStateControllerOptions {
   read: (messageId: string) => Promise<ChatFeedbackValue>
-  submit: (messageId: string, isPositive: boolean, dislikeReason?: string) => Promise<void>
+  submit: (
+    messageId: string,
+    isPositive: boolean,
+    dislikeReason?: string,
+    dislikeReasonDetail?: string,
+  ) => Promise<void>
   cancel: (messageId: string) => Promise<void>
   onValueChange: (value: ChatFeedbackValue) => void
   onPendingChange: (pending: boolean) => void
@@ -36,7 +42,8 @@ function isSameIntent(
       right &&
       left.messageId === right.messageId &&
       left.value === right.value &&
-      (left.dislikeReason || '') === (right.dislikeReason || ''),
+      (left.dislikeReason || '') === (right.dislikeReason || '') &&
+      (left.dislikeReasonDetail || '') === (right.dislikeReasonDetail || ''),
   )
 }
 
@@ -74,6 +81,7 @@ export function createChatFeedbackStateController(
   const toPublicIntent = (intent: QueuedChatFeedbackIntent): ChatFeedbackIntent => ({
     value: intent.value,
     dislikeReason: intent.dislikeReason,
+    dislikeReasonDetail: intent.dislikeReasonDetail,
   })
 
   const recoverAuthoritativeValue = async (intent: QueuedChatFeedbackIntent) => {
@@ -96,7 +104,12 @@ export function createChatFeedbackStateController(
         if (intent.value === null) {
           await options.cancel(intent.messageId)
         } else {
-          await options.submit(intent.messageId, intent.value, intent.dislikeReason)
+          await options.submit(
+            intent.messageId,
+            intent.value,
+            intent.dislikeReason,
+            intent.dislikeReasonDetail,
+          )
         }
 
         if (isCurrentFinalIntent(intent)) {
@@ -180,6 +193,7 @@ export function createChatFeedbackStateController(
         messageId: activeMessageId,
         value: intent.value,
         dislikeReason: intent.dislikeReason,
+        dislikeReasonDetail: intent.dislikeReasonDetail,
       }
       desiredIntent = next
 

@@ -20,6 +20,7 @@ var (
 	ErrFeedbackTargetNotCompleted = errors.New("feedback target must be a completed assistant message")
 	ErrDislikeReasonRequired      = errors.New("dislike reason is required for negative feedback")
 	ErrDislikeReasonTooLong       = errors.New("dislike reason is too long")
+	ErrDislikeReasonUnknown       = errors.New("dislike reason must be one of the predefined reason codes")
 )
 
 type feedbackChunkLocker interface {
@@ -150,7 +151,11 @@ func (s *ChunkFeedbackService) submitFeedback(ctx context.Context, tenantID uint
 		return err
 	}
 
-	feedback, err := s.feedbackRepo.Upsert(ctx, req.MessageID, message.SessionID, userID, tenantID, req.IsPositive, req.DislikeReason)
+	dislike := types.DislikeReasonInput{
+		Reason: types.DislikeReasonType(req.DislikeReason),
+		Detail: req.DislikeReasonDetail,
+	}
+	feedback, err := s.feedbackRepo.Upsert(ctx, req.MessageID, message.SessionID, userID, tenantID, req.IsPositive, dislike)
 	if err != nil {
 		return fmt.Errorf("failed to upsert feedback: %w", err)
 	}
@@ -361,21 +366,8 @@ func (s *ChunkFeedbackService) updateLockedChunkFeedbackStats(
 	applyChunkFeedbackState(chunk, state)
 
 	if !feedback.IsPositive && (feedback.WasCreated || feedback.IsChanged) {
-		if dislikeReason != "" {
-			var reasons []string
-			if chunk.DislikeReasons != nil {
-				_ = json.Unmarshal(chunk.DislikeReasons, &reasons)
-			}
-			for _, r := range reasons {
-				if r == dislikeReason {
-					dislikeReason = ""
-					break
-				}
-			}
-			if dislikeReason != "" {
-				reasons = append(reasons, dislikeReason)
-				chunk.DislikeReasons, _ = json.Marshal(reasons)
-			}
+		if merged, changed := mergeChunkDislikeReason(chunk.DislikeReasons, dislikeReason); changed {
+			chunk.DislikeReasons = merged
 		}
 	}
 
@@ -399,6 +391,41 @@ func (s *ChunkFeedbackService) updateLockedChunkFeedbackStats(
 	}
 
 	return nil
+}
+
+// mergeChunkDislikeReason 把一个点踩原因码并入片段上的原因集合，并按预定义顺序输出。
+// 只接受预定义原因码，因此该集合的基数上限等于原因码数量，不会随反馈量无界增长。
+func mergeChunkDislikeReason(current []byte, reason string) ([]byte, bool) {
+	code, ok := types.NormalizeDislikeReason(reason)
+	if !ok {
+		return current, false
+	}
+	var existing []string
+	if len(current) > 0 {
+		_ = json.Unmarshal(current, &existing)
+	}
+	present := make(map[types.DislikeReasonType]struct{}, len(existing)+1)
+	for _, raw := range existing {
+		if normalized, valid := types.NormalizeDislikeReason(raw); valid {
+			present[normalized] = struct{}{}
+		}
+	}
+	if _, duplicate := present[code]; duplicate {
+		return current, false
+	}
+	present[code] = struct{}{}
+
+	reasons := make([]string, 0, len(present))
+	for _, candidate := range types.AllDislikeReasons() {
+		if _, ok := present[candidate]; ok {
+			reasons = append(reasons, string(candidate))
+		}
+	}
+	encoded, err := json.Marshal(reasons)
+	if err != nil {
+		return current, false
+	}
+	return encoded, true
 }
 
 func (s *ChunkFeedbackService) cancelSingleChunkFeedbackStats(ctx context.Context, tenantID uint64, chunkID string, wasPositive bool) error {
@@ -856,25 +883,34 @@ func (s *ChunkFeedbackService) feedbackChunkRefsForIDs(ctx context.Context, defa
 	return refs
 }
 
-// GetDislikeReasonOptions 获取点踩原因选项
-func (s *ChunkFeedbackService) GetDislikeReasonOptions() []string {
+// GetDislikeReasonOptions 获取点踩原因选项（原因码 + 默认中文文案）
+func (s *ChunkFeedbackService) GetDislikeReasonOptions() []types.DislikeReasonOption {
 	return types.GetDislikeReasons()
 }
 
+// normalizeFeedbackRequest 把请求收敛到「结构化原因码 + 可选自由文本」的形态。
+// 只有原因码会沉淀到片段的原因聚合中，自由文本单独留存，因此聚合口径的取值集合是有界的。
 func normalizeFeedbackRequest(req *types.SubmitFeedbackRequest) error {
 	if req == nil {
 		return ErrInvalidFeedbackRequest
 	}
 	req.MessageID = strings.TrimSpace(req.MessageID)
 	req.DislikeReason = strings.TrimSpace(req.DislikeReason)
+	req.DislikeReasonDetail = strings.TrimSpace(req.DislikeReasonDetail)
 	if req.IsPositive {
 		req.DislikeReason = ""
+		req.DislikeReasonDetail = ""
 		return nil
 	}
 	if req.DislikeReason == "" {
 		return ErrDislikeReasonRequired
 	}
-	if len([]rune(req.DislikeReason)) > 255 {
+	reason, ok := types.NormalizeDislikeReason(req.DislikeReason)
+	if !ok {
+		return ErrDislikeReasonUnknown
+	}
+	req.DislikeReason = string(reason)
+	if len([]rune(req.DislikeReasonDetail)) > types.DislikeReasonMaxDetailRunes {
 		return ErrDislikeReasonTooLong
 	}
 	return nil
@@ -1055,9 +1091,10 @@ func (s *ChunkFeedbackService) GetUserFeedback(ctx context.Context, tenantID uin
 		return nil, nil
 	}
 	return &types.UserFeedbackResponse{
-		MessageID:     feedback.MessageID,
-		IsPositive:    &feedback.IsPositive,
-		DislikeReason: feedback.DislikeReason,
-		CreatedAt:     feedback.CreatedAt.Format("2006-01-02 15:04:05"),
+		MessageID:           feedback.MessageID,
+		IsPositive:          &feedback.IsPositive,
+		DislikeReason:       feedback.DislikeReason,
+		DislikeReasonDetail: feedback.DislikeReasonDetail,
+		CreatedAt:           feedback.CreatedAt.Format("2006-01-02 15:04:05"),
 	}, nil
 }

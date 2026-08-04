@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS chunk_feedbacks (
     user_id VARCHAR(512) NOT NULL,
     is_positive BOOLEAN NOT NULL DEFAULT true,
     dislike_reason VARCHAR(255),
+    dislike_reason_detail VARCHAR(500),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_message_user UNIQUE(tenant_id, message_id, user_id),

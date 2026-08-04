@@ -1,6 +1,7 @@
 package types
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,66 @@ const (
 	DislikeReasonIrrelevant DislikeReasonType = "irrelevant" // 与问题不相关
 	DislikeReasonOther      DislikeReasonType = "other"      // 其他
 )
+
+// DislikeReasonMaxDetailRunes 限制自由文本补充说明的长度。
+const DislikeReasonMaxDetailRunes = 500
+
+// dislikeReasonLabels 保留每个原因码的中文展示文案，供未接入 i18n 的调用方使用。
+var dislikeReasonLabels = map[DislikeReasonType]string{
+	DislikeReasonInaccurate: "答案不准确",
+	DislikeReasonIncomplete: "答案不完整",
+	DislikeReasonUnclear:    "表达不清楚",
+	DislikeReasonIrrelevant: "与问题不相关",
+	DislikeReasonOther:      "其他",
+}
+
+// AllDislikeReasons 按展示顺序返回全部点踩原因码。
+func AllDislikeReasons() []DislikeReasonType {
+	return []DislikeReasonType{
+		DislikeReasonInaccurate,
+		DislikeReasonIncomplete,
+		DislikeReasonUnclear,
+		DislikeReasonIrrelevant,
+		DislikeReasonOther,
+	}
+}
+
+// Label 返回原因码的中文文案。
+func (t DislikeReasonType) Label() string {
+	return dislikeReasonLabels[t]
+}
+
+// NormalizeDislikeReason 把客户端传入的原因归一化为原因码。
+// 除原因码本身外，还接受历史版本下发的中文文案，避免旧客户端提交失败。
+func NormalizeDislikeReason(raw string) (DislikeReasonType, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	if normalized == "" {
+		return "", false
+	}
+	for _, reason := range AllDislikeReasons() {
+		if normalized == string(reason) {
+			return reason, true
+		}
+	}
+	for reason, label := range dislikeReasonLabels {
+		if strings.TrimSpace(raw) == label {
+			return reason, true
+		}
+	}
+	return "", false
+}
+
+// DislikeReasonInput 承载结构化原因码与可选的自由文本补充说明。
+type DislikeReasonInput struct {
+	Reason DislikeReasonType
+	Detail string
+}
+
+// DislikeReasonOption 描述前端可选的一个点踩原因。
+type DislikeReasonOption struct {
+	Code  DislikeReasonType `json:"code"`
+	Label string            `json:"label"`
+}
 
 // FeedbackTriggerType 反馈触发类型
 type FeedbackTriggerType string
@@ -86,8 +147,11 @@ type ChunkFeedback struct {
 	UserID        string    `json:"user_id" gorm:"type:varchar(512);not null;uniqueIndex:idx_tenant_message_user,priority:3;index"`
 	IsPositive    bool      `json:"is_positive" gorm:"not null"` // true=点赞, false=点踩
 	DislikeReason string    `json:"dislike_reason,omitempty" gorm:"type:varchar(255)"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	// DislikeReasonDetail 保存用户填写的自由文本补充说明。它只用于人工查看，
+	// 不参与片段维度的原因聚合，避免自由文本污染统计口径。
+	DislikeReasonDetail string    `json:"dislike_reason_detail,omitempty" gorm:"type:varchar(500)"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 
 	// IsChanged 仅用于内部逻辑，表示点赞/点踩方向是否发生了实质性变化。
 	IsChanged bool `json:"-" gorm:"-"`
@@ -133,9 +197,12 @@ func (l *ChunkWeightLog) BeforeCreate(tx *gorm.DB) error {
 
 // SubmitFeedbackRequest 提交反馈请求
 type SubmitFeedbackRequest struct {
-	MessageID     string `json:"message_id" binding:"required"` // 消息ID
-	IsPositive    bool   `json:"is_positive"`                   // 是否为点赞
-	DislikeReason string `json:"dislike_reason,omitempty"`      // 点踩原因
+	MessageID  string `json:"message_id" binding:"required"` // 消息ID
+	IsPositive bool   `json:"is_positive"`                   // 是否为点赞
+	// DislikeReason 必须是 DislikeReasonType 中的原因码。
+	DislikeReason string `json:"dislike_reason,omitempty"`
+	// DislikeReasonDetail 为可选的自由文本补充说明。
+	DislikeReasonDetail string `json:"dislike_reason_detail,omitempty"`
 }
 
 // SubmitFeedbackResponse 提交反馈响应
@@ -236,21 +303,22 @@ type WeightLogResponse struct {
 	Total int64             `json:"total"`
 }
 
-// GetDislikeReasons 返回预定义的原因选项
-func GetDislikeReasons() []string {
-	return []string{
-		"答案不准确",
-		"答案不完整",
-		"表达不清楚",
-		"与问题不相关",
-		"其他",
+// GetDislikeReasons 返回预定义的原因选项。返回原因码而非展示文案，
+// 与 chunk_feedbacks.dislike_reason 的存储值保持一致，便于前端做 i18n 映射。
+func GetDislikeReasons() []DislikeReasonOption {
+	reasons := AllDislikeReasons()
+	options := make([]DislikeReasonOption, 0, len(reasons))
+	for _, reason := range reasons {
+		options = append(options, DislikeReasonOption{Code: reason, Label: reason.Label()})
 	}
+	return options
 }
 
 // UserFeedbackResponse 用户反馈状态响应
 type UserFeedbackResponse struct {
-	MessageID     string `json:"message_id"`
-	IsPositive    *bool  `json:"is_positive"`
-	DislikeReason string `json:"dislike_reason,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
+	MessageID           string `json:"message_id"`
+	IsPositive          *bool  `json:"is_positive"`
+	DislikeReason       string `json:"dislike_reason,omitempty"`
+	DislikeReasonDetail string `json:"dislike_reason_detail,omitempty"`
+	CreatedAt           string `json:"created_at,omitempty"`
 }

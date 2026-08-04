@@ -79,8 +79,8 @@
                             <t-radio value="irrelevant">{{ $t('chunkFeedback.dislikeReasons.unrelated') }}</t-radio>
                             <t-radio value="other">{{ $t('chunkFeedback.dislikeReasons.other') }}</t-radio>
                         </t-radio-group>
-                        <t-input v-if="selectedReason === 'other'" v-model="customReason"
-                            :placeholder="$t('chunkFeedback.dislikeReasonPlaceholder')" :maxlength="255"
+                        <t-input v-model="reasonDetail"
+                            :placeholder="$t('chunkFeedback.dislikeReasonDetailPlaceholder')" :maxlength="500"
                             style="margin-top: 12px" />
                         <div style="margin-top: 16px; text-align: right;">
                             <t-button theme="primary" :loading="feedbackMutationPending"
@@ -145,8 +145,8 @@
                     <t-radio value="irrelevant">{{ $t('chunkFeedback.dislikeReasons.unrelated') }}</t-radio>
                     <t-radio value="other">{{ $t('chunkFeedback.dislikeReasons.other') }}</t-radio>
                 </t-radio-group>
-                <t-input v-if="selectedReason === 'other'" v-model="customReason"
-                    :placeholder="$t('chunkFeedback.dislikeReasonPlaceholder')" :maxlength="255"
+                <t-input v-model="reasonDetail"
+                    :placeholder="$t('chunkFeedback.dislikeReasonDetailPlaceholder')" :maxlength="500"
                     style="margin-top: 12px" />
                 <div style="margin-top: 16px; text-align: right;">
                     <t-button theme="primary" :loading="feedbackMutationPending"
@@ -209,7 +209,7 @@ ensureMermaidInitialized();
 const currentFeedback = ref(null);
 const dislikeDialogVisible = ref(false);
 const selectedReason = ref('');
-const customReason = ref('');
+const reasonDetail = ref('');
 const feedbackMutationPending = ref(false);
 
 const mentionTagClass = (item) => {
@@ -273,11 +273,12 @@ const feedbackController = createChatFeedbackStateController({
         const res = await getUserFeedback(messageId);
         return res?.data?.is_positive ?? null;
     },
-    submit: async (messageId, isPositive, dislikeReason) => {
+    submit: async (messageId, isPositive, dislikeReason, dislikeReasonDetail) => {
         await submitFeedback({
             message_id: messageId,
             is_positive: isPositive,
             dislike_reason: dislikeReason,
+            dislike_reason_detail: dislikeReasonDetail,
         });
     },
     cancel: async (messageId) => {
@@ -439,7 +440,7 @@ const handleDislike = () => {
     } else {
         // 打开点踩原因弹窗
         selectedReason.value = '';
-        customReason.value = '';
+        reasonDetail.value = '';
         dislikeDialogVisible.value = true;
     }
 };
@@ -447,15 +448,21 @@ const handleDislike = () => {
 const submitDislike = async () => {
     if (!props.session?.id || feedbackMutationPending.value) return;
 
-    const reason = (selectedReason.value === 'other' ? customReason.value : selectedReason.value).trim();
+    const reason = selectedReason.value.trim();
     if (!reason) {
-        MessagePlugin.warning(t('chunkFeedback.dislikeReasonPlaceholder'));
+        MessagePlugin.warning(t('chunkFeedback.dislikeReasonRequired'));
+        return;
+    }
+    const detail = reasonDetail.value.trim();
+    if (reason === 'other' && !detail) {
+        MessagePlugin.warning(t('chunkFeedback.dislikeReasonDetailRequired'));
         return;
     }
 
     await feedbackController.request({
         value: false,
         dislikeReason: reason,
+        dislikeReasonDetail: detail,
     });
 };
 

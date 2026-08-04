@@ -57,6 +57,9 @@ export default {
     feedbackFailed: '피드백을 제출하지 못했습니다. 잠시 후 다시 시도해 주세요',
     dislikeReasonTitle: '사유 선택',
     dislikeReasonPlaceholder: '사유를 선택하거나 입력하세요',
+    dislikeReasonRequired: '사유를 선택해 주세요',
+    dislikeReasonDetailPlaceholder: '추가 설명 (선택 사항)',
+    dislikeReasonDetailRequired: "'기타'를 선택한 경우 설명을 입력해 주세요",
     submitReason: '제출',
     cancel: '취소',
     dislikeReasons: {

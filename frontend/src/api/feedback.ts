@@ -4,7 +4,10 @@ import { del, get, post } from '@/utils/request'
 export interface SubmitFeedbackRequest {
   message_id: string
   is_positive: boolean
+  /** One of the predefined reason codes returned by `getDislikeReasons`. */
   dislike_reason?: string
+  /** Optional free-form note. It is stored for review but excluded from chunk-level aggregation. */
+  dislike_reason_detail?: string
 }
 
 // ChunkStatsResponse 片段统计响应
@@ -86,9 +89,14 @@ export function cancelFeedback(messageId: string) {
   )
 }
 
+export interface DislikeReasonOption {
+  code: string
+  label: string
+}
+
 // 获取点踩原因选项
 export function getDislikeReasons() {
-  return get<{ success: boolean; data: string[] }>('/api/v1/feedback/dislike-reasons')
+  return get<{ success: boolean; data: DislikeReasonOption[] }>('/api/v1/feedback/dislike-reasons')
 }
 
 // 获取片段统计
@@ -123,6 +131,7 @@ export interface UserFeedbackResponse {
   message_id: string
   is_positive: boolean | null
   dislike_reason?: string
+  dislike_reason_detail?: string
   created_at?: string
 }
 

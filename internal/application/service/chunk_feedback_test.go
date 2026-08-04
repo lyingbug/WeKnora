@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
@@ -666,6 +667,98 @@ func TestNormalizeFeedbackRequestRequiresDislikeReason(t *testing.T) {
 	}
 }
 
+func TestNormalizeFeedbackRequestSeparatesReasonCodeFromFreeText(t *testing.T) {
+	req := &types.SubmitFeedbackRequest{
+		MessageID:           " message-1 ",
+		IsPositive:          false,
+		DislikeReason:       " 与问题不相关 ",
+		DislikeReasonDetail: "  引用的片段讲的是另一个产品  ",
+	}
+
+	require.NoError(t, normalizeFeedbackRequest(req))
+	require.Equal(t, "message-1", req.MessageID)
+	require.Equal(t, string(types.DislikeReasonIrrelevant), req.DislikeReason)
+	require.Equal(t, "引用的片段讲的是另一个产品", req.DislikeReasonDetail)
+}
+
+func TestNormalizeFeedbackRequestRejectsFreeTextReasonCode(t *testing.T) {
+	err := normalizeFeedbackRequest(&types.SubmitFeedbackRequest{
+		MessageID:     "message-1",
+		IsPositive:    false,
+		DislikeReason: "这段引用完全对不上我的问题",
+	})
+
+	require.ErrorIs(t, err, ErrDislikeReasonUnknown)
+}
+
+func TestNormalizeFeedbackRequestRejectsOverlongDetail(t *testing.T) {
+	err := normalizeFeedbackRequest(&types.SubmitFeedbackRequest{
+		MessageID:           "message-1",
+		IsPositive:          false,
+		DislikeReason:       string(types.DislikeReasonOther),
+		DislikeReasonDetail: strings.Repeat("很", types.DislikeReasonMaxDetailRunes+1),
+	})
+
+	require.ErrorIs(t, err, ErrDislikeReasonTooLong)
+}
+
+func TestNormalizeFeedbackRequestDropsReasonForPositiveFeedback(t *testing.T) {
+	req := &types.SubmitFeedbackRequest{
+		MessageID:           "message-1",
+		IsPositive:          true,
+		DislikeReason:       string(types.DislikeReasonOther),
+		DislikeReasonDetail: "手滑填的",
+	}
+
+	require.NoError(t, normalizeFeedbackRequest(req))
+	require.Empty(t, req.DislikeReason)
+	require.Empty(t, req.DislikeReasonDetail)
+}
+
+func TestMergeChunkDislikeReasonKeepsAggregationBounded(t *testing.T) {
+	var reasons []byte
+	for _, raw := range []string{"unclear", "inaccurate", "unclear", "与问题不相关", "自由文本原因"} {
+		if merged, changed := mergeChunkDislikeReason(reasons, raw); changed {
+			reasons = merged
+		}
+	}
+
+	require.JSONEq(t, `["inaccurate","unclear","irrelevant"]`, string(reasons))
+}
+
+func TestSubmitFeedbackStoresReasonCodeAndDetailSeparately(t *testing.T) {
+	ctx := context.Background()
+	db := setupChunkFeedbackFlowDB(t)
+	svc := NewChunkFeedbackServiceWithUnitOfWork(
+		repository.NewQAReplyChunkRefRepository(db),
+		repository.NewChunkFeedbackRepository(db),
+		repository.NewMessageRepository(db),
+		repository.NewChunkRepository(db),
+		repository.NewChunkWeightLogRepository(db),
+		repository.NewChunkFeedbackUnitOfWork(db),
+	)
+
+	require.NoError(t, svc.SubmitFeedback(ctx, 1, "user-1", &types.SubmitFeedbackRequest{
+		MessageID:           "message-1",
+		IsPositive:          false,
+		DislikeReason:       "其他",
+		DislikeReasonDetail: "引用的片段是旧版本文档",
+	}))
+
+	stored, err := svc.GetUserFeedback(ctx, 1, "message-1", "user-1")
+	require.NoError(t, err)
+	require.Equal(t, string(types.DislikeReasonOther), stored.DislikeReason)
+	require.Equal(t, "引用的片段是旧版本文档", stored.DislikeReasonDetail)
+
+	stats, err := svc.GetChunkStats(ctx, 1, "chunk-1")
+	require.NoError(t, err)
+	require.Equal(t, []string{string(types.DislikeReasonOther)}, stats.DislikeReasons)
+	require.Equal(t,
+		[]types.DislikeReasonStat{{Reason: string(types.DislikeReasonOther), Count: 1}},
+		stats.DislikeReasonStats,
+	)
+}
+
 func TestConfiguredChunkFeedbackServiceCopiesRuntimePolicy(t *testing.T) {
 	config := types.DefaultChunkFeedbackConfig()
 	config.AutoMarkThreshold = 0.2
@@ -1073,10 +1166,18 @@ type submitFeedbackFeedbackRepo struct {
 
 	feedback    *types.ChunkFeedback
 	upsertCalls int
+	lastDislike types.DislikeReasonInput
 }
 
-func (r *submitFeedbackFeedbackRepo) Upsert(ctx context.Context, messageID, sessionID, userID string, tenantID uint64, isPositive bool, dislikeReason string) (*types.ChunkFeedback, error) {
+func (r *submitFeedbackFeedbackRepo) Upsert(
+	ctx context.Context,
+	messageID, sessionID, userID string,
+	tenantID uint64,
+	isPositive bool,
+	dislike types.DislikeReasonInput,
+) (*types.ChunkFeedback, error) {
 	r.upsertCalls++
+	r.lastDislike = dislike
 	return r.feedback, nil
 }
 

@@ -165,22 +165,29 @@ func (r *chunkFeedbackRepository) Update(ctx context.Context, feedback *types.Ch
 	return r.db.WithContext(ctx).Save(feedback).Error
 }
 
-func (r *chunkFeedbackRepository) Upsert(ctx context.Context, messageID, sessionID, userID string, tenantID uint64, isPositive bool, dislikeReason string) (*types.ChunkFeedback, error) {
+func (r *chunkFeedbackRepository) Upsert(
+	ctx context.Context,
+	messageID, sessionID, userID string,
+	tenantID uint64,
+	isPositive bool,
+	dislike types.DislikeReasonInput,
+) (*types.ChunkFeedback, error) {
 	feedback, err := r.findFeedbackForUpdate(ctx, tenantID, messageID, userID)
 	if err == nil {
-		return r.updateExistingFeedback(ctx, feedback, isPositive, dislikeReason)
+		return r.updateExistingFeedback(ctx, feedback, isPositive, dislike)
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 
 	feedback = &types.ChunkFeedback{
-		MessageID:     messageID,
-		SessionID:     sessionID,
-		TenantID:      tenantID,
-		UserID:        userID,
-		IsPositive:    isPositive,
-		DislikeReason: dislikeReason,
+		MessageID:           messageID,
+		SessionID:           sessionID,
+		TenantID:            tenantID,
+		UserID:              userID,
+		IsPositive:          isPositive,
+		DislikeReason:       string(dislike.Reason),
+		DislikeReasonDetail: dislike.Detail,
 	}
 	tx := r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
@@ -205,7 +212,7 @@ func (r *chunkFeedbackRepository) Upsert(ctx context.Context, messageID, session
 	if err != nil {
 		return nil, err
 	}
-	return r.updateExistingFeedback(ctx, feedback, isPositive, dislikeReason)
+	return r.updateExistingFeedback(ctx, feedback, isPositive, dislike)
 }
 
 func (r *chunkFeedbackRepository) findFeedbackForUpdate(ctx context.Context, tenantID uint64, messageID, userID string) (*types.ChunkFeedback, error) {
@@ -220,10 +227,16 @@ func (r *chunkFeedbackRepository) findFeedbackForUpdate(ctx context.Context, ten
 	return &feedback, nil
 }
 
-func (r *chunkFeedbackRepository) updateExistingFeedback(ctx context.Context, feedback *types.ChunkFeedback, isPositive bool, dislikeReason string) (*types.ChunkFeedback, error) {
+func (r *chunkFeedbackRepository) updateExistingFeedback(
+	ctx context.Context,
+	feedback *types.ChunkFeedback,
+	isPositive bool,
+	dislike types.DislikeReasonInput,
+) (*types.ChunkFeedback, error) {
 	wasPositive := feedback.IsPositive
 	feedback.IsPositive = isPositive
-	feedback.DislikeReason = dislikeReason
+	feedback.DislikeReason = string(dislike.Reason)
+	feedback.DislikeReasonDetail = dislike.Detail
 	feedback.UpdatedAt = time.Now()
 	if err := r.db.WithContext(ctx).Save(feedback).Error; err != nil {
 		return nil, err

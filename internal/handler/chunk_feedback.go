@@ -35,6 +35,7 @@ func handleFeedbackServiceError(c *gin.Context, err error) {
 	if stdErrors.Is(err, service.ErrFeedbackTargetNotAssistant) ||
 		stdErrors.Is(err, service.ErrInvalidFeedbackRequest) ||
 		stdErrors.Is(err, service.ErrDislikeReasonRequired) ||
+		stdErrors.Is(err, service.ErrDislikeReasonUnknown) ||
 		stdErrors.Is(err, service.ErrDislikeReasonTooLong) {
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return
