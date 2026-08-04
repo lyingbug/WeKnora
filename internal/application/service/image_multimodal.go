@@ -12,14 +12,15 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
+	"github.com/Tencent/WeKnora/internal/artifact"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/models/utils/ollama"
 	"github.com/Tencent/WeKnora/internal/models/vlm"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
-	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 )
@@ -140,12 +141,21 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 		return fmt.Errorf("unmarshal image multimodal payload: %w", err)
 	}
 
-	logger.Infof(ctx, "[ImageMultimodal] Processing image: chunk=%s, url=%s, ocr=%v, caption=%v",
-		payload.ChunkID, payload.ImageURL, payload.EnableOCR, payload.EnableCaption)
+	logger.Infof(ctx, "[ImageMultimodal] Processing image: chunk=%s, has_url=%v, ocr=%v, caption=%v",
+		payload.ChunkID, payload.ImageURL != "", payload.EnableOCR, payload.EnableCaption)
 
 	ctx = context.WithValue(ctx, types.TenantIDContextKey, payload.TenantID)
 	if payload.Language != "" {
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
+	}
+	if attemptSuperseded(ctx, s.tracker(), payload.KnowledgeID, payload.Attempt) {
+		logger.Infof(
+			ctx,
+			"[ImageMultimodal] Dropping superseded attempt %d for knowledge %s",
+			payload.Attempt,
+			payload.KnowledgeID,
+		)
+		return nil
 	}
 
 	// Drop orphaned or user-aborted work before touching VLM. Missing
@@ -157,8 +167,8 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 	}
 	if drop {
 		logger.Infof(ctx,
-			"[ImageMultimodal] Dropping task chunk=%s knowledge=%s kb=%s image=%s",
-			payload.ChunkID, payload.KnowledgeID, payload.KnowledgeBaseID, payload.ImageURL)
+			"[ImageMultimodal] Dropping task chunk=%s knowledge=%s kb=%s",
+			payload.ChunkID, payload.KnowledgeID, payload.KnowledgeBaseID)
 		// Still count this image toward the parent finalize gate so a batch
 		// of dropped orphans cannot strand multimodal:pending forever.
 		s.checkAndFinalizeAllImages(ctx, payload)
@@ -177,7 +187,7 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 		if parent != nil {
 			name := fmt.Sprintf("multimodal.image[%d]", payload.ImageIndex)
 			imgSpan = tracker.BeginSubSpan(ctx, parent, name, types.SpanKindGeneration, types.JSONMap{
-				"image_url":         payload.ImageURL,
+				"has_image_url":     payload.ImageURL != "",
 				"image_source_type": payload.ImageSourceType,
 				"enable_ocr":        payload.EnableOCR,
 				"enable_caption":    payload.EnableCaption,
@@ -187,10 +197,9 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 	}
 
 	// Output map populated as we go — the deferred close picks it up.
-	// Captures real VLM results (model id, byte count, OCR/caption
-	// previews, downstream chunk counts) so the trace viewer can answer
-	// "what did this image actually produce?" without joining back to
-	// the chunks table.
+	// Captures safe VLM result metadata (model id, byte count, output
+	// lengths, downstream chunk counts) without placing image references
+	// or generated content in the trace.
 	imgOut := types.JSONMap{}
 
 	// finalize-once semantics: on success we always decrement the parent's
@@ -211,16 +220,22 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 			} else if isFinalAsynqAttempt(ctx) {
 				tracker.FailSpan(ctx, imgSpan,
 					"MULTIMODAL_VLM_FAILED",
-					handleErr.Error(),
-					handleErr)
+					fmt.Sprintf("%T", handleErr),
+					nil)
 			}
 		}
-		if handleErr == nil || isFinalAsynqAttempt(ctx) {
+		if attemptSuperseded(ctx, tracker, payload.KnowledgeID, payload.Attempt) {
+			logger.Infof(
+				ctx,
+				"[ImageMultimodal] Skip finalize for superseded attempt %d on %s",
+				payload.Attempt,
+				payload.KnowledgeID,
+			)
+		} else if handleErr == nil || isFinalAsynqAttempt(ctx) {
 			s.checkAndFinalizeAllImages(ctx, payload)
 		} else {
 			logger.Infof(ctx,
-				"[ImageMultimodal] Skip finalize on retryable error for %s (will count on last attempt)",
-				payload.ImageURL)
+				"[ImageMultimodal] Skip finalize on retryable error (will count on last attempt)")
 		}
 	}()
 
@@ -245,9 +260,9 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 	// image, skip it (deferred finalize will count it).
 	imgBytes, readErr := s.readImageBytes(ctx, payload)
 	if readErr != nil {
-		logger.Errorf(ctx, "[ImageMultimodal] Skip unreadable image %s: %v", payload.ImageURL, readErr)
+		logger.Errorf(ctx, "[ImageMultimodal] Skip unreadable image: error_class=%T", readErr)
 		imgOut["skipped"] = "unreadable_image"
-		imgOut["read_error"] = readErr.Error()
+		imgOut["read_error_class"] = fmt.Sprintf("%T", readErr)
 		return nil
 	}
 	imgOut["image_bytes"] = len(imgBytes)
@@ -256,104 +271,253 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 		URL:         payload.ImageURL,
 		OriginalURL: payload.ImageURL,
 	}
+	ocrDesiredKnown := !payload.EnableOCR
+	captionDesiredKnown := !payload.EnableCaption
 
 	if payload.EnableOCR {
 		prompt := vlmOCRPrompt
 		if payload.ImageSourceType == "scanned_pdf" {
 			prompt = vlmOCRScannedPDFPrompt
-			logger.Infof(ctx, "[ImageMultimodal] Using scanned PDF prompt for OCR: %s", payload.ImageURL)
+			logger.Infof(ctx, "[ImageMultimodal] Using scanned PDF prompt for OCR")
 			imgOut["ocr_prompt"] = "scanned_pdf"
 		} else {
 			imgOut["ocr_prompt"] = "default"
 		}
 		prompt = types.AppendCustomPromptInstructions(prompt, vlmCfg.CustomInstructions, "image_ocr")
 
-		ocrText, ocrErr := vlmModel.Predict(ctx, [][]byte{imgBytes}, prompt)
+		ocrCtx := vlm.WithArtifactStage(ctx, vlm.ArtifactStage{
+			Stage:        "vlm_ocr",
+			OutputSchema: "vlm-ocr.text.v1",
+		})
+		ocrText, ocrErr := vlmModel.Predict(ocrCtx, [][]byte{imgBytes}, prompt)
 		if ocrErr != nil {
-			logger.Warnf(ctx, "[ImageMultimodal] OCR failed for %s: %v", payload.ImageURL, ocrErr)
-			imgOut["ocr_error"] = ocrErr.Error()
+			logger.Warnf(ctx, "[ImageMultimodal] OCR failed: error_class=%T", ocrErr)
+			imgOut["ocr_error_class"] = fmt.Sprintf("%T", ocrErr)
 		} else {
+			ocrDesiredKnown = true
 			ocrText = sanitizeOCRText(ocrText)
 			if ocrText != "" {
 				imageInfo.OCRText = ocrText
 				imgOut["ocr_chars"] = len([]rune(ocrText))
-				imgOut["ocr_preview"] = previewText(ocrText, 200)
 			} else {
-				logger.Warnf(ctx, "[ImageMultimodal] OCR returned empty/invalid content for %s, discarded", payload.ImageURL)
+				logger.Warnf(ctx, "[ImageMultimodal] OCR returned empty/invalid content, discarded")
 				imgOut["ocr_chars"] = 0
 				imgOut["ocr_skipped"] = "empty_or_invalid"
 			}
 		}
 	}
 
-	caption, capErr := vlmModel.Predict(ctx, [][]byte{imgBytes}, buildVLMCaptionPrompt(ctx, vlmCfg))
-	if capErr != nil {
-		logger.Warnf(ctx, "[ImageMultimodal] Caption failed for %s: %v", payload.ImageURL, capErr)
-		imgOut["caption_error"] = capErr.Error()
-	} else if caption != "" {
-		imageInfo.Caption = caption
-		imgOut["caption_chars"] = len([]rune(caption))
-		imgOut["caption_preview"] = previewText(caption, 200)
+	if payload.EnableCaption {
+		captionCtx := vlm.WithArtifactStage(ctx, vlm.ArtifactStage{
+			Stage:        "vlm_caption",
+			OutputSchema: "vlm-caption.text.v1",
+		})
+		caption, capErr := vlmModel.Predict(
+			captionCtx,
+			[][]byte{imgBytes},
+			buildVLMCaptionPrompt(ctx, vlmCfg),
+		)
+		if capErr != nil {
+			logger.Warnf(ctx, "[ImageMultimodal] Caption failed: error_class=%T", capErr)
+			imgOut["caption_error_class"] = fmt.Sprintf("%T", capErr)
+		} else {
+			captionDesiredKnown = true
+			if caption != "" {
+				imageInfo.Caption = caption
+				imgOut["caption_chars"] = len([]rune(caption))
+			}
+		}
+	}
+	// The provider may finish after a newer reparse has started. Its
+	// ownership-free artifacts remain reusable, but it must not bind chunks,
+	// write vectors, publish, or trigger post-processing for the old attempt.
+	if attemptSuperseded(ctx, tracker, payload.KnowledgeID, payload.Attempt) {
+		logger.Infof(
+			ctx,
+			"[ImageMultimodal] Attempt %d superseded after VLM for knowledge %s",
+			payload.Attempt,
+			payload.KnowledgeID,
+		)
+		return nil
+	}
+	ctx, releaseReconcile, lockErr := acquireKnowledgeReconcileLock(
+		ctx,
+		s.redisClient,
+		payload.KnowledgeID,
+	)
+	if lockErr != nil {
+		handleErr = fmt.Errorf("acquire multimodal reconciliation lock: %w", lockErr)
+		return handleErr
+	}
+	defer releaseReconcile()
+	if attemptSuperseded(ctx, tracker, payload.KnowledgeID, payload.Attempt) {
+		logger.Infof(
+			ctx,
+			"[ImageMultimodal] Attempt %d superseded while waiting for reconciliation lock on %s",
+			payload.Attempt,
+			payload.KnowledgeID,
+		)
+		return nil
 	}
 
 	// Build child chunks for OCR and caption results
 	imageInfoJSON, _ := json.Marshal([]types.ImageInfo{imageInfo})
+	existingChildren, err := s.chunkService.ListChunkByParentID(
+		ctx,
+		payload.TenantID,
+		payload.ChunkID,
+	)
+	if err != nil {
+		handleErr = fmt.Errorf("list existing multimodal chunks: %w", err)
+		return handleErr
+	}
 	var newChunks []*types.Chunk
 
 	if imageInfo.OCRText != "" {
-		newChunks = append(newChunks, &types.Chunk{
-			ID:              uuid.New().String(),
-			TenantID:        payload.TenantID,
-			KnowledgeID:     payload.KnowledgeID,
-			KnowledgeBaseID: payload.KnowledgeBaseID,
-			Content:         imageInfo.OCRText,
-			ChunkType:       types.ChunkTypeImageOCR,
-			ParentChunkID:   payload.ChunkID,
-			IsEnabled:       true,
-			Flags:           types.ChunkFlagRecommended,
-			ImageInfo:       string(imageInfoJSON),
-			CreatedAt:       time.Now(),
-			UpdatedAt:       time.Now(),
-		})
+		chunk, buildErr := buildStableMultimodalChunk(
+			payload,
+			types.ChunkTypeImageOCR,
+			imageInfo.OCRText,
+			string(imageInfoJSON),
+			imgBytes,
+			existingChildren,
+		)
+		if buildErr != nil {
+			handleErr = buildErr
+			return handleErr
+		}
+		newChunks = append(newChunks, chunk)
 	}
 
 	if imageInfo.Caption != "" {
-		newChunks = append(newChunks, &types.Chunk{
-			ID:              uuid.New().String(),
-			TenantID:        payload.TenantID,
-			KnowledgeID:     payload.KnowledgeID,
-			KnowledgeBaseID: payload.KnowledgeBaseID,
-			Content:         imageInfo.Caption,
-			ChunkType:       types.ChunkTypeImageCaption,
-			ParentChunkID:   payload.ChunkID,
-			IsEnabled:       true,
-			Flags:           types.ChunkFlagRecommended,
-			ImageInfo:       string(imageInfoJSON),
-			CreatedAt:       time.Now(),
-			UpdatedAt:       time.Now(),
-		})
+		chunk, buildErr := buildStableMultimodalChunk(
+			payload,
+			types.ChunkTypeImageCaption,
+			imageInfo.Caption,
+			string(imageInfoJSON),
+			imgBytes,
+			existingChildren,
+		)
+		if buildErr != nil {
+			handleErr = buildErr
+			return handleErr
+		}
+		newChunks = append(newChunks, chunk)
 	}
 	imgOut["chunks_created"] = len(newChunks)
 
 	if len(newChunks) == 0 {
-		// Deferred finalize will count this image on success.
 		imgOut["skipped"] = "no_extracted_content"
-		return nil
 	}
 
-	// Persist chunks
-	if err := s.chunkService.CreateChunks(ctx, newChunks); err != nil {
-		handleErr = fmt.Errorf("create multimodal chunks: %w", err)
-		return handleErr
+	// Reuse a stable row on retry. New rows are written only after the
+	// post-provider attempt fence above; metadata-only refreshes keep seq_id
+	// and creation time from the published row.
+	existingByID := make(map[string]*types.Chunk, len(existingChildren))
+	for _, existing := range existingChildren {
+		existingByID[existing.ID] = existing
+	}
+	desiredIDs := make(map[string]struct{}, len(newChunks))
+	for _, desired := range newChunks {
+		desiredIDs[desired.ID] = struct{}{}
+	}
+	staleChildren := make([]*types.Chunk, 0)
+	for _, existing := range existingChildren {
+		switch existing.ChunkType {
+		case types.ChunkTypeImageOCR:
+			if !ocrDesiredKnown {
+				continue
+			}
+		case types.ChunkTypeImageCaption:
+			if !captionDesiredKnown {
+				continue
+			}
+		default:
+			continue
+		}
+		if _, desired := desiredIDs[existing.ID]; !desired {
+			staleChildren = append(staleChildren, existing)
+		}
+	}
+	toCreate := make([]*types.Chunk, 0, len(newChunks))
+	for _, desired := range newChunks {
+		existing, found := existingByID[desired.ID]
+		if !found {
+			toCreate = append(toCreate, desired)
+			continue
+		}
+		existing.Content = desired.Content
+		existing.ImageInfo = desired.ImageInfo
+		existing.IsEnabled = desired.IsEnabled
+		existing.Flags = desired.Flags
+		existing.UpdatedAt = desired.UpdatedAt
+		if err := s.chunkService.UpdateChunk(ctx, existing); err != nil {
+			handleErr = fmt.Errorf("refresh multimodal chunk %s: %w", existing.ID, err)
+			return handleErr
+		}
+		desired.CreatedAt = existing.CreatedAt
+	}
+	if len(toCreate) > 0 {
+		if err := s.chunkService.CreateChunks(ctx, toCreate); err != nil {
+			handleErr = fmt.Errorf("create multimodal chunks: %w", err)
+			return handleErr
+		}
 	}
 	for _, c := range newChunks {
-		logger.Infof(ctx, "[ImageMultimodal] Created %s chunk %s for image %s, len=%d",
-			c.ChunkType, c.ID, payload.ImageURL, len(c.Content))
+		logger.Infof(ctx, "[ImageMultimodal] Created %s chunk %s, len=%d",
+			c.ChunkType, c.ID, len(c.Content))
 	}
 
-	// Index chunks so they can be retrieved
-	s.indexChunks(ctx, payload, newChunks)
-	imgOut["indexed"] = true
+	// Index desired chunks before exact stale cleanup.
+	indexResult, indexErr := s.indexChunks(ctx, payload, newChunks)
+	if indexErr != nil {
+		handleErr = indexErr
+		return handleErr
+	}
+	if attemptSuperseded(ctx, tracker, payload.KnowledgeID, payload.Attempt) {
+		logger.Infof(
+			ctx,
+			"[ImageMultimodal] Attempt %d superseded after indexing knowledge %s",
+			payload.Attempt,
+			payload.KnowledgeID,
+		)
+		return nil
+	}
+	imgOut["indexed"] = len(newChunks) > 0
+
+	staleIDs := chunkIDList(staleChildren)
+	if len(staleIDs) > 0 {
+		staleVectorsDeleted := indexResult.engine != nil && indexResult.model != nil
+		if indexResult.engine != nil && indexResult.model != nil {
+			if err := indexResult.engine.DeleteByChunkIDList(
+				ctx,
+				staleIDs,
+				indexResult.model.GetDimensions(),
+				indexResult.kb.Type,
+			); err != nil {
+				staleVectorsDeleted = false
+				logger.Warnf(
+					ctx,
+					"[ImageMultimodal] Failed to delete stale child vectors: %v",
+					err,
+				)
+			}
+		} else {
+			logger.Warnf(
+				ctx,
+				"[ImageMultimodal] Retaining stale child rows because the previous vector backend cannot be resolved",
+			)
+		}
+		if staleVectorsDeleted {
+			if err := s.chunkService.DeleteChunks(ctx, staleIDs); err != nil {
+				logger.Warnf(
+					ctx,
+					"[ImageMultimodal] Failed to delete stale child chunks: %v",
+					err,
+				)
+			}
+		}
+	}
 
 	// Enqueue question generation for the caption/OCR content if KB has it enabled.
 	// During initial processChunks, question generation is skipped for image-type
@@ -363,6 +527,55 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 	// all images are processed before triggering summary/question generation.
 	// Deferred finalize handles the parent knowledge counter.
 	return nil
+}
+
+func buildStableMultimodalChunk(
+	payload types.ImageMultimodalPayload,
+	chunkType types.ChunkType,
+	content string,
+	imageInfo string,
+	imageBytes []byte,
+	existing []*types.Chunk,
+) (*types.Chunk, error) {
+	identity, err := artifact.StableEntityIdentity(artifact.EntityIdentityInput{
+		KnowledgeID:      payload.KnowledgeID,
+		IDVersion:        artifact.StableEntityIDVersion,
+		EntityType:       string(chunkType),
+		ParentSemanticID: payload.ChunkID,
+		SourceAnchor:     "image:" + artifact.SHA256Hex(imageBytes),
+		Content:          content,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build stable multimodal chunk identity: %w", err)
+	}
+
+	// Preserve one uniquely matching pre-upgrade random UUID. Ambiguous legacy
+	// duplicates are never guessed; the deterministic ID wins instead.
+	matchingLegacyIDs := make([]string, 0, 1)
+	for _, candidate := range existing {
+		if candidate.ChunkType == chunkType && candidate.Content == content {
+			matchingLegacyIDs = append(matchingLegacyIDs, candidate.ID)
+		}
+	}
+	if len(matchingLegacyIDs) == 1 {
+		identity.ID = matchingLegacyIDs[0]
+	}
+
+	now := time.Now()
+	return &types.Chunk{
+		ID:              identity.ID,
+		TenantID:        payload.TenantID,
+		KnowledgeID:     payload.KnowledgeID,
+		KnowledgeBaseID: payload.KnowledgeBaseID,
+		Content:         content,
+		ChunkType:       chunkType,
+		ParentChunkID:   payload.ChunkID,
+		IsEnabled:       true,
+		Flags:           types.ChunkFlagRecommended,
+		ImageInfo:       imageInfo,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}, nil
 }
 
 // shouldDropOrphanedMultimodal reports whether the task should exit without
@@ -422,14 +635,28 @@ func isFinalAsynqAttempt(ctx context.Context) bool {
 	return retried >= maxRetry
 }
 
-// indexChunks indexes the newly created multimodal chunks into the retrieval engine
-// so they can participate in semantic search.
-func (s *ImageMultimodalService) indexChunks(ctx context.Context, payload types.ImageMultimodalPayload, chunks []*types.Chunk) {
+type multimodalIndexResult struct {
+	engine *retriever.CompositeRetrieveEngine
+	model  embedding.Embedder
+	kb     *types.KnowledgeBase
+}
+
+// indexChunks indexes the desired multimodal chunks and returns the exact
+// backend identity needed for stale cleanup.
+func (s *ImageMultimodalService) indexChunks(
+	ctx context.Context,
+	payload types.ImageMultimodalPayload,
+	chunks []*types.Chunk,
+) (multimodalIndexResult, error) {
 	kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, payload.KnowledgeBaseID)
 	if err != nil || kb == nil {
 		logger.Warnf(ctx, "[ImageMultimodal] Failed to get KB for indexing: %v", err)
-		return
+		if err == nil {
+			err = errors.New("knowledge base not found")
+		}
+		return multimodalIndexResult{}, err
 	}
+	result := multimodalIndexResult{kb: kb}
 
 	// Skip vector/keyword indexing when the KB has no embedding-based pipeline enabled
 	// (e.g. Wiki-only KBs). Without this check, GetEmbeddingModel would fail because
@@ -450,19 +677,20 @@ func (s *ImageMultimodalService) indexChunks(ctx context.Context, payload types.
 				logger.Warnf(ctx, "[ImageMultimodal] Failed to update chunk %s status to indexed: %v", chunk.ID, uerr)
 			}
 		}
-		return
+		return result, nil
 	}
 
 	embeddingModel, err := s.modelService.GetEmbeddingModel(ctx, kb.EmbeddingModelID)
 	if err != nil {
 		logger.Warnf(ctx, "[ImageMultimodal] Failed to get embedding model for indexing: %v", err)
-		return
+		return multimodalIndexResult{}, err
 	}
+	result.model = embeddingModel
 
 	tenantInfo, err := s.tenantRepo.GetTenantByID(ctx, payload.TenantID)
 	if err != nil {
 		logger.Warnf(ctx, "[ImageMultimodal] Failed to get tenant for indexing: %v", err)
-		return
+		return multimodalIndexResult{}, err
 	}
 	// The factory's unbound path reads TenantInfo from ctx; make sure it's there.
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenantInfo)
@@ -473,8 +701,9 @@ func (s *ImageMultimodalService) indexChunks(ctx context.Context, payload types.
 		ctx, s.retrieveEngine, s.ownership, payload.TenantID, kb.VectorStoreID)
 	if err != nil {
 		logger.Warnf(ctx, "[ImageMultimodal] Failed to init retrieve engine: %v", err)
-		return
+		return multimodalIndexResult{}, err
 	}
+	result.engine = engine
 
 	indexInfoList := make([]*types.IndexInfo, 0, len(chunks))
 	for _, chunk := range chunks {
@@ -488,9 +717,11 @@ func (s *ImageMultimodalService) indexChunks(ctx context.Context, payload types.
 		})
 	}
 
-	if err := engine.BatchIndex(ctx, embeddingModel, indexInfoList); err != nil {
-		logger.Errorf(ctx, "[ImageMultimodal] Failed to index multimodal chunks: %v", err)
-		return
+	if len(indexInfoList) > 0 {
+		if err := engine.BatchIndex(ctx, embeddingModel, indexInfoList); err != nil {
+			logger.Errorf(ctx, "[ImageMultimodal] Failed to index multimodal chunks: %v", err)
+			return multimodalIndexResult{}, err
+		}
 	}
 
 	// Mark chunks as indexed.
@@ -508,7 +739,8 @@ func (s *ImageMultimodalService) indexChunks(ctx context.Context, payload types.
 		}
 	}
 
-	logger.Infof(ctx, "[ImageMultimodal] Indexed %d multimodal chunks for image %s", len(chunks), payload.ImageURL)
+	logger.Infof(ctx, "[ImageMultimodal] Indexed %d multimodal chunks", len(chunks))
+	return result, nil
 }
 
 // resolveVLM creates a vlm.VLM instance for the given knowledge base,
@@ -566,7 +798,7 @@ func (s *ImageMultimodalService) resolveFileServiceForPayload(ctx context.Contex
 	// stored on a different backend (multi-backend / post-migration).
 	if _, isResourceRef := types.ParseResourcePath(payload.ImageURL); isResourceRef && s.resourceCatalog != nil {
 		if resource, resErr := s.resourceCatalog.Resolve(ctx, payload.ImageURL); resErr != nil {
-			logger.Warnf(ctx, "[ImageMultimodal] resolve resource reference failed: url=%s err=%v", payload.ImageURL, resErr)
+			logger.Warnf(ctx, "[ImageMultimodal] resolve resource reference failed: error_class=%T", resErr)
 		} else if resource != nil {
 			backendID = resource.StorageBackendID
 			provider = strings.ToLower(strings.TrimSpace(resource.Provider))
@@ -589,8 +821,8 @@ func (s *ImageMultimodalService) resolveFileServiceForPayload(ctx context.Contex
 	}
 
 	baseDir := strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR"))
-	logger.Infof(ctx, "[ImageMultimodal] resolving file service: tenant=%d provider=%q LOCAL_STORAGE_BASE_DIR=%q imageURL=%s",
-		payload.TenantID, provider, baseDir, payload.ImageURL)
+	logger.Infof(ctx, "[ImageMultimodal] resolving file service: tenant=%d provider=%q has_backend=%v",
+		payload.TenantID, provider, backendID != "")
 	fileSvc, _, svcErr := s.storageResolver.ResolveFileService(ctx, tenant, backendID, provider, baseDir)
 	if svcErr != nil {
 		logger.Warnf(ctx, "[ImageMultimodal] resolve file service failed (falling back to default): tenant=%d provider=%s err=%v",
@@ -612,16 +844,16 @@ func (s *ImageMultimodalService) readImageBytes(ctx context.Context, payload typ
 	if isResourceRef || types.ParseProviderScheme(payload.ImageURL) != "" {
 		fileSvc := s.resolveFileServiceForPayload(ctx, payload)
 		if fileSvc == nil {
-			return nil, fmt.Errorf("no file service available for %s", payload.ImageURL)
+			return nil, fmt.Errorf("no file service available for image reference")
 		}
 		reader, err := fileSvc.GetFile(ctx, payload.ImageURL)
 		if err != nil {
-			return nil, fmt.Errorf("file service get %s: %w", payload.ImageURL, err)
+			return nil, fmt.Errorf("file service get image: %T", err)
 		}
 		defer reader.Close()
 		data, err := io.ReadAll(reader)
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", payload.ImageURL, err)
+			return nil, fmt.Errorf("read image: %T", err)
 		}
 		return data, nil
 	}
@@ -630,13 +862,13 @@ func (s *ImageMultimodalService) readImageBytes(ctx context.Context, payload typ
 		if data, err := os.ReadFile(payload.ImageLocalPath); err == nil {
 			return data, nil
 		} else {
-			logger.Warnf(ctx, "[ImageMultimodal] Local file %s not available (%v), falling back to URL", payload.ImageLocalPath, err)
+			logger.Warnf(ctx, "[ImageMultimodal] Local image unavailable: error_class=%T; falling back to URL", err)
 		}
 	}
 
 	data, err := downloadImageFromURL(payload.ImageURL)
 	if err != nil {
-		return nil, fmt.Errorf("download %s: %w", payload.ImageURL, err)
+		return nil, fmt.Errorf("download image: %T", err)
 	}
 	logger.Infof(ctx, "[ImageMultimodal] Image downloaded from URL, len=%d", len(data))
 	return data, nil
@@ -647,13 +879,22 @@ func downloadImageFromURL(imageURL string) ([]byte, error) {
 	return secutils.DownloadBytes(imageURL)
 }
 
+func multimodalPendingKey(knowledgeID string, attempt int) string {
+	if attempt > 0 {
+		return fmt.Sprintf("multimodal:pending:%s:%d", knowledgeID, attempt)
+	}
+	// Preserve compatibility with tasks already queued before attempts were
+	// included in the pending counter key.
+	return fmt.Sprintf("multimodal:pending:%s", knowledgeID)
+}
+
 func (s *ImageMultimodalService) checkAndFinalizeAllImages(ctx context.Context, payload types.ImageMultimodalPayload) {
 	if s.redisClient == nil {
 		s.enqueueKnowledgePostProcessTask(ctx, payload)
 		return
 	}
 
-	redisKey := fmt.Sprintf("multimodal:pending:%s", payload.KnowledgeID)
+	redisKey := multimodalPendingKey(payload.KnowledgeID, payload.Attempt)
 
 	pendingCount, err := s.redisClient.Decr(ctx, redisKey).Result()
 	if err != nil && err != redis.Nil {
@@ -688,6 +929,7 @@ func (s *ImageMultimodalService) enqueueKnowledgePostProcessTask(ctx context.Con
 		KnowledgeID:     payload.KnowledgeID,
 		KnowledgeBaseID: payload.KnowledgeBaseID,
 		Language:        payload.Language,
+		Attempt:         payload.Attempt,
 	}
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payloadBytes, err := json.Marshal(taskPayload)

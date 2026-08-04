@@ -9,6 +9,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrKnowledgeNotFound = errors.New("knowledge not found")
@@ -196,6 +197,164 @@ func (r *knowledgeRepository) UpdateKnowledge(ctx context.Context, knowledge *ty
 	}
 	err := r.db.WithContext(ctx).Omit(omit...).Save(knowledge).Error
 	return err
+}
+
+func (r *knowledgeRepository) UpdateKnowledgeIfAttemptCurrent(
+	ctx context.Context,
+	knowledge *types.Knowledge,
+	attempt int,
+) (bool, error) {
+	if knowledge == nil {
+		return false, errors.New("knowledge must not be nil")
+	}
+	if attempt <= 0 {
+		return true, r.UpdateKnowledge(ctx, knowledge)
+	}
+	newerAttempt := r.db.
+		Table(types.KnowledgeProcessingSpan{}.TableName()).
+		Select("1").
+		Where("knowledge_id = ? AND kind = ? AND attempt > ?",
+			knowledge.ID,
+			types.SpanKindRoot,
+			attempt,
+		)
+	result := r.db.WithContext(ctx).
+		Model(&types.Knowledge{}).
+		Where("tenant_id = ? AND id = ?", knowledge.TenantID, knowledge.ID).
+		Where("NOT EXISTS (?)", newerAttempt).
+		Select("*").
+		Omit(omitFieldsOnUpdate...).
+		Updates(knowledge)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
+// PublishKnowledgeIfAttemptCurrent atomically publishes the desired knowledge
+// generation and applies its tenant-storage delta. Reading the currently
+// published storage size inside the same transaction makes a retry after a
+// worker crash idempotent: a repeated publish computes a zero delta.
+func (r *knowledgeRepository) PublishKnowledgeIfAttemptCurrent(
+	ctx context.Context,
+	knowledge *types.Knowledge,
+	attempt int,
+) (published bool, err error) {
+	if knowledge == nil {
+		return false, errors.New("knowledge must not be nil")
+	}
+
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current types.Knowledge
+		if err := tx.
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id", "tenant_id", "storage_size").
+			Where("tenant_id = ? AND id = ?", knowledge.TenantID, knowledge.ID).
+			Take(&current).Error; err != nil {
+			return err
+		}
+
+		query := tx.
+			Model(&types.Knowledge{}).
+			Where("tenant_id = ? AND id = ?", knowledge.TenantID, knowledge.ID)
+		if attempt > 0 {
+			newerAttempt := tx.
+				Table(types.KnowledgeProcessingSpan{}.TableName()).
+				Select("1").
+				Where("knowledge_id = ? AND kind = ? AND attempt > ?",
+					knowledge.ID,
+					types.SpanKindRoot,
+					attempt,
+				)
+			query = query.Where("NOT EXISTS (?)", newerAttempt)
+		}
+		result := query.
+			Select("*").
+			Omit(omitFieldsOnUpdate...).
+			Updates(knowledge)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			if attempt > 0 {
+				var newerCount int64
+				if err := tx.
+					Table(types.KnowledgeProcessingSpan{}.TableName()).
+					Where("knowledge_id = ? AND kind = ? AND attempt > ?",
+						knowledge.ID,
+						types.SpanKindRoot,
+						attempt,
+					).
+					Count(&newerCount).Error; err != nil {
+					return err
+				}
+				if newerCount > 0 {
+					return nil
+				}
+			}
+			// MySQL reports zero affected rows when the target values are
+			// already identical (notably second-resolution TIMESTAMP fields).
+			// With no newer attempt, that is an idempotent successful publish.
+		}
+
+		delta := knowledge.StorageSize - current.StorageSize
+		if delta != 0 {
+			var tenant types.Tenant
+			if err := tx.
+				Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ?", knowledge.TenantID).
+				Take(&tenant).Error; err != nil {
+				return err
+			}
+			tenant.StorageUsed += delta
+			if tenant.StorageUsed < 0 {
+				tenant.StorageUsed = 0
+			}
+			if err := tx.Model(&tenant).
+				Select("storage_used", "updated_at").
+				Updates(&tenant).Error; err != nil {
+				return err
+			}
+		}
+		published = true
+		return nil
+	})
+	return published, err
+}
+
+func (r *knowledgeRepository) UpdateKnowledgeColumnsIfAttemptCurrent(
+	ctx context.Context,
+	tenantID uint64,
+	knowledgeID string,
+	attempt int,
+	values map[string]interface{},
+) (bool, error) {
+	if tenantID == 0 || knowledgeID == "" {
+		return false, errors.New("tenant and knowledge IDs must not be empty")
+	}
+	if len(values) == 0 {
+		return false, errors.New("knowledge update values must not be empty")
+	}
+	query := r.db.WithContext(ctx).
+		Model(&types.Knowledge{}).
+		Where("tenant_id = ? AND id = ?", tenantID, knowledgeID)
+	if attempt > 0 {
+		newerAttempt := r.db.
+			Table(types.KnowledgeProcessingSpan{}.TableName()).
+			Select("1").
+			Where(
+				"knowledge_id = ? AND kind = ? AND attempt > ?",
+				knowledgeID,
+				types.SpanKindRoot,
+				attempt,
+			)
+		query = query.Where("NOT EXISTS (?)", newerAttempt)
+	}
+	result := query.Updates(values)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 // UpdateKnowledgeBatch updates knowledge items in batch

@@ -49,6 +49,12 @@ CREATE TABLE IF NOT EXISTS knowledge_processing_spans (
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (knowledge_id, attempt, span_id)
 );
+
+CREATE TABLE IF NOT EXISTS knowledge_attempt_counters (
+    knowledge_id VARCHAR(64) PRIMARY KEY,
+    last_attempt INTEGER NOT NULL CHECK (last_attempt >= 0),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 func setupSpanTrackerTest(t *testing.T) (SpanTracker, *gorm.DB) {
@@ -141,6 +147,37 @@ func TestSpanTracker_FailSpan_CascadesDownstream(t *testing.T) {
 	_ = embedding
 	_ = multimodal
 	_ = postprocess
+}
+
+func TestKnowledgeServiceFailStageRedactsProviderErrorDetail(t *testing.T) {
+	tracker, db := setupSpanTrackerTest(t)
+	ctx := context.Background()
+	_, attempt, err := tracker.OpenAttempt(ctx, "kid-redacted", "")
+	require.NoError(t, err)
+	tracker.BeginStage(ctx, "kid-redacted", attempt, types.StageDocReader, nil)
+
+	service := &knowledgeService{spanTracker: tracker}
+	sentinel := "prompt=customer-body api_key=secret signed_url=https://example.invalid/?sig=secret"
+	service.failStage(
+		withAttempt(ctx, attempt),
+		"kid-redacted",
+		types.StageDocReader,
+		"DOCREADER_FAILED",
+		"document read failed",
+		errors.New(sentinel),
+	)
+
+	var row types.KnowledgeProcessingSpan
+	require.NoError(t, db.
+		Where("knowledge_id = ? AND attempt = ? AND name = ?",
+			"kid-redacted",
+			attempt,
+			types.StageDocReader,
+		).
+		Take(&row).Error)
+	assert.Empty(t, row.ErrorDetail)
+	assert.NotContains(t, row.ErrorMessage, sentinel)
+	assert.Contains(t, row.ErrorMessage, "error_class=")
 }
 
 // TestSpanTracker_LookupStage_FindsAcrossProcesses simulates the
