@@ -3,9 +3,11 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/database"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"gorm.io/gorm"
@@ -575,12 +577,18 @@ func (r *knowledgeRepository) CountKnowledgeByStatus(
 	return count, nil
 }
 
-// SearchKnowledge searches knowledge items by keyword across the tenant
-// If keyword is empty, returns recent files
-// Only returns documents from document-type knowledge bases (excludes FAQ)
-// Returns (results, hasMore, error)
-// FindByMetadataKey finds a knowledge item by a key-value pair in the metadata JSON column.
-// Uses Postgres jsonb operator: metadata->>'key' = 'value'.
+// FindByMetadataKey finds a knowledge item by a key-value pair in the
+// metadata JSON column. The JSON extraction syntax is dialect-aware via
+// database.JSONPathExpr:
+//
+//   - postgres: metadata ->> 'key'
+//   - mysql:    metadata ->> '$.key'   (bare-key form errors 1064)
+//   - sqlite:   json_extract(metadata, '$.key')
+//
+// Used by the datasource sync loop to deduplicate by external_id; a
+// query error here MUST NOT be swallowed by the caller - the
+// datasource service treats "found" as update-in-place and "not found"
+// as create, so a silent error would produce duplicate knowledge rows.
 func (r *knowledgeRepository) FindByMetadataKey(
 	ctx context.Context,
 	tenantID uint64,
@@ -589,9 +597,16 @@ func (r *knowledgeRepository) FindByMetadataKey(
 	value string,
 ) (*types.Knowledge, error) {
 	var knowledge types.Knowledge
-	err := r.db.WithContext(ctx).
+	dialectName := r.db.Dialector.Name()
+	jsonPathExpr, err := database.JSONPathExpr(dialectName, "metadata", key)
+	if err != nil {
+		// Invalid metadata key (caller bug) - surface as an error rather
+		// than querying a different JSON path than intended.
+		return nil, fmt.Errorf("invalid metadata key %q: %w", key, err)
+	}
+	err = r.db.WithContext(ctx).
 		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", tenantID, kbID).
-		Where("metadata->>? = ?", key, value).
+		Where(jsonPathExpr+" = ?", value).
 		First(&knowledge).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -613,21 +628,28 @@ func (r *knowledgeRepository) FindByMetadataKeyPrefix(
 ) ([]*types.Knowledge, error) {
 	escaped := escapeLikeKeyword(prefix)
 	var items []*types.Knowledge
-	// The JSON key is embedded as a SQL literal (metadata->>'external_id'), NOT a
-	// bind parameter. PostgreSQL only uses the expression index
-	// idx_knowledges_kb_metadata_external_id (built on the literal expression
-	// (metadata->>'external_id')) when that exact expression appears in the query;
-	// a bound metadata->>$1 is a structurally different expression the planner
-	// cannot match, so it would silently fall back to a heap scan. key is an
-	// internal, caller-supplied field name (always "external_id"); single-quotes
-	// are doubled defensively so the literal is always well-formed.
+	// The JSON key is embedded as a SQL literal, NOT a bind parameter. PostgreSQL
+	// only uses the expression index idx_knowledges_kb_metadata_external_id (built
+	// on the literal expression (metadata->>'external_id')) when that exact
+	// expression appears in the query; a bound metadata->>$1 is a structurally
+	// different expression the planner cannot match, so it would silently fall
+	// back to a heap scan. MySQL indexes the equivalent generated column
+	// metadata_external_id, which its optimizer matches against the same literal
+	// extraction expression.
+	//
+	// The extraction syntax itself must go through database.JSONPathExpr: MySQL
+	// requires a '$.key' path and rejects the bare-key PostgreSQL form with
+	// error 3143 as soon as any row holds non-null JSON.
 	//
 	// The prefix pattern stays a bind parameter: an unnamed prepared statement is
 	// custom-planned with the actual value, so LIKE 'prefix%' still extracts the
 	// prefix and drives the index. The explicit ESCAPE '\' keeps backslash-escaped
-	// wildcards (e.g. \_) literal on both PostgreSQL and SQLite.
-	keyExpr := "metadata->>'" + strings.ReplaceAll(key, "'", "''") + "'"
-	err := r.db.WithContext(ctx).
+	// wildcards (e.g. \_) literal across dialects.
+	keyExpr, err := database.JSONPathExprIndexed(r.db.Dialector.Name(), "metadata", key)
+	if err != nil {
+		return nil, fmt.Errorf("invalid metadata key %q: %w", key, err)
+	}
+	err = r.db.WithContext(ctx).
 		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", tenantID, kbID).
 		Where(keyExpr+" LIKE ? ESCAPE ?", escaped+"%", `\`).
 		Find(&items).Error
