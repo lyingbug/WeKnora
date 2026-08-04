@@ -105,10 +105,16 @@ func TestFolderRepositorySubtreeHeight(t *testing.T) {
 	ctx := context.Background()
 
 	root := createFolder(t, repo, &types.Folder{ID: "root", TenantID: 10001, KnowledgeBaseID: "kb-1", Name: "Root"})
-	child := createFolder(t, repo, &types.Folder{ID: "child", TenantID: 10001, KnowledgeBaseID: "kb-1", ParentID: &root.ID, Name: "Child"})
-	grandchild := createFolder(t, repo, &types.Folder{ID: "grandchild", TenantID: 10001, KnowledgeBaseID: "kb-1", ParentID: &child.ID, Name: "Grandchild"})
+	child := createFolder(t, repo, &types.Folder{
+		ID: "child", TenantID: 10001, KnowledgeBaseID: "kb-1", ParentID: &root.ID, Name: "Child",
+	})
+	grandchild := createFolder(t, repo, &types.Folder{
+		ID: "grandchild", TenantID: 10001, KnowledgeBaseID: "kb-1", ParentID: &child.ID, Name: "Grandchild",
+	})
 	// A second branch off the root that is shallower than the first one.
-	createFolder(t, repo, &types.Folder{ID: "sibling", TenantID: 10001, KnowledgeBaseID: "kb-1", ParentID: &root.ID, Name: "Sibling"})
+	createFolder(t, repo, &types.Folder{
+		ID: "sibling", TenantID: 10001, KnowledgeBaseID: "kb-1", ParentID: &root.ID, Name: "Sibling",
+	})
 
 	height, err := repo.SubtreeHeight(ctx, 10001, "kb-1", root.ID, 16)
 	require.NoError(t, err)
@@ -137,7 +143,9 @@ func TestFolderRepositorySubtreeHeightTerminatesOnCyclicRows(t *testing.T) {
 	ctx := context.Background()
 
 	createFolder(t, repo, &types.Folder{ID: "a", TenantID: 10001, KnowledgeBaseID: "kb-1", Name: "A"})
-	createFolder(t, repo, &types.Folder{ID: "b", TenantID: 10001, KnowledgeBaseID: "kb-1", ParentID: folderStringPtr("a"), Name: "B"})
+	createFolder(t, repo, &types.Folder{
+		ID: "b", TenantID: 10001, KnowledgeBaseID: "kb-1", ParentID: folderStringPtr("a"), Name: "B",
+	})
 	// Corrupt the hierarchy into a cycle behind the service-level guards.
 	require.NoError(t, db.Exec(`UPDATE folders SET parent_id = 'b' WHERE id = 'a'`).Error)
 

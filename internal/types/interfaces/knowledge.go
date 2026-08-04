@@ -353,7 +353,13 @@ type KnowledgeRepository interface {
 	// ListIDsByFolderScopes returns active knowledge IDs under a union of folder
 	// subtrees. A positive limit stops the scan one row past that budget so
 	// callers can detect an oversized scope; a non-positive limit is unbounded.
-	ListIDsByFolderScopes(ctx context.Context, tenantID uint64, kbID string, folderIDs []string, limit int) ([]string, error)
+	ListIDsByFolderScopes(
+		ctx context.Context,
+		tenantID uint64,
+		kbID string,
+		folderIDs []string,
+		limit int,
+	) ([]string, error)
 	// SetKnowledgeTags replaces all tags for a single knowledge entry (deletes old, inserts new).
 	SetKnowledgeTags(ctx context.Context, knowledgeID string, tagIDs []string) error
 	// GetKnowledgeTags returns tags for multiple knowledge IDs.

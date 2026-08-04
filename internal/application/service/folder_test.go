@@ -95,7 +95,14 @@ func TestFolderServiceCoreLifecycleAndSafety(t *testing.T) {
 
 // buildFolderChain creates a chain of nested folders and returns them ordered
 // from the top-level folder down to the deepest one.
-func buildFolderChain(t *testing.T, service interfaces.FolderService, tenantID uint64, kbID string, prefix string, levels int) []*types.Folder {
+func buildFolderChain(
+	t *testing.T,
+	service interfaces.FolderService,
+	tenantID uint64,
+	kbID string,
+	prefix string,
+	levels int,
+) []*types.Folder {
 	t.Helper()
 	chain := make([]*types.Folder, 0, levels)
 	var parentID *string

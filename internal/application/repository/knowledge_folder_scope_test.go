@@ -106,7 +106,9 @@ func TestKnowledgeRepositoryListIDsByFolderScopesStopsOneRowPastLimit(t *testing
 	folderRepo := NewFolderRepository(db)
 	ctx := context.Background()
 
-	folder := createFolder(t, folderRepo, &types.Folder{ID: "folder-limit", TenantID: 10001, KnowledgeBaseID: "kb-1", Name: "Limit"})
+	folder := createFolder(t, folderRepo, &types.Folder{
+		ID: "folder-limit", TenantID: 10001, KnowledgeBaseID: "kb-1", Name: "Limit",
+	})
 	for _, id := range []string{"doc-1", "doc-2", "doc-3", "doc-4"} {
 		insertFolderKnowledge(t, db, id, 10001, "kb-1", &folder.ID, false)
 	}
