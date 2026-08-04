@@ -197,14 +197,15 @@ watch(
   { immediate: true },
 )
 
-// 同步断点响应式状态到 UI Store
+// 同步断点响应式状态到 UI Store。immediate 让 store 在首帧就与视口一致，
+// 否则手机上要等 onMounted 才切形态，会先闪一下桌面侧栏。
 watch(isMobile, (val) => {
   uiStore.setMobile(val)
   // 从移动端切换到桌面端时，关闭移动端菜单
   if (!val) {
     uiStore.closeMobileMenu()
   }
-})
+}, { immediate: true })
 
 // 切换空间后会 hard reload；切换前 stash 的 toast 这里 consume 并弹出，
 // 这样 toast 显示在新页面上，duration 才真正生效。

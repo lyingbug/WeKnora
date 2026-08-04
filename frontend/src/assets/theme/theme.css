@@ -112,16 +112,10 @@
    移动端全局样式增强
    ============================================================ */
 
-/* 触摸设备：会话行右侧操作按钮始终可见（不要仅 hover 才显示） */
+/* 触摸设备：放大 TDesign 交互元素的点击区域。
+   会话行的常显操作按钮改在 menu.vue 的 scoped 块里覆写，
+   因为默认的 opacity: 0 也带着 scoped 属性选择器的权重。 */
 @media (hover: none) {
-  .aside_box :deep(.menu-more-wrap) {
-    opacity: 0.85;
-  }
-
-  .aside_box .submenu_item_p.session-chat-row:hover .session-list-row {
-    background: transparent;
-  }
-
   /* 下拉菜单项最小触摸区域 */
   .t-dropdown__item {
     min-height: 44px;

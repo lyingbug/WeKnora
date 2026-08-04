@@ -2738,6 +2738,7 @@ const getImgSrc = (url: string) => {
 }
 </script>
 <style scoped lang="less">
+@import '@/assets/responsive.less';
 @import './css/chat-resource-chips.less';
 
 .answers-input {
@@ -2747,8 +2748,19 @@ const getImgSrc = (url: string) => {
   left: 50%;
   transform: translateX(-50%);
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   display: flex;
   justify-content: center;
+
+  // 窄屏留出左右留白，否则输入框圆角与阴影会被屏幕边缘切掉
+  .not-desktop({
+    padding-inline: 16px;
+  });
+
+  .mobile({
+    padding-inline: 12px;
+  });
 
   &.is-embedded {
     position: relative;
@@ -2756,6 +2768,7 @@ const getImgSrc = (url: string) => {
     left: auto;
     transform: none;
     z-index: auto;
+    padding-inline: 0;
 
     .rich-input-container {
       max-width: 100%;
@@ -2768,6 +2781,8 @@ const getImgSrc = (url: string) => {
   position: relative;
   width: 100%;
   max-width: 960px;
+  min-width: 0;
+  box-sizing: border-box;
   background: var(--td-bg-color-container, #FFF);
   border-radius: 12px;
   border: 1px solid var(--td-component-stroke, #dcdcdc);

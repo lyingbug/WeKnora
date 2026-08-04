@@ -243,8 +243,11 @@ const handleKBEditorSuccess = (kbId: string) => {
 
 </script>
 <style lang="less" scoped>
+@import '@/assets/responsive.less';
+
 .dialogue-wrap {
     flex: 1;
+    min-width: 0;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -257,6 +260,8 @@ const handleKBEditorSuccess = (kbId: string) => {
     align-items: center;
     width: 100%;
     max-width: 960px;
+    min-width: 0;
+    box-sizing: border-box;
     gap: 24px;
 
     :deep(.answers-input) {
@@ -363,59 +368,27 @@ const handleKBEditorSuccess = (kbId: string) => {
     }
 }
 
-@media (max-width: 1250px) and (min-width: 1045px) {
-    .answers-input {
-        transform: translateX(-329px);
+// 输入框宽度交由 Input-field 自己按容器伸缩：这里曾按断点硬编码
+// translateX 位移与 t-textarea__inner 的像素宽度，在 768～1044px 会让
+// 输入区停在 500px、与外框右边缘之间留出一大片死区。
+.not-desktop({
+    .dialogue-title {
+        padding-inline: 16px;
+        text-align: center;
+    }
+});
+
+.mobile({
+    .dialogue-answers {
+        gap: 16px;
     }
 
-    :deep(.t-textarea__inner) {
-        width: 654px !important;
+    .dialogue-title {
+        padding-inline: 12px;
+        font-size: 22px;
+        line-height: 30px;
     }
-}
-
-@media (max-width: 1045px) {
-    .answers-input {
-        transform: translateX(-250px);
-    }
-
-    :deep(.t-textarea__inner) {
-        width: 500px !important;
-    }
-}
-
-@media (max-width: 750px) {
-    .answers-input {
-        transform: translateX(-250px);
-    }
-
-    :deep(.t-textarea__inner) {
-        width: 340px !important;
-    }
-}
-
-@media (max-width: 600px) {
-    .answers-input {
-        transform: translateX(-250px);
-    }
-
-    :deep(.t-textarea__inner) {
-        width: 300px !important;
-    }
-}
-
-// 移动端：移除 translateX hack，全宽自然布局
-@media screen and (max-width: 767px) {
-    .answers-input {
-        transform: none !important;
-        width: 100% !important;
-        position: static !important;
-    }
-
-    :deep(.t-textarea__inner) {
-        width: 100% !important;
-        max-width: 100% !important;
-    }
-}
+});
 </style>
 <style lang="less">
 .del-menu-popup {

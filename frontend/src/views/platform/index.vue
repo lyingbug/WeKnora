@@ -408,7 +408,10 @@ onUnmounted(() => {
     justify-content: center;
     align-items: center;
 }
+</style>
 
+<!-- 图片拖拽抑制必须留在全局块里：整个应用依赖它，scoped 后只会命中本组件模板。 -->
+<style lang="less">
 img {
     -webkit-user-drag: none;
     -khtml-user-drag: none;

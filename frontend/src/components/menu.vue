@@ -200,17 +200,7 @@
 import { storeToRefs } from 'pinia';
 import { onMounted, onUnmounted, watch, computed, ref, h, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-// 响应式适配 props
-const props = withDefaults(defineProps<{
-  variant?: 'sidebar' | 'drawer'
-}>(), {
-  variant: 'sidebar'
-})
-
-const emit = defineEmits<{
-  navigate: []
-}>()
-import { getSessionsList, delSession, batchDelSessions, deleteAllSessions, clearSessionMessages, pinSession, unpinSession, getSession } from "@/api/chat/index";
+import { getSessionsList, batchDelSessions, deleteAllSessions, getSession } from "@/api/chat/index";
 import { useChatResourcesStore } from '@/stores/chatResources';
 import { listAllIMChannels } from '@/api/agent/index';
 import SessionSidebarRow from './SessionSidebarRow.vue';
@@ -292,6 +282,17 @@ const PLATFORM_LOGO: Record<string, string> = {
 };
 
 const platformLogo = (p: string): string => (p ? PLATFORM_LOGO[p] || '' : '');
+
+// drawer 变体供移动端抽屉复用同一份侧栏：无折叠态、点击后需要通知外层关闭
+const props = withDefaults(defineProps<{
+    variant?: 'sidebar' | 'drawer'
+}>(), {
+    variant: 'sidebar'
+})
+
+const emit = defineEmits<{
+    navigate: []
+}>()
 
 const { t } = useI18n();
 const usemenuStore = useMenuStore();
@@ -1672,6 +1673,13 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
         &.session-chat-row--selected .session-list-row {
             background: rgba(7, 192, 95, 0.05);
         }
+
+        // 触摸设备没有真正的 hover：抑制悬停底色，避免点击后残留高亮
+        @media (hover: none) {
+            &.session-chat-row:hover .session-list-row {
+                background: transparent;
+            }
+        }
     }
 
     // SessionSidebarRow 为子组件，需 :deep 才能让标题省略号生效
@@ -1710,6 +1718,11 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
             opacity: 0;
             transition: opacity 0.2s ease;
             flex-shrink: 0;
+
+            // 触摸设备无法 hover，操作入口必须常显，否则手机上完全不可达
+            @media (hover: none) {
+                opacity: 0.85;
+            }
         }
 
         .menu-more {
