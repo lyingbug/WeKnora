@@ -249,10 +249,17 @@ func (n node) displayName() string {
 }
 
 type documentBlocksResponse struct {
-	Success bool `json:"success"`
+	// Success is a pointer so an omitted field is not read as an explicit
+	// failure: the transport already rejects non-2xx responses, and treating a
+	// missing flag as success=false would fail every document fetch.
+	Success *bool `json:"success"`
 	Result  struct {
 		Data []json.RawMessage `json:"data"`
 	} `json:"result"`
+}
+
+func (r documentBlocksResponse) failed() bool {
+	return r.Success != nil && !*r.Success
 }
 
 type apiErrorPayload struct {

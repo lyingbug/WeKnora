@@ -397,10 +397,19 @@ func (c *httpClient) listDocumentBlocks(
 		if err := c.doJSON(ctx, http.MethodGet, path, &response); err != nil {
 			return nil, fmt.Errorf("list dingtalk document blocks: %w", err)
 		}
-		if !response.Success {
+		if response.failed() {
 			return nil, fmt.Errorf("dingtalk document block query returned success=false")
 		}
 		all = append(all, response.Result.Data...)
+		if len(response.Result.Data) > blockPageSize {
+			// The server ignored startIndex/endIndex and returned the whole
+			// document. Paging on would re-read the same blocks and duplicate
+			// the content, so take this page as the complete answer.
+			logger.Warnf(ctx,
+				"[DingTalk] block range ignored (page=%d, returned=%d > %d); treating page as full document",
+				page, len(response.Result.Data), blockPageSize)
+			return all, nil
+		}
 		if len(response.Result.Data) < blockPageSize {
 			return all, nil
 		}

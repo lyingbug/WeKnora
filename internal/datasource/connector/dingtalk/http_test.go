@@ -194,7 +194,8 @@ func TestHTTPClientPaginatesDocumentBlocks(t *testing.T) {
 		for i := range data {
 			data[i] = json.RawMessage(`{"blockType":"paragraph"}`)
 		}
-		response := documentBlocksResponse{Success: true}
+		success := true
+		response := documentBlocksResponse{Success: &success}
 		response.Result.Data = data
 		writeJSON(t, w, response)
 	})

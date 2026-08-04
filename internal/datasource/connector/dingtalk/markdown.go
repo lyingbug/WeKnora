@@ -3,7 +3,9 @@ package dingtalk
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -30,8 +32,35 @@ type textBlock struct {
 }
 
 type headingBlock struct {
-	Level int    `json:"level"`
-	Text  string `json:"text"`
+	Level headingLevel `json:"level"`
+	Text  string       `json:"text"`
+}
+
+// headingLevel decodes the documented integer form as well as the string forms
+// observed in the wild ("2", "heading-2", "h2"). A strict int would fail the
+// whole envelope and discard the heading text along with it.
+type headingLevel int
+
+var headingLevelDigits = regexp.MustCompile(`[1-6]`)
+
+func (l *headingLevel) UnmarshalJSON(data []byte) error {
+	var number int
+	if err := json.Unmarshal(data, &number); err == nil {
+		*l = headingLevel(number)
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		*l = 0
+		return nil
+	}
+	if digit := headingLevelDigits.FindString(text); digit != "" {
+		level, _ := strconv.Atoi(digit)
+		*l = headingLevel(level)
+		return nil
+	}
+	*l = 0
+	return nil
 }
 
 type calloutBlock struct {
@@ -44,7 +73,8 @@ type columnsBlock struct {
 
 type listBlock struct {
 	List struct {
-		Level int `json:"level"`
+		ListID string `json:"listId"`
+		Level  int    `json:"level"`
 	} `json:"list"`
 }
 
@@ -71,6 +101,35 @@ type inlineProperties struct {
 	Href string `json:"href"`
 }
 
+// renderState carries the output buffer plus the list run currently being
+// written. DingTalk emits every list item as its own top-level block, so
+// consecutive items are only a list because they are adjacent: the state is
+// what lets us number an ordered run and close it with a blank line before the
+// next block, instead of letting the following table or paragraph be absorbed
+// into the list.
+type renderState struct {
+	builder *strings.Builder
+	unknown map[string]struct{}
+	list    listRun
+}
+
+type listRun struct {
+	active bool
+	// group is the listId/level pair of the ordered run in progress; ordered
+	// numbering restarts whenever it changes, and an unordered item clears it.
+	group string
+	seq   int
+}
+
+// closeList terminates a list run so the next block starts its own paragraph.
+func (s *renderState) closeList() {
+	if !s.list.active {
+		return
+	}
+	s.builder.WriteByte('\n')
+	s.list = listRun{}
+}
+
 func renderDocument(title string, blocks []json.RawMessage) renderResult {
 	var builder strings.Builder
 	title = strings.TrimSpace(title)
@@ -81,9 +140,11 @@ func renderDocument(title string, blocks []json.RawMessage) renderResult {
 	}
 
 	unknown := make(map[string]struct{})
+	state := &renderState{builder: &builder, unknown: unknown}
 	for _, raw := range blocks {
-		renderBlock(&builder, raw, 0, unknown)
+		renderBlock(state, raw, 0)
 	}
+	state.closeList()
 	content := strings.TrimSpace(builder.String())
 	if content != "" {
 		content += "\n"
@@ -96,22 +157,24 @@ func renderDocument(title string, blocks []json.RawMessage) renderResult {
 	return renderResult{Markdown: content, UnknownTypes: unknownTypes}
 }
 
-func renderBlock(
-	builder *strings.Builder,
-	raw json.RawMessage,
-	depth int,
-	unknown map[string]struct{},
-) {
+func renderBlock(state *renderState, raw json.RawMessage, depth int) {
+	builder := state.builder
+	unknown := state.unknown
 	if depth > maxResourceDepth {
+		state.closeList()
 		unknown["max_depth"] = struct{}{}
 		return
 	}
 	var block blockEnvelope
 	if err := json.Unmarshal(raw, &block); err != nil {
-		unknown["invalid_json"] = struct{}{}
+		state.closeList()
+		renderUndecodableBlock(state, raw, depth)
 		return
 	}
 	blockType := strings.ToLower(strings.TrimSpace(block.BlockType))
+	if blockType != "orderedlist" && blockType != "unorderedlist" {
+		state.closeList()
+	}
 	switch blockType {
 	case "paragraph":
 		text := renderInlineChildren(block.Children, depth+1, unknown)
@@ -125,7 +188,7 @@ func renderBlock(
 			text = block.Heading.Text
 		}
 		if text != "" {
-			level := block.Heading.Level
+			level := int(block.Heading.Level)
 			if level < 1 {
 				level = 1
 			}
@@ -159,9 +222,10 @@ func renderBlock(
 		marker := "- "
 		if blockType == "orderedlist" {
 			level = block.OrderedList.List.Level
-			marker = "1. "
+			marker = state.orderedMarker(block.OrderedList.List.ListID, level)
 		} else {
 			level = block.UnorderedList.List.Level
+			state.list.group = ""
 		}
 		if level < 0 {
 			level = 0
@@ -169,14 +233,16 @@ func renderBlock(
 		if level > maxResourceDepth {
 			level = maxResourceDepth
 		}
+		state.list.active = true
 		builder.WriteString(strings.Repeat("  ", level))
 		builder.WriteString(marker)
 		builder.WriteString(text)
 		builder.WriteByte('\n')
 	case "callout", "columns":
 		for _, child := range block.Children {
-			renderBlock(builder, child, depth+1, unknown)
+			renderBlock(state, child, depth+1)
 		}
+		state.closeList()
 	case "table":
 		renderTable(builder, block.Table.Cells)
 	case "":
@@ -184,6 +250,37 @@ func renderBlock(
 	default:
 		unknown[blockType] = struct{}{}
 	}
+}
+
+// orderedMarker returns the next number of the ordered run identified by
+// listId+level, restarting at 1 whenever the run changes. Emitting real numbers
+// keeps the ordinal meaningful in the plain text that reaches retrieval, where
+// a repeated "1." would otherwise flatten every item to the same rank.
+func (s *renderState) orderedMarker(listID string, level int) string {
+	group := listID + "\x00" + strconv.Itoa(level)
+	if !s.list.active || s.list.group != group {
+		s.list.group = group
+		s.list.seq = 0
+	}
+	s.list.seq++
+	return strconv.Itoa(s.list.seq) + ". "
+}
+
+// renderUndecodableBlock salvages a block whose type-specific payload does not
+// match the documented schema. Only the envelope is re-read, so an unexpected
+// field type costs the block's formatting instead of its text.
+func renderUndecodableBlock(state *renderState, raw json.RawMessage, depth int) {
+	var envelope struct {
+		BlockType string            `json:"blockType"`
+		Children  []json.RawMessage `json:"children"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		state.unknown["invalid_json"] = struct{}{}
+		return
+	}
+	state.unknown["partial_decode"] = struct{}{}
+	text := renderInlineChildren(envelope.Children, depth+1, state.unknown)
+	writeParagraph(state.builder, text)
 }
 
 func renderInlineChildren(
