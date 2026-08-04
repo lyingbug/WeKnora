@@ -671,14 +671,16 @@ export default {
       lark: 'Lark 위키에서 문서, 스프레드시트, 파일 동기화',
       notion: 'Notion에서 페이지 및 데이터베이스 동기화',
       yuque: '위큐 지식베이스에서 문서 동기화',
-      rss: 'RSS / Atom 피드에서 글 동기화'
+      rss: 'RSS / Atom 피드에서 글 동기화',
+      dingtalk: "DingTalk 지식베이스의 온라인 문서 동기화"
     },
     connector: {
       feishu: '페이슈 (Feishu)',
       lark: 'Lark (Feishu 글로벌)',
       notion: 'Notion',
       yuque: '위큐 (Yuque)',
-      rss: 'RSS / Atom 피드'
+      rss: 'RSS / Atom 피드',
+      dingtalk: "DingTalk 문서"
     },
     logDetail: {
       startTime: '시작 시간',

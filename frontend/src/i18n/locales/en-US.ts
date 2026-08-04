@@ -5141,14 +5141,16 @@ export default {
       lark: 'Lark',
       notion: 'Notion',
       yuque: 'Yuque',
-      rss: 'RSS / Atom Feed'
+      rss: 'RSS / Atom Feed',
+      dingtalk: 'DingTalk Docs'
     },
     connectorDesc: {
       feishu: 'Sync documents, spreadsheets and files from Feishu Wiki',
       lark: 'Sync documents, spreadsheets and files from Lark Wiki (Feishu international)',
       notion: 'Sync pages and databases from Notion',
       yuque: 'Sync documents from Yuque knowledge bases',
-      rss: 'Sync articles from RSS / Atom feeds'
+      rss: 'Sync articles from RSS / Atom feeds',
+      dingtalk: 'Sync online documents from DingTalk knowledge bases'
     },
     field: {
       appId: 'App ID',

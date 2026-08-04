@@ -671,14 +671,16 @@ export default {
       lark: 'Синхронизация документов, таблиц и файлов из Lark Wiki',
       notion: 'Синхронизация страниц и баз данных из Notion',
       yuque: 'Синхронизация документов из баз знаний Yuque',
-      rss: 'Синхронизация статей из лент RSS / Atom'
+      rss: 'Синхронизация статей из лент RSS / Atom',
+      dingtalk: 'Синхронизация онлайн-документов из баз знаний DingTalk'
     },
     connector: {
       feishu: 'Feishu (Фэйшу)',
       lark: 'Lark',
       notion: 'Notion',
       yuque: 'Yuque (Юйцюэ)',
-      rss: 'RSS / Atom лента'
+      rss: 'RSS / Atom лента',
+      dingtalk: 'Документы DingTalk'
     },
     logDetail: {
       startTime: 'Время начала',
