@@ -8805,6 +8805,17 @@ const docTemplate = `{
                         "description": "在此时间之前的消息（RFC3339Nano格式）",
                         "name": "before_time",
                         "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "handle",
+                            "public"
+                        ],
+                        "type": "string",
+                        "default": "handle",
+                        "description": "文件引用形式，public 返回可加载直链",
+                        "name": "resource_urls",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -10441,6 +10452,17 @@ const docTemplate = `{
                         "name": "message_id",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "enum": [
+                            "handle",
+                            "public"
+                        ],
+                        "type": "string",
+                        "default": "handle",
+                        "description": "文件引用形式，public 返回可加载直链",
+                        "name": "resource_urls",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -10490,6 +10512,17 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/internal_handler_session.SearchKnowledgeRequest"
                         }
+                    },
+                    {
+                        "enum": [
+                            "handle",
+                            "public"
+                        ],
+                        "type": "string",
+                        "default": "handle",
+                        "description": "文件引用形式，public 返回可加载直链",
+                        "name": "resource_urls",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -10789,6 +10822,17 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/internal_handler_session.CreateKnowledgeQARequest"
                         }
+                    },
+                    {
+                        "enum": [
+                            "handle",
+                            "public"
+                        ],
+                        "type": "string",
+                        "default": "handle",
+                        "description": "文件引用形式，public 返回可加载直链",
+                        "name": "resource_urls",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -10845,6 +10889,17 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/internal_handler_session.CreateKnowledgeQARequest"
                         }
+                    },
+                    {
+                        "enum": [
+                            "handle",
+                            "public"
+                        ],
+                        "type": "string",
+                        "default": "handle",
+                        "description": "文件引用形式，public 返回可加载直链",
+                        "name": "resource_urls",
+                        "in": "query"
                     }
                 ],
                 "responses": {
