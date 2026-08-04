@@ -77,6 +77,10 @@ type ChunkRepository interface {
 	DeleteChunk(ctx context.Context, tenantID uint64, id string) error
 	// DeleteChunks deletes chunks by IDs in batch
 	DeleteChunks(ctx context.Context, tenantID uint64, ids []string) error
+	// PurgeSoftDeletedChunks hard-deletes only the tombstoned rows among the
+	// given IDs so a content-addressed chunk can be reinserted under the same
+	// primary key. Live rows are never touched. Returns the number reclaimed.
+	PurgeSoftDeletedChunks(ctx context.Context, tenantID uint64, ids []string) (int64, error)
 	// DeleteChunksByKnowledgeID deletes chunks by knowledge id
 	DeleteChunksByKnowledgeID(ctx context.Context, tenantID uint64, knowledgeID string) error
 	// DeleteByKnowledgeList deletes all chunks for a knowledge list

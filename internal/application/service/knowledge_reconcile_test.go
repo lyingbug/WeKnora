@@ -282,3 +282,45 @@ func TestDataTableDerivedChunkIDsAreStable(t *testing.T) {
 	assert.NotEqual(t, first[1].ID, changed[1].ID)
 	assert.Equal(t, first[0].ID, first[1].ParentChunkID)
 }
+
+// Removing a paragraph and restoring it later must resolve to the same
+// content-addressed ID and come back as Added, which is exactly the case that
+// collides with the tombstone left behind by the earlier stale cleanup.
+func TestBuildDesiredDocumentChunksRestoresRemovedContentUnderSameID(t *testing.T) {
+	knowledge := reconcileKnowledge()
+	initial, err := buildDesiredDocumentChunks(
+		knowledge,
+		[]types.ParsedChunk{parsedText("alpha", 0), parsedText("beta", 1)},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	var betaID string
+	for _, chunk := range initial.Text {
+		if chunk.Content == "beta" {
+			betaID = chunk.ID
+		}
+	}
+	require.NotEmpty(t, betaID)
+
+	withoutBeta, err := buildDesiredDocumentChunks(
+		knowledge,
+		[]types.ParsedChunk{parsedText("alpha", 0)},
+		nil,
+		initial.All,
+	)
+	require.NoError(t, err)
+	require.Len(t, withoutBeta.Stale, 1)
+	assert.Equal(t, betaID, withoutBeta.Stale[0].ID)
+
+	restored, err := buildDesiredDocumentChunks(
+		knowledge,
+		[]types.ParsedChunk{parsedText("alpha", 0), parsedText("beta", 1)},
+		nil,
+		withoutBeta.All,
+	)
+	require.NoError(t, err)
+	require.Len(t, restored.Added, 1)
+	assert.Equal(t, betaID, restored.Added[0].ID,
+		"restored content must reuse the tombstoned primary key")
+}

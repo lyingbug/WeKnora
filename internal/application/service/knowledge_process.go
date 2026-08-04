@@ -403,6 +403,21 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		"chunks_planned": len(insertChunks),
 	})
 	if len(desired.Added) > 0 {
+		// A chunk that was removed in an earlier reparse and has now been
+		// restored resolves to the same content-addressed ID, but the earlier
+		// removal only tombstoned the row. Reclaim those keys first, otherwise
+		// the insert below fails on the primary key the reconciliation read
+		// path cannot even see.
+		addedIDs := chunkIDList(desired.Added)
+		if purged, purgeErr := s.chunkRepo.PurgeSoftDeletedChunks(
+			ctx, knowledge.TenantID, addedIDs,
+		); purgeErr != nil {
+			err = purgeErr
+		} else if purged > 0 {
+			logger.Infof(ctx, "Reclaimed %d tombstoned chunk IDs before insert: %s", purged, knowledge.ID)
+		}
+	}
+	if err == nil && len(desired.Added) > 0 {
 		err = s.chunkRepo.CreateChunks(ctx, desired.Added)
 	}
 	if err != nil {

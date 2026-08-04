@@ -536,6 +536,39 @@ func (r *chunkRepository) DeleteChunks(ctx context.Context, tenantID uint64, ids
 	return nil
 }
 
+// PurgeSoftDeletedChunks reclaims the primary keys of tombstoned chunks.
+//
+// Chunk IDs are content-addressed, so text that is removed and later restored
+// resolves to the same key. DeleteChunks soft-deletes, leaving a row that the
+// reconciliation read path cannot see but that still holds the key, which turns
+// the restore into a duplicate-key insert. The predicate is deliberately
+// narrow — tenant, explicit ID list, and deleted_at IS NOT NULL — so a live row
+// owned by a concurrent attempt can never be dropped.
+func (r *chunkRepository) PurgeSoftDeletedChunks(
+	ctx context.Context, tenantID uint64, ids []string,
+) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	var purged int64
+	const batchSize = 5000
+	for i := 0; i < len(ids); i += batchSize {
+		end := i + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		result := r.db.WithContext(ctx).
+			Unscoped().
+			Where("tenant_id = ? AND id IN ? AND deleted_at IS NOT NULL", tenantID, ids[i:end]).
+			Delete(&types.Chunk{})
+		if result.Error != nil {
+			return purged, result.Error
+		}
+		purged += result.RowsAffected
+	}
+	return purged, nil
+}
+
 // DeleteChunksByKnowledgeID deletes all chunks for a knowledge ID
 func (r *chunkRepository) DeleteChunksByKnowledgeID(ctx context.Context, tenantID uint64, knowledgeID string) error {
 	return r.db.WithContext(ctx).Where(
