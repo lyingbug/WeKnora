@@ -1059,3 +1059,97 @@ const handleAction = (action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse'
   }
 }
 </style>
+
+// ============================================================
+// 移动端适配：优化卡片布局和间距
+// ============================================================
+@media screen and (max-width: 767px) {
+  .doc-card-list {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  .knowledge-card {
+    min-width: 160px;
+    height: 120px;
+    border-radius: 6px;
+  }
+
+  .card-content {
+    padding: 8px 10px 6px;
+  }
+
+  .card-content-title {
+    font-size: 13px;
+    line-height: 20px;
+    height: 20px;
+    margin-right: 6px;
+  }
+
+  .card-content-txt {
+    font-size: 11px;
+    line-height: 16px;
+    -webkit-line-clamp: 2;
+  }
+
+  .card-bottom {
+    padding: 0 10px;
+    height: 28px;
+  }
+
+  .card-time {
+    font-size: 11px;
+  }
+
+  .card-type {
+    font-size: 10px;
+  }
+
+  .card-tag-chip .tag-text {
+    max-width: 60px;
+    font-size: 10px;
+  }
+
+  .card-tag-overflow {
+    height: 16px;
+    min-width: 16px;
+    padding: 0 4px;
+    font-size: 9px;
+  }
+
+  // 移动端隐藏hover弹出层，改为点击触发
+  .knowledge-card-hover-popover {
+    display: none;
+  }
+}
+
+// ============================================================
+// 平板适配：优化卡片布局
+// ============================================================
+@media screen and (min-width: 768px) and (max-width: 1023px) {
+  .doc-card-list {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+    padding: 0 12px;
+  }
+
+  .knowledge-card {
+    min-width: 200px;
+    height: 128px;
+  }
+
+  .card-content {
+    padding: 9px 12px 7px;
+  }
+
+  .card-content-title {
+    font-size: 14px;
+    margin-right: 8px;
+  }
+
+  .card-content-txt {
+    font-size: 12px;
+    line-height: 18px;
+  }
+}
