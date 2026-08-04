@@ -10,6 +10,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/storageurl"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
@@ -23,9 +24,10 @@ import (
 // @Tags         问答
 // @Accept       json
 // @Produce      text/event-stream
-// @Param        session_id  path      string  true  "会话ID"
-// @Param        message_id  query     string  true  "消息ID"
-// @Success      200         {object}  map[string]interface{}  "流式响应"
+// @Param        session_id     path      string  true   "会话ID"
+// @Param        message_id     query     string  true   "消息ID"
+// @Param        resource_urls  query     string  false  "文件引用形式，public 返回可加载直链"  Enums(handle, public)  default(handle)
+// @Success      200            {object}  map[string]interface{}  "流式响应"
 // @Failure      404         {object}  errors.AppError         "会话或消息不存在"
 // @Security     Bearer
 // @Security     ApiKeyAuth
@@ -53,9 +55,17 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 
 	logger.Infof(ctx, "Continuing stream, session ID: %s, message ID: %s", sessionID, messageID)
 
-	// Verify that the session exists and belongs to this tenant
-	_, err := h.sessionService.GetSession(ctx, sessionID)
+	// Resolve before any SSE header is written so an invalid resource_urls value
+	// is still reportable as a normal 400 JSON error.
+	resourceRewriter, err := h.resolveStreamRewriter(c)
 	if err != nil {
+		logger.Warnf(ctx, "Invalid resource URL mode: %v", err)
+		_ = c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
+
+	// Verify that the session exists and belongs to this tenant
+	if _, err := h.sessionService.GetSession(ctx, sessionID); err != nil {
 		if stderrors.Is(err, errors.ErrSessionNotFound) {
 			logger.Warnf(ctx, "Session not found, ID: %s", sessionID)
 			c.Error(errors.NewNotFoundError(err.Error()))
@@ -139,9 +149,7 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 	// Replay existing events
 	logger.Debugf(ctx, "Replaying %d existing events", len(events))
 	for _, evt := range events {
-		response := buildStreamResponse(evt, message.RequestID)
-		c.SSEvent("message", response)
-		c.Writer.Flush()
+		emitStreamEvent(ctx, c, evt, message.RequestID, resourceRewriter)
 	}
 
 	// If stream is already completed, send final event and return
@@ -178,9 +186,7 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 					streamCompletedNow = true
 				}
 
-				response := buildStreamResponse(evt, message.RequestID)
-				c.SSEvent("message", response)
-				c.Writer.Flush()
+				emitStreamEvent(ctx, c, evt, message.RequestID, resourceRewriter)
 			}
 
 			// Update offset
@@ -326,6 +332,7 @@ func (h *Handler) handleAgentEventsForSSE(
 	sessionID, assistantMessageID, requestID string,
 	eventBus *event.EventBus,
 	waitForTitle bool,
+	resourceRewriter *storageurl.StreamRewriter,
 ) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -386,9 +393,6 @@ func (h *Handler) handleAgentEventsForSSE(
 					return
 				}
 
-				// Build StreamResponse from StreamEvent
-				response := buildStreamResponse(evt, requestID)
-
 				// Check for completion event
 				if evt.Type == "complete" {
 					streamCompleted = true
@@ -399,14 +403,16 @@ func (h *Handler) handleAgentEventsForSSE(
 					titleReceived = true
 				}
 
-				// Check if connection is still alive before writing
+				// Check if connection is still alive before writing. Build the
+				// payload only after this check: in public resource URL mode
+				// building consumes the chunk into the holdback buffer, so an
+				// early return here would drop it.
 				if c.Request.Context().Err() != nil {
 					log.Info("Connection closed during event sending, stopping")
 					return
 				}
 
-				c.SSEvent("message", response)
-				c.Writer.Flush()
+				emitStreamEvent(ctx, c, evt, requestID, resourceRewriter)
 			}
 
 			// Update offset
@@ -436,9 +442,7 @@ func (h *Handler) handleAgentEventsForSSE(
 							}
 							if len(events) > 0 {
 								for _, evt := range events {
-									response := buildStreamResponse(evt, requestID)
-									c.SSEvent("message", response)
-									c.Writer.Flush()
+									emitStreamEvent(ctx, c, evt, requestID, resourceRewriter)
 									// If we got the title, we can exit
 									if evt.Type == types.ResponseTypeSessionTitle {
 										log.Infof("Title event received: %s", evt.Content)
