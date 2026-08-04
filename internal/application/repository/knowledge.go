@@ -628,21 +628,28 @@ func (r *knowledgeRepository) FindByMetadataKeyPrefix(
 ) ([]*types.Knowledge, error) {
 	escaped := escapeLikeKeyword(prefix)
 	var items []*types.Knowledge
-	// The JSON key is embedded as a SQL literal (metadata->>'external_id'), NOT a
-	// bind parameter. PostgreSQL only uses the expression index
-	// idx_knowledges_kb_metadata_external_id (built on the literal expression
-	// (metadata->>'external_id')) when that exact expression appears in the query;
-	// a bound metadata->>$1 is a structurally different expression the planner
-	// cannot match, so it would silently fall back to a heap scan. key is an
-	// internal, caller-supplied field name (always "external_id"); single-quotes
-	// are doubled defensively so the literal is always well-formed.
+	// The JSON key is embedded as a SQL literal, NOT a bind parameter. PostgreSQL
+	// only uses the expression index idx_knowledges_kb_metadata_external_id (built
+	// on the literal expression (metadata->>'external_id')) when that exact
+	// expression appears in the query; a bound metadata->>$1 is a structurally
+	// different expression the planner cannot match, so it would silently fall
+	// back to a heap scan. MySQL indexes the equivalent generated column
+	// metadata_external_id, which its optimizer matches against the same literal
+	// extraction expression.
+	//
+	// The extraction syntax itself must go through database.JSONPathExpr: MySQL
+	// requires a '$.key' path and rejects the bare-key PostgreSQL form with
+	// error 3143 as soon as any row holds non-null JSON.
 	//
 	// The prefix pattern stays a bind parameter: an unnamed prepared statement is
 	// custom-planned with the actual value, so LIKE 'prefix%' still extracts the
 	// prefix and drives the index. The explicit ESCAPE '\' keeps backslash-escaped
-	// wildcards (e.g. \_) literal on both PostgreSQL and SQLite.
-	keyExpr := "metadata->>'" + strings.ReplaceAll(key, "'", "''") + "'"
-	err := r.db.WithContext(ctx).
+	// wildcards (e.g. \_) literal across dialects.
+	keyExpr, err := database.JSONPathExprIndexed(r.db.Dialector.Name(), "metadata", key)
+	if err != nil {
+		return nil, fmt.Errorf("invalid metadata key %q: %w", key, err)
+	}
+	err = r.db.WithContext(ctx).
 		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", tenantID, kbID).
 		Where(keyExpr+" LIKE ? ESCAPE ?", escaped+"%", `\`).
 		Find(&items).Error

@@ -46,6 +46,35 @@ func JSONPathExpr(dialectName, column, key string) (string, error) {
 	}
 }
 
+// mysqlMaterializedJSONColumns maps a (JSON column, key) extraction to the
+// generated column that materializes and indexes it in the MySQL schema.
+//
+// MySQL only substitutes an indexed generated column for equality-shaped
+// predicates (=, <, IN, BETWEEN, ...), never for LIKE. A LIKE-prefix scan
+// therefore has to name the generated column itself to stay on the index.
+// Keeping the mapping here means the schema/query coupling is stated once,
+// instead of a bare column name appearing at each call site where nothing
+// would flag it if the migration renamed the column.
+var mysqlMaterializedJSONColumns = map[[2]string]string{
+	{"metadata", "external_id"}: "metadata_external_id",
+}
+
+// JSONPathExprIndexed behaves like JSONPathExpr, except it returns the
+// materialized generated column when the active dialect has one for this
+// (column, key). Prefer it over JSONPathExpr wherever the predicate is
+// expected to use an index.
+func JSONPathExprIndexed(dialectName, column, key string) (string, error) {
+	if err := validateJSONPathKey(key); err != nil {
+		return "", err
+	}
+	if dialectName == "mysql" {
+		if generated, ok := mysqlMaterializedJSONColumns[[2]string{column, key}]; ok {
+			return generated, nil
+		}
+	}
+	return JSONPathExpr(dialectName, column, key)
+}
+
 // validateJSONPathKey ensures key is a simple identifier ([a-zA-Z0-9_-]+).
 // Empty keys and anything containing JSON path metacharacters (., [], *,
 // quotes, etc.) are rejected. This prevents both injection and silent

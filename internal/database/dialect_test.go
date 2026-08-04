@@ -132,3 +132,36 @@ func TestJSONPathExpr_EmptyKeyReturnsError(t *testing.T) {
 	assert.Error(t, err, "empty key must error")
 	assert.Equal(t, "", got)
 }
+
+// JSONPathExprIndexed swaps in the generated column that MySQL indexes, because
+// MySQL only substitutes an indexed generated column for equality-shaped
+// predicates and never for LIKE. PostgreSQL keeps the literal extraction
+// expression, which is what its own expression index is built on.
+func TestJSONPathExprIndexed_PrefersMaterializedColumnOnMySQL(t *testing.T) {
+	got, err := JSONPathExprIndexed("mysql", "metadata", "external_id")
+	assert.NoError(t, err)
+	assert.Equal(t, "metadata_external_id", got)
+
+	got, err = JSONPathExprIndexed("postgres", "metadata", "external_id")
+	assert.NoError(t, err)
+	assert.Equal(t, "metadata ->> 'external_id'", got)
+
+	got, err = JSONPathExprIndexed("sqlite", "metadata", "external_id")
+	assert.NoError(t, err)
+	assert.Equal(t, "json_extract(metadata, '$.external_id')", got)
+}
+
+// A key with no materialized column must fall back to plain extraction on every
+// dialect, so adding a new metadata key never silently queries a column that
+// the migration does not define.
+func TestJSONPathExprIndexed_FallsBackForUnmappedKeys(t *testing.T) {
+	got, err := JSONPathExprIndexed("mysql", "metadata", "some_other_key")
+	assert.NoError(t, err)
+	assert.Equal(t, "metadata ->> '$.some_other_key'", got)
+}
+
+func TestJSONPathExprIndexed_InvalidKeyReturnsError(t *testing.T) {
+	got, err := JSONPathExprIndexed("mysql", "metadata", "a.b")
+	assert.Error(t, err)
+	assert.Equal(t, "", got)
+}
