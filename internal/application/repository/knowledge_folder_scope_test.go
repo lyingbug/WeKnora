@@ -34,7 +34,7 @@ func TestKnowledgeRepositoryListIDsByFolderScopeSubtree(t *testing.T) {
 	insertFolderKnowledge(t, db, "06-other-tenant", 10002, "kb-3", &otherTenantFolder.ID, false)
 	insertFolderKnowledge(t, db, "07-deleted-knowledge", 10001, "kb-1", &child.ID, true)
 
-	ids, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{parent.ID})
+	ids, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{parent.ID}, 0)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"01-parent", "02-child", "03-grandchild"}, ids)
 
@@ -43,6 +43,7 @@ func TestKnowledgeRepositoryListIDsByFolderScopeSubtree(t *testing.T) {
 		10001,
 		"kb-1",
 		[]string{child.ID, sibling.ID, parent.ID, parent.ID},
+		0,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"01-parent", "02-child", "03-grandchild", "04-sibling"}, unionIDs)
@@ -64,20 +65,20 @@ func TestKnowledgeRepositoryListIDsByFolderScopeEmptySoftDeleteAndMove(t *testin
 
 	require.NoError(t, db.Delete(&types.Folder{}, "id = ?", deletedBranch.ID).Error)
 
-	ids, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{folderA.ID})
+	ids, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{folderA.ID}, 0)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"doc-a"}, ids)
 
-	emptyIDs, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{folderB.ID})
+	emptyIDs, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{folderB.ID}, 0)
 	require.NoError(t, err)
 	assert.Empty(t, emptyIDs)
 	assert.NotNil(t, emptyIDs)
 
 	require.NoError(t, knowledgeRepo.UpdateKnowledgeFolder(ctx, 10001, "kb-1", "doc-a", &folderB.ID))
-	aIDs, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{folderA.ID})
+	aIDs, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{folderA.ID}, 0)
 	require.NoError(t, err)
 	assert.Empty(t, aIDs)
-	bIDs, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{folderB.ID})
+	bIDs, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{folderB.ID}, 0)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"doc-a"}, bIDs)
 }
@@ -94,9 +95,31 @@ func TestKnowledgeRepositoryListIDsByFolderScopesCycleConverges(t *testing.T) {
 	insertFolderKnowledge(t, db, "doc-cycle-b", 10001, "kb-1", &b.ID, false)
 	require.NoError(t, db.Model(&types.Folder{}).Where("id = ?", a.ID).Update("parent_id", b.ID).Error)
 
-	ids, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{a.ID, b.ID})
+	ids, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{a.ID, b.ID}, 0)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"doc-cycle-a", "doc-cycle-b"}, ids)
+}
+
+func TestKnowledgeRepositoryListIDsByFolderScopesStopsOneRowPastLimit(t *testing.T) {
+	db := setupFolderRepositoryTestDB(t)
+	knowledgeRepo := NewKnowledgeRepository(db)
+	folderRepo := NewFolderRepository(db)
+	ctx := context.Background()
+
+	folder := createFolder(t, folderRepo, &types.Folder{ID: "folder-limit", TenantID: 10001, KnowledgeBaseID: "kb-1", Name: "Limit"})
+	for _, id := range []string{"doc-1", "doc-2", "doc-3", "doc-4"} {
+		insertFolderKnowledge(t, db, id, 10001, "kb-1", &folder.ID, false)
+	}
+
+	// A limit of 2 returns 3 rows, which is how the caller distinguishes
+	// "exactly at the budget" from "over the budget".
+	ids, err := knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{folder.ID}, 2)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"doc-1", "doc-2", "doc-3"}, ids)
+
+	ids, err = knowledgeRepo.ListIDsByFolderScopes(ctx, 10001, "kb-1", []string{folder.ID}, 4)
+	require.NoError(t, err)
+	assert.Len(t, ids, 4)
 }
 
 func TestKnowledgeRepositoryListIDsByFolderScopesBuildsPortablePostgresCTE(t *testing.T) {

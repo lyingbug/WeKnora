@@ -53,6 +53,9 @@ var (
 	// ErrKnowledgeAlreadyInTargetFolder makes an entire batch fail when any
 	// selected knowledge is already in the requested target folder.
 	ErrKnowledgeAlreadyInTargetFolder = errors.New("knowledge already in target folder")
+	// ErrFolderScopeTooLarge is returned when a folder subtree holds more
+	// documents than a retrieval filter can carry.
+	ErrFolderScopeTooLarge = errors.New("folder scope covers too many documents")
 	// ErrKnowledgeBatchUpdateMismatch indicates that a scoped batch UPDATE did
 	// not affect every row locked earlier in the same transaction.
 	ErrKnowledgeBatchUpdateMismatch = errors.New("knowledge batch update count mismatch")
@@ -105,6 +108,15 @@ const (
 	faqImportBatchSize              = 50 // 每批处理的FAQ条目数
 	maxKnowledgeFolderMoveBatchSize = 200
 )
+
+// MaxFolderScopeKnowledgeIDs bounds how many documents a folder-scoped question
+// may resolve to. A folder scope is enforced by handing the retrieval engines an
+// explicit document-ID filter, and every backend puts a ceiling on such a list
+// (Elasticsearch and OpenSearch cap terms clauses at 65536 entries, PostgreSQL
+// caps bind parameters at 65535). Rejecting an oversized scope keeps the failure
+// explicit instead of letting a backend truncate the filter and silently answer
+// from documents the user did not select.
+const MaxFolderScopeKnowledgeIDs = 10000
 
 // NewKnowledgeService creates a new knowledge service instance
 func NewKnowledgeService(
@@ -1074,8 +1086,15 @@ func (s *knowledgeService) ListKnowledgeIDsByFolderScopes(
 				tenantID,
 				kbID,
 				uniqueFolderIDs,
+				MaxFolderScopeKnowledgeIDs,
 			)
-			return err
+			if err != nil {
+				return err
+			}
+			if len(knowledgeIDs) > MaxFolderScopeKnowledgeIDs {
+				return ErrFolderScopeTooLarge
+			}
+			return nil
 		},
 	)
 	if err != nil {

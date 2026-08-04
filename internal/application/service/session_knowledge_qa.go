@@ -747,6 +747,10 @@ func (s *sessionService) buildFolderScopedSearchTargets(
 				return nil, nil, errors.NewBadRequestError("invalid folder scope")
 			case stderrors.Is(err, ErrTargetFolderNotFound):
 				return nil, nil, errors.NewNotFoundError("folder not found")
+			case stderrors.Is(err, ErrFolderScopeTooLarge):
+				return nil, nil, errors.NewBadRequestError(
+					"the selected folder covers too many documents; pick a more specific folder or ask across the whole knowledge base",
+				)
 			default:
 				logger.Warnf(ctx, "Failed to resolve folder scope for kb_id=%s: %v", kbID, err)
 				return nil, nil, errors.NewInternalServerError("failed to resolve folder scope")

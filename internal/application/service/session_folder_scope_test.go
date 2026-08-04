@@ -1,9 +1,11 @@
 package service
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,6 +101,21 @@ func TestBuildSearchTargetsKeepsFAQTagAndRejectsUnselectedKB(t *testing.T) {
 		[]types.FolderScope{{KnowledgeBaseID: folderDocKB, FolderIDs: []string{folderAID}}},
 	)
 	assert.Error(t, err)
+}
+
+func TestBuildSearchTargetsRejectsOversizedFolderScope(t *testing.T) {
+	svc := newFolderScopeSessionService()
+	svc.knowledgeService.(*tagTargetKnowledgeService).folderScopeErr = ErrFolderScopeTooLarge
+
+	_, _, err := svc.buildSearchTargetsWithFolderScopes(
+		tagTargetContext(), 100, []string{folderDocKB}, nil, nil,
+		[]types.FolderScope{{KnowledgeBaseID: folderDocKB, FolderIDs: []string{folderAID}}},
+	)
+	// A scope that cannot be expressed as a retrieval filter is a client-side
+	// problem, not a server fault, and must never silently widen to the whole KB.
+	var appErr *errors.AppError
+	require.ErrorAs(t, err, &appErr)
+	assert.Equal(t, http.StatusBadRequest, appErr.HTTPCode)
 }
 
 func ptrString(value string) *string { return &value }

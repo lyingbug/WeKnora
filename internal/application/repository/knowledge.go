@@ -1086,6 +1086,7 @@ func (r *knowledgeRepository) ListIDsByFolderScopes(
 	tenantID uint64,
 	kbID string,
 	folderIDs []string,
+	limit int,
 ) ([]string, error) {
 	if len(folderIDs) == 0 {
 		return []string{}, nil
@@ -1097,6 +1098,11 @@ func (r *knowledgeRepository) ListIDsByFolderScopes(
 		kbID,
 		folderIDs,
 	)
+	if limit > 0 {
+		// One row past the caller's budget is enough to detect an oversized
+		// subtree without materializing the whole document set.
+		query = query.Limit(limit + 1)
+	}
 	err := query.
 		Distinct("knowledges.id").
 		Order("knowledges.id ASC").

@@ -32,9 +32,10 @@ func (s *tagTargetKnowledgeBaseService) GetKnowledgeBasesByIDsOnly(
 
 type tagTargetKnowledgeService struct {
 	interfaces.KnowledgeService
-	knowledges []*types.Knowledge
-	tagIDs     map[string][]string
-	folderIDs  map[string][]string
+	knowledges     []*types.Knowledge
+	tagIDs         map[string][]string
+	folderIDs      map[string][]string
+	folderScopeErr error
 }
 
 func (s *tagTargetKnowledgeService) GetKnowledgeBatchWithSharedAccess(
@@ -86,6 +87,9 @@ func (s *tagTargetKnowledgeService) ListKnowledgeIDsByFolderScopes(
 	kbID string,
 	folderIDs []string,
 ) ([]string, error) {
+	if s.folderScopeErr != nil {
+		return nil, s.folderScopeErr
+	}
 	if s.folderIDs == nil {
 		return []string{}, nil
 	}
