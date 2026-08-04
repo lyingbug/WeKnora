@@ -365,12 +365,6 @@ func (s *ChunkFeedbackService) updateLockedChunkFeedbackStats(
 	)
 	applyChunkFeedbackState(chunk, state)
 
-	if !feedback.IsPositive && (feedback.WasCreated || feedback.IsChanged) {
-		if merged, changed := mergeChunkDislikeReason(chunk.DislikeReasons, dislikeReason); changed {
-			chunk.DislikeReasons = merged
-		}
-	}
-
 	if err := s.chunkRepo.UpdateChunkFeedbackStats(ctx, chunk.TenantID, chunk.ID, chunk.LikeCount, chunk.DislikeCount,
 		chunk.PositiveRate, chunk.RecallWeight, chunk.QualityStatus); err != nil {
 		return fmt.Errorf("failed to update chunk stats: %w", err)
@@ -391,41 +385,6 @@ func (s *ChunkFeedbackService) updateLockedChunkFeedbackStats(
 	}
 
 	return nil
-}
-
-// mergeChunkDislikeReason 把一个点踩原因码并入片段上的原因集合，并按预定义顺序输出。
-// 只接受预定义原因码，因此该集合的基数上限等于原因码数量，不会随反馈量无界增长。
-func mergeChunkDislikeReason(current []byte, reason string) ([]byte, bool) {
-	code, ok := types.NormalizeDislikeReason(reason)
-	if !ok {
-		return current, false
-	}
-	var existing []string
-	if len(current) > 0 {
-		_ = json.Unmarshal(current, &existing)
-	}
-	present := make(map[types.DislikeReasonType]struct{}, len(existing)+1)
-	for _, raw := range existing {
-		if normalized, valid := types.NormalizeDislikeReason(raw); valid {
-			present[normalized] = struct{}{}
-		}
-	}
-	if _, duplicate := present[code]; duplicate {
-		return current, false
-	}
-	present[code] = struct{}{}
-
-	reasons := make([]string, 0, len(present))
-	for _, candidate := range types.AllDislikeReasons() {
-		if _, ok := present[candidate]; ok {
-			reasons = append(reasons, string(candidate))
-		}
-	}
-	encoded, err := json.Marshal(reasons)
-	if err != nil {
-		return current, false
-	}
-	return encoded, true
 }
 
 func (s *ChunkFeedbackService) cancelSingleChunkFeedbackStats(ctx context.Context, tenantID uint64, chunkID string, wasPositive bool) error {

@@ -210,7 +210,6 @@ CREATE TABLE chunks (
     positive_rate DOUBLE NOT NULL DEFAULT 0.0,
     recall_weight DOUBLE NOT NULL DEFAULT 1.0,
     quality_status VARCHAR(50) NOT NULL DEFAULT 'normal',
-    dislike_reasons JSON,
     last_feedback_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

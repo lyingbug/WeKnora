@@ -60,7 +60,6 @@ ALTER TABLE chunks DROP COLUMN IF EXISTS dislike_count;
 ALTER TABLE chunks DROP COLUMN IF EXISTS positive_rate;
 ALTER TABLE chunks DROP COLUMN IF EXISTS recall_weight;
 ALTER TABLE chunks DROP COLUMN IF EXISTS quality_status;
-ALTER TABLE chunks DROP COLUMN IF EXISTS dislike_reasons;
 ALTER TABLE chunks DROP COLUMN IF EXISTS last_feedback_at;
 
 DO $$ BEGIN RAISE NOTICE '[Migration 000079] chunks table rolled back'; END $$;

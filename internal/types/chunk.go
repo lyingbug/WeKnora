@@ -182,7 +182,6 @@ type Chunk struct {
 	PositiveRate   float64            `json:"positive_rate" gorm:"type:float;default:0"`
 	RecallWeight   float64            `json:"recall_weight" gorm:"type:float;default:1.0"`
 	QualityStatus  ChunkQualityStatus `json:"quality_status" gorm:"type:varchar(50);default:'normal'"`
-	DislikeReasons JSON               `json:"dislike_reasons" gorm:"type:json;default:'[]'"`
 	LastFeedbackAt *time.Time         `json:"last_feedback_at"`
 }
 

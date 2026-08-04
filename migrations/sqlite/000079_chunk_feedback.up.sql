@@ -6,7 +6,6 @@ ALTER TABLE chunks ADD COLUMN dislike_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE chunks ADD COLUMN positive_rate REAL NOT NULL DEFAULT 0.0;
 ALTER TABLE chunks ADD COLUMN recall_weight REAL NOT NULL DEFAULT 1.0;
 ALTER TABLE chunks ADD COLUMN quality_status VARCHAR(50) NOT NULL DEFAULT 'normal';
-ALTER TABLE chunks ADD COLUMN dislike_reasons TEXT DEFAULT '[]';
 ALTER TABLE chunks ADD COLUMN last_feedback_at DATETIME;
 
 CREATE INDEX IF NOT EXISTS idx_chunks_quality_status ON chunks(quality_status);

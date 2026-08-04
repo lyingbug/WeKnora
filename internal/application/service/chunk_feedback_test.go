@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -73,36 +72,6 @@ func TestUpdateSingleChunkFeedbackStats_SwitchDislikeToLikeMovesOneVote(t *testi
 	require.Equal(t, 2, chunkRepo.updatedDislikeCount)
 	require.InDelta(t, 0.6, chunkRepo.updatedPositiveRate, 0.001)
 	require.Equal(t, 1.0, chunkRepo.updatedRecallWeight)
-}
-
-func TestUpdateSingleChunkFeedbackStats_RepeatedDislikeDoesNotAppendReason(t *testing.T) {
-	ctx := context.Background()
-	reasons, err := json.Marshal([]string{"inaccurate"})
-	require.NoError(t, err)
-	chunkRepo := &chunkFeedbackChunkRepo{
-		chunk: &types.Chunk{
-			ID:             "chunk-1",
-			TenantID:       1,
-			LikeCount:      1,
-			DislikeCount:   2,
-			PositiveRate:   0.33,
-			RecallWeight:   0.5,
-			QualityStatus:  types.ChunkQualityStatusNormal,
-			DislikeReasons: reasons,
-		},
-	}
-	svc := NewChunkFeedbackService(nil, nil, nil, chunkRepo, &chunkFeedbackWeightLogRepo{})
-
-	err = svc.updateSingleChunkFeedbackStats(ctx, 1, "chunk-1", &types.ChunkFeedback{
-		WasCreated: false,
-		IsChanged:  false,
-		IsPositive: false,
-	}, "irrelevant")
-
-	require.NoError(t, err)
-	require.Equal(t, 1, chunkRepo.updatedLikeCount)
-	require.Equal(t, 2, chunkRepo.updatedDislikeCount)
-	require.JSONEq(t, `["inaccurate"]`, string(chunkRepo.chunk.DislikeReasons))
 }
 
 func TestUpdateChunksFeedbackStatsReturnsChunkUpdateError(t *testing.T) {
@@ -715,15 +684,38 @@ func TestNormalizeFeedbackRequestDropsReasonForPositiveFeedback(t *testing.T) {
 	require.Empty(t, req.DislikeReasonDetail)
 }
 
-func TestMergeChunkDislikeReasonKeepsAggregationBounded(t *testing.T) {
-	var reasons []byte
-	for _, raw := range []string{"unclear", "inaccurate", "unclear", "与问题不相关", "自由文本原因"} {
-		if merged, changed := mergeChunkDislikeReason(reasons, raw); changed {
-			reasons = merged
-		}
-	}
+func TestChunkDislikeReasonAggregationTracksCurrentFeedbackRecords(t *testing.T) {
+	ctx := context.Background()
+	db := setupChunkFeedbackFlowDB(t)
+	svc := NewChunkFeedbackServiceWithUnitOfWork(
+		repository.NewQAReplyChunkRefRepository(db),
+		repository.NewChunkFeedbackRepository(db),
+		repository.NewMessageRepository(db),
+		repository.NewChunkRepository(db),
+		repository.NewChunkWeightLogRepository(db),
+		repository.NewChunkFeedbackUnitOfWork(db),
+	)
 
-	require.JSONEq(t, `["inaccurate","unclear","irrelevant"]`, string(reasons))
+	require.NoError(t, svc.SubmitFeedback(ctx, 1, "user-1", &types.SubmitFeedbackRequest{
+		MessageID:     "message-1",
+		IsPositive:    false,
+		DislikeReason: string(types.DislikeReasonInaccurate),
+	}))
+	require.NoError(t, svc.SubmitFeedback(ctx, 1, "user-1", &types.SubmitFeedbackRequest{
+		MessageID:     "message-1",
+		IsPositive:    false,
+		DislikeReason: string(types.DislikeReasonUnclear),
+	}))
+
+	stats, err := svc.GetChunkStats(ctx, 1, "chunk-1")
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.DislikeCount)
+	require.Equal(t, []string{string(types.DislikeReasonUnclear)}, stats.DislikeReasons,
+		"the aggregate is derived from the current feedback rows, so a superseded reason must not linger")
+	require.Equal(t,
+		[]types.DislikeReasonStat{{Reason: string(types.DislikeReasonUnclear), Count: 1}},
+		stats.DislikeReasonStats,
+	)
 }
 
 func TestSubmitFeedbackStoresReasonCodeAndDetailSeparately(t *testing.T) {

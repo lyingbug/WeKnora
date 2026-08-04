@@ -1323,37 +1323,9 @@ func (r *chunkRepository) UpdateChunkFeedbackStats(ctx context.Context, tenantID
 		Updates(updates).Error
 }
 
-// IncrementLikeCount increments like_count.
-func (r *chunkRepository) IncrementLikeCount(ctx context.Context, chunkID string) error {
-	return r.db.WithContext(ctx).
-		Model(&types.Chunk{}).
-		Where("id = ?", chunkID).
-		UpdateColumn("like_count", gorm.Expr("like_count + ?", 1)).Error
-}
 
-// DecrementLikeCount decrements like_count.
-func (r *chunkRepository) DecrementLikeCount(ctx context.Context, chunkID string) error {
-	return r.db.WithContext(ctx).
-		Model(&types.Chunk{}).
-		Where("id = ? AND like_count > 0", chunkID).
-		UpdateColumn("like_count", gorm.Expr("like_count - ?", 1)).Error
-}
 
-// IncrementDislikeCount increments dislike_count.
-func (r *chunkRepository) IncrementDislikeCount(ctx context.Context, chunkID string) error {
-	return r.db.WithContext(ctx).
-		Model(&types.Chunk{}).
-		Where("id = ?", chunkID).
-		UpdateColumn("dislike_count", gorm.Expr("dislike_count + ?", 1)).Error
-}
 
-// DecrementDislikeCount decrements dislike_count.
-func (r *chunkRepository) DecrementDislikeCount(ctx context.Context, chunkID string) error {
-	return r.db.WithContext(ctx).
-		Model(&types.Chunk{}).
-		Where("id = ? AND dislike_count > 0", chunkID).
-		UpdateColumn("dislike_count", gorm.Expr("dislike_count - ?", 1)).Error
-}
 
 // UpdateChunkRecallWeight updates recall_weight.
 func (r *chunkRepository) UpdateChunkRecallWeight(ctx context.Context, chunkID string, weight float64) error {
@@ -1444,7 +1416,6 @@ func (r *chunkRepository) ResetChunkFeedback(ctx context.Context, tenantID uint6
 		"positive_rate":    0.0,
 		"recall_weight":    1.0,
 		"quality_status":   types.ChunkQualityStatusNormal,
-		"dislike_reasons":  "[]",
 		"last_feedback_at": nil,
 	}
 	return r.db.WithContext(ctx).

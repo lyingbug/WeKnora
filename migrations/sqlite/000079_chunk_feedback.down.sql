@@ -10,7 +10,6 @@ DROP INDEX IF EXISTS idx_chunks_positive_rate;
 DROP INDEX IF EXISTS idx_chunks_quality_status;
 
 ALTER TABLE chunks DROP COLUMN last_feedback_at;
-ALTER TABLE chunks DROP COLUMN dislike_reasons;
 ALTER TABLE chunks DROP COLUMN quality_status;
 ALTER TABLE chunks DROP COLUMN recall_weight;
 ALTER TABLE chunks DROP COLUMN positive_rate;
