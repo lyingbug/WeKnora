@@ -127,6 +127,8 @@ CREATE TABLE messages (
     agent_tenant_id INTEGER NOT NULL DEFAULT 0,
     model_id VARCHAR(64) NOT NULL DEFAULT '',
     execution_context JSON NOT NULL,
+    like_count INTEGER NOT NULL DEFAULT 0,
+    dislike_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP NULL DEFAULT NULL
@@ -134,6 +136,7 @@ CREATE TABLE messages (
 
 CREATE INDEX idx_messages_session_role ON messages(session_id, role); 
 CREATE INDEX idx_messages_agent_id ON messages(agent_id);
+CREATE INDEX idx_messages_feedback ON messages(like_count, dislike_count);
 
 CREATE TABLE message_suggestion_sets (
     id VARCHAR(36) PRIMARY KEY,
@@ -202,6 +205,12 @@ CREATE TABLE chunks (
     image_info TEXT,
     relation_chunks JSON,
     indirect_relation_chunks JSON,
+    like_count INTEGER NOT NULL DEFAULT 0,
+    dislike_count INTEGER NOT NULL DEFAULT 0,
+    positive_rate DOUBLE NOT NULL DEFAULT 0.0,
+    recall_weight DOUBLE NOT NULL DEFAULT 1.0,
+    quality_status VARCHAR(50) NOT NULL DEFAULT 'normal',
+    last_feedback_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP NULL DEFAULT NULL
@@ -210,6 +219,10 @@ CREATE TABLE chunks (
 CREATE INDEX idx_chunks_tenant_knowledge ON chunks(tenant_id, knowledge_id);
 CREATE INDEX idx_chunks_parent_id ON chunks(parent_chunk_id);
 CREATE INDEX idx_chunks_chunk_type ON chunks(chunk_type);
+CREATE INDEX idx_chunks_quality_status ON chunks(quality_status);
+CREATE INDEX idx_chunks_positive_rate ON chunks(positive_rate);
+CREATE INDEX idx_chunks_recall_weight ON chunks(recall_weight);
+CREATE INDEX idx_chunks_last_feedback_at ON chunks(last_feedback_at);
 
 CREATE TABLE chunk_revisions (
     id VARCHAR(36) PRIMARY KEY,
@@ -226,4 +239,76 @@ CREATE TABLE chunk_revisions (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY idx_chunk_revisions_chunk_revision (chunk_id, revision),
     KEY idx_chunk_revisions_tenant_chunk (tenant_id, chunk_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE qa_reply_chunk_refs (
+    id VARCHAR(36) PRIMARY KEY,
+    message_id VARCHAR(36) NOT NULL,
+    chunk_id VARCHAR(36) NOT NULL,
+    tenant_id INTEGER NOT NULL,
+    chunk_tenant_id INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_message_chunk (tenant_id, message_id, chunk_id, chunk_tenant_id),
+    KEY idx_qa_reply_chunk_refs_message_id (message_id),
+    KEY idx_qa_reply_chunk_refs_chunk_id (chunk_id),
+    KEY idx_qa_reply_chunk_refs_tenant_id (tenant_id),
+    KEY idx_qa_reply_chunk_refs_chunk_tenant_id (chunk_tenant_id),
+    CONSTRAINT fk_qa_reply_chunk_refs_message FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    CONSTRAINT fk_qa_reply_chunk_refs_chunk FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE qa_reply_chunk_ref_tombstones (
+    id VARCHAR(36) PRIMARY KEY,
+    message_id VARCHAR(36) NOT NULL,
+    chunk_id VARCHAR(36) NOT NULL,
+    tenant_id INTEGER NOT NULL,
+    chunk_tenant_id INTEGER NOT NULL DEFAULT 0,
+    operator VARCHAR(36),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_message_chunk_tombstone (tenant_id, message_id, chunk_id, chunk_tenant_id),
+    KEY idx_qa_reply_chunk_ref_tombstones_message_id (message_id),
+    KEY idx_qa_reply_chunk_ref_tombstones_chunk_id (chunk_id),
+    KEY idx_qa_reply_chunk_ref_tombstones_tenant_id (tenant_id),
+    KEY idx_qa_reply_chunk_ref_tombstones_chunk_tenant_id (chunk_tenant_id),
+    CONSTRAINT fk_qa_reply_chunk_ref_tombstones_message FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    CONSTRAINT fk_qa_reply_chunk_ref_tombstones_chunk FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE chunk_feedbacks (
+    id VARCHAR(36) PRIMARY KEY,
+    message_id VARCHAR(36) NOT NULL,
+    session_id VARCHAR(36) NOT NULL,
+    tenant_id INTEGER NOT NULL,
+    user_id VARCHAR(512) NOT NULL,
+    is_positive BOOLEAN NOT NULL DEFAULT TRUE,
+    dislike_reason VARCHAR(255),
+    dislike_reason_detail VARCHAR(500),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_message_user (tenant_id, message_id, user_id(191)),
+    KEY idx_chunk_feedbacks_message_id (message_id),
+    KEY idx_chunk_feedbacks_session_id (session_id),
+    KEY idx_chunk_feedbacks_tenant_id (tenant_id),
+    KEY idx_chunk_feedbacks_user_id (user_id(191)),
+    KEY idx_chunk_feedbacks_created_at (created_at),
+    CONSTRAINT fk_chunk_feedbacks_message FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE chunk_weight_logs (
+    id VARCHAR(36) PRIMARY KEY,
+    chunk_id VARCHAR(36) NOT NULL,
+    tenant_id INTEGER NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    old_weight DOUBLE NOT NULL DEFAULT 1.0,
+    new_weight DOUBLE NOT NULL DEFAULT 1.0,
+    trigger_type VARCHAR(50) NOT NULL,
+    trigger_detail VARCHAR(500),
+    operator VARCHAR(36),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_chunk_weight_logs_chunk_id (chunk_id),
+    KEY idx_chunk_weight_logs_tenant_id (tenant_id),
+    KEY idx_chunk_weight_logs_action (action),
+    KEY idx_chunk_weight_logs_trigger_type (trigger_type),
+    KEY idx_chunk_weight_logs_created_at (created_at),
+    CONSTRAINT fk_chunk_weight_logs_chunk FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
