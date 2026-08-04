@@ -1,9 +1,9 @@
--- Migration: 000071_add_folders
+-- Migration: 000002_knowledge_folders
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_bases_tenant_id_id
     ON knowledge_bases (tenant_id, id);
 
-CREATE TABLE folders (
+CREATE TABLE IF NOT EXISTS folders (
     id                VARCHAR(36) PRIMARY KEY,
     tenant_id         INTEGER NOT NULL,
     knowledge_base_id VARCHAR(36) NOT NULL,
@@ -21,27 +21,27 @@ CREATE TABLE folders (
         ON DELETE NO ACTION
 );
 
-CREATE INDEX idx_folders_scope_parent
+CREATE INDEX IF NOT EXISTS idx_folders_scope_parent
     ON folders (tenant_id, knowledge_base_id, parent_id);
 
-CREATE UNIQUE INDEX uq_folders_live_root_name
+CREATE UNIQUE INDEX IF NOT EXISTS uq_folders_live_root_name
     ON folders (tenant_id, knowledge_base_id, name)
     WHERE parent_id IS NULL AND deleted_at IS NULL;
 
-CREATE UNIQUE INDEX uq_folders_live_sibling_name
+CREATE UNIQUE INDEX IF NOT EXISTS uq_folders_live_sibling_name
     ON folders (tenant_id, knowledge_base_id, parent_id, name)
     WHERE parent_id IS NOT NULL AND deleted_at IS NULL;
 
 ALTER TABLE knowledges
     ADD COLUMN folder_id VARCHAR(36);
 
-CREATE INDEX idx_knowledges_scope_folder
+CREATE INDEX IF NOT EXISTS idx_knowledges_scope_folder
     ON knowledges (tenant_id, knowledge_base_id, folder_id);
 
 -- SQLite cannot add a composite foreign key to an existing table without
 -- rebuilding it. These triggers preserve the existing table and enforce the
 -- same tenant/knowledge-base scoped folder reference as PostgreSQL.
-CREATE TRIGGER trg_knowledges_folder_scope_insert
+CREATE TRIGGER IF NOT EXISTS trg_knowledges_folder_scope_insert
 BEFORE INSERT ON knowledges
 FOR EACH ROW
 WHEN NEW.folder_id IS NOT NULL AND NOT EXISTS (
@@ -55,7 +55,7 @@ BEGIN
     SELECT RAISE(ABORT, 'invalid knowledge folder');
 END;
 
-CREATE TRIGGER trg_knowledges_folder_scope_update
+CREATE TRIGGER IF NOT EXISTS trg_knowledges_folder_scope_update
 BEFORE UPDATE OF tenant_id, knowledge_base_id, folder_id ON knowledges
 FOR EACH ROW
 WHEN NEW.folder_id IS NOT NULL AND NOT EXISTS (
@@ -69,7 +69,7 @@ BEGIN
     SELECT RAISE(ABORT, 'invalid knowledge folder');
 END;
 
-CREATE TRIGGER trg_folders_referenced_by_knowledge_delete
+CREATE TRIGGER IF NOT EXISTS trg_folders_referenced_by_knowledge_delete
 BEFORE DELETE ON folders
 FOR EACH ROW
 WHEN EXISTS (
@@ -83,7 +83,7 @@ BEGIN
     SELECT RAISE(ABORT, 'folder is referenced by knowledge');
 END;
 
-CREATE TRIGGER trg_folders_referenced_by_knowledge_update
+CREATE TRIGGER IF NOT EXISTS trg_folders_referenced_by_knowledge_update
 BEFORE UPDATE OF id, tenant_id, knowledge_base_id ON folders
 FOR EACH ROW
 WHEN EXISTS (
