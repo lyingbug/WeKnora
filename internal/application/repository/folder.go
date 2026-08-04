@@ -15,6 +15,29 @@ import (
 // ErrFolderNotFound is returned when a folder is absent from the requested scope.
 var ErrFolderNotFound = errors.New("folder not found")
 
+// folderSubtreeHeightQuery reports how many levels a folder subtree spans,
+// counting the root folder itself as level 1. The recursion carries its own
+// depth counter and stops at the caller-supplied bound so a corrupted parent
+// cycle terminates instead of spinning inside the database.
+const folderSubtreeHeightQuery = `
+WITH RECURSIVE folder_subtree(id, depth) AS (
+	SELECT id, 1
+	FROM folders
+	WHERE tenant_id = ?
+	  AND knowledge_base_id = ?
+	  AND id = ?
+	  AND deleted_at IS NULL
+	UNION ALL
+	SELECT child.id, parent.depth + 1
+	FROM folders AS child
+	JOIN folder_subtree AS parent ON child.parent_id = parent.id
+	WHERE child.tenant_id = ?
+	  AND child.knowledge_base_id = ?
+	  AND child.deleted_at IS NULL
+	  AND parent.depth < ?
+)
+SELECT COALESCE(MAX(depth), 0) FROM folder_subtree`
+
 type folderRepository struct {
 	db *gorm.DB
 }
@@ -205,6 +228,35 @@ func (r *folderRepository) Delete(
 		).
 		Delete(&types.Folder{})
 	return folderMutationResult(result)
+}
+
+func (r *folderRepository) SubtreeHeight(
+	ctx context.Context,
+	tenantID uint64,
+	knowledgeBaseID string,
+	folderID string,
+	maxDepth int,
+) (int, error) {
+	if maxDepth < 1 {
+		maxDepth = 1
+	}
+	var height int
+	err := r.db.WithContext(ctx).Raw(
+		folderSubtreeHeightQuery,
+		tenantID,
+		knowledgeBaseID,
+		folderID,
+		tenantID,
+		knowledgeBaseID,
+		maxDepth,
+	).Scan(&height).Error
+	if err != nil {
+		return 0, err
+	}
+	if height == 0 {
+		return 0, ErrFolderNotFound
+	}
+	return height, nil
 }
 
 func (r *folderRepository) CountChildren(

@@ -16,6 +16,12 @@ import (
 
 const maxFolderNameLength = 255
 
+// MaxFolderDepth caps how many levels a folder tree may span, counting
+// top-level folders as level 1. An unbounded hierarchy would let a client
+// build a chain long enough to make the recursive subtree queries behind
+// document listing and folder-scoped retrieval arbitrarily expensive.
+const MaxFolderDepth = 16
+
 var (
 	ErrInvalidFolderScope       = errors.New("invalid folder scope")
 	ErrFolderNotFound           = errors.New("folder not found")
@@ -25,6 +31,10 @@ var (
 	ErrFolderMoveCycle          = errors.New("folder move would create a cycle")
 	ErrFolderNotEmpty           = errors.New("folder is not empty")
 	ErrFolderHierarchyCorrupted = errors.New("folder hierarchy is corrupted")
+	ErrFolderTooDeep            = fmt.Errorf(
+		"folder hierarchy exceeds the maximum depth of %d",
+		MaxFolderDepth,
+	)
 )
 
 type folderService struct {
@@ -56,13 +66,21 @@ func (s *folderService) CreateFolder(
 	var created *types.Folder
 	err = s.repo.WithinTransaction(ctx, func(txRepo interfaces.FolderRepository) error {
 		if parentID != nil {
-			if _, err := txRepo.GetByIDForUpdate(
+			parent, err := txRepo.GetByIDForUpdate(
 				ctx,
 				tenantID,
 				knowledgeBaseID,
 				*parentID,
-			); err != nil {
+			)
+			if err != nil {
 				return mapParentFolderError(err)
+			}
+			parentDepth, err := folderDepth(ctx, txRepo, tenantID, knowledgeBaseID, parent)
+			if err != nil {
+				return err
+			}
+			if parentDepth+1 > MaxFolderDepth {
+				return ErrFolderTooDeep
 			}
 		}
 
@@ -226,15 +244,31 @@ func (s *folderService) MoveFolder(
 				moved = source
 				return nil
 			}
-			if err := validateMoveAncestors(
+			targetDepth, err := validateMoveAncestors(
 				ctx,
 				txRepo,
 				tenantID,
 				knowledgeBaseID,
 				source.ID,
 				target,
-			); err != nil {
+			)
+			if err != nil {
 				return err
+			}
+			// The subtree travels with the folder, so the deepest leaf below
+			// the source decides whether the move fits under the new parent.
+			height, err := txRepo.SubtreeHeight(
+				ctx,
+				tenantID,
+				knowledgeBaseID,
+				source.ID,
+				MaxFolderDepth,
+			)
+			if err != nil {
+				return mapFolderError(err)
+			}
+			if targetDepth+height > MaxFolderDepth {
+				return ErrFolderTooDeep
 			}
 		}
 
@@ -312,6 +346,9 @@ func (s *folderService) DeleteFolder(
 	})
 }
 
+// validateMoveAncestors walks the ancestor chain of the move target, rejecting
+// moves that would place a folder under itself, and returns the depth of the
+// target counting top-level folders as level 1.
 func validateMoveAncestors(
 	ctx context.Context,
 	repo interfaces.FolderRepository,
@@ -319,25 +356,30 @@ func validateMoveAncestors(
 	knowledgeBaseID string,
 	sourceID string,
 	target *types.Folder,
-) error {
+) (int, error) {
 	visited := make(map[string]struct{})
 	current := target
+	depth := 0
 	for {
 		if current == nil || strings.TrimSpace(current.ID) == "" {
-			return ErrFolderHierarchyCorrupted
+			return 0, ErrFolderHierarchyCorrupted
 		}
 		if current.ID == sourceID {
-			return ErrFolderMoveCycle
+			return 0, ErrFolderMoveCycle
 		}
 		if _, ok := visited[current.ID]; ok {
-			return ErrFolderHierarchyCorrupted
+			return 0, ErrFolderHierarchyCorrupted
 		}
 		visited[current.ID] = struct{}{}
+		depth++
+		if depth > MaxFolderDepth {
+			return 0, ErrFolderTooDeep
+		}
 		if current.ParentID == nil {
-			return nil
+			return depth, nil
 		}
 		if strings.TrimSpace(*current.ParentID) == "" {
-			return ErrFolderHierarchyCorrupted
+			return 0, ErrFolderHierarchyCorrupted
 		}
 		parent, err := repo.GetByIDForUpdate(
 			ctx,
@@ -347,9 +389,52 @@ func validateMoveAncestors(
 		)
 		if err != nil {
 			if errors.Is(err, repository.ErrFolderNotFound) {
-				return ErrFolderHierarchyCorrupted
+				return 0, ErrFolderHierarchyCorrupted
 			}
-			return err
+			return 0, err
+		}
+		current = parent
+	}
+}
+
+// folderDepth reports the depth of an existing folder, counting top-level
+// folders as level 1. The walk is bounded by MaxFolderDepth so pre-existing
+// rows that are deeper than the current cap (or form a cycle) surface as an
+// error instead of an unbounded query loop.
+func folderDepth(
+	ctx context.Context,
+	repo interfaces.FolderRepository,
+	tenantID uint64,
+	knowledgeBaseID string,
+	folder *types.Folder,
+) (int, error) {
+	visited := make(map[string]struct{})
+	current := folder
+	depth := 0
+	for {
+		if current == nil || strings.TrimSpace(current.ID) == "" {
+			return 0, ErrFolderHierarchyCorrupted
+		}
+		if _, ok := visited[current.ID]; ok {
+			return 0, ErrFolderHierarchyCorrupted
+		}
+		visited[current.ID] = struct{}{}
+		depth++
+		if depth > MaxFolderDepth {
+			return 0, ErrFolderTooDeep
+		}
+		if current.ParentID == nil {
+			return depth, nil
+		}
+		if strings.TrimSpace(*current.ParentID) == "" {
+			return 0, ErrFolderHierarchyCorrupted
+		}
+		parent, err := repo.GetByID(ctx, tenantID, knowledgeBaseID, *current.ParentID)
+		if err != nil {
+			if errors.Is(err, repository.ErrFolderNotFound) {
+				return 0, ErrFolderHierarchyCorrupted
+			}
+			return 0, err
 		}
 		current = parent
 	}

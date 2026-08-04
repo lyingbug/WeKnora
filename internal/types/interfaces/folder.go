@@ -113,6 +113,17 @@ type FolderRepository interface {
 		knowledgeBaseID string,
 		folderID string,
 	) error
+	// SubtreeHeight reports how many levels the subtree rooted at folderID
+	// spans, counting that folder as level 1. Recursion stops once maxDepth
+	// levels have been walked, so the result saturates at maxDepth instead of
+	// scanning an arbitrarily deep tree.
+	SubtreeHeight(
+		ctx context.Context,
+		tenantID uint64,
+		knowledgeBaseID string,
+		folderID string,
+		maxDepth int,
+	) (int, error)
 	CountChildren(
 		ctx context.Context,
 		tenantID uint64,

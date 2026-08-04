@@ -391,6 +391,8 @@ func writeFolderServiceError(c *gin.Context, err error) {
 		_ = c.Error(apperrors.NewConflictError("folder already exists"))
 	case stderrors.Is(err, service.ErrFolderMoveCycle):
 		_ = c.Error(apperrors.NewConflictError("invalid folder move"))
+	case stderrors.Is(err, service.ErrFolderTooDeep):
+		_ = c.Error(apperrors.NewBadRequestError(err.Error()))
 	case stderrors.Is(err, service.ErrFolderNotEmpty):
 		_ = c.Error(apperrors.NewConflictError("folder is not empty"))
 	case stderrors.Is(err, service.ErrFolderHierarchyCorrupted):

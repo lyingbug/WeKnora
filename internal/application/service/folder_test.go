@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -90,4 +91,66 @@ func TestFolderServiceCoreLifecycleAndSafety(t *testing.T) {
 	`, child.ID).Error)
 	err = fixture.service.DeleteFolder(ctx, 10001, "kb-1", child.ID)
 	assert.ErrorIs(t, err, ErrFolderNotEmpty)
+}
+
+// buildFolderChain creates a chain of nested folders and returns them ordered
+// from the top-level folder down to the deepest one.
+func buildFolderChain(t *testing.T, service interfaces.FolderService, tenantID uint64, kbID string, prefix string, levels int) []*types.Folder {
+	t.Helper()
+	chain := make([]*types.Folder, 0, levels)
+	var parentID *string
+	for level := 1; level <= levels; level++ {
+		folder := createServiceFolder(t, service, tenantID, kbID, parentID, fmt.Sprintf("%s-%d", prefix, level))
+		chain = append(chain, folder)
+		parentID = &folder.ID
+	}
+	return chain
+}
+
+func TestFolderServiceCreateRejectsFoldersBeyondMaxDepth(t *testing.T) {
+	fixture := setupFolderServiceTest(t)
+	ctx := context.Background()
+
+	chain := buildFolderChain(t, fixture.service, 10001, "kb-1", "level", MaxFolderDepth)
+	deepest := chain[len(chain)-1]
+
+	_, err := fixture.service.CreateFolder(ctx, 10001, "kb-1", &deepest.ID, "one-too-deep")
+	assert.ErrorIs(t, err, ErrFolderTooDeep)
+
+	// The rejection is specific to the deepest level: the level above it still
+	// has room for another child.
+	parent := chain[len(chain)-2]
+	_, err = fixture.service.CreateFolder(ctx, 10001, "kb-1", &parent.ID, "sibling")
+	require.NoError(t, err)
+}
+
+func TestFolderServiceMoveRejectsSubtreeThatWouldExceedMaxDepth(t *testing.T) {
+	fixture := setupFolderServiceTest(t)
+	ctx := context.Background()
+
+	// A subtree three levels tall cannot fit under a folder that already sits
+	// MaxFolderDepth-2 levels down, but it fits one level higher.
+	target := buildFolderChain(t, fixture.service, 10001, "kb-1", "target", MaxFolderDepth-2)
+	subtree := buildFolderChain(t, fixture.service, 10001, "kb-1", "subtree", 3)
+	source := subtree[0]
+
+	_, err := fixture.service.MoveFolder(ctx, 10001, "kb-1", source.ID, &target[len(target)-1].ID)
+	assert.ErrorIs(t, err, ErrFolderTooDeep)
+
+	moved, err := fixture.service.MoveFolder(ctx, 10001, "kb-1", source.ID, &target[len(target)-2].ID)
+	require.NoError(t, err)
+	require.NotNil(t, moved.ParentID)
+	assert.Equal(t, target[len(target)-2].ID, *moved.ParentID)
+}
+
+func TestFolderServiceMoveToRootAlwaysFitsWithinMaxDepth(t *testing.T) {
+	fixture := setupFolderServiceTest(t)
+	ctx := context.Background()
+
+	chain := buildFolderChain(t, fixture.service, 10001, "kb-1", "level", MaxFolderDepth)
+	deepest := chain[len(chain)-1]
+
+	moved, err := fixture.service.MoveFolder(ctx, 10001, "kb-1", deepest.ID, nil)
+	require.NoError(t, err)
+	assert.Nil(t, moved.ParentID)
 }
