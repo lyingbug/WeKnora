@@ -22,6 +22,21 @@ func compilePortableCaseInsensitiveRegex(pattern string) (*regexp.Regexp, error)
 	return compiled, nil
 }
 
+// portableEscapes are the backslash escapes that PostgreSQL ARE, MySQL ICU,
+// and Go RE2 all agree on, so a pattern using them matches the same text
+// whichever backend runs it.
+//
+// Notably absent is \b: MySQL and RE2 read it as a word boundary, while
+// PostgreSQL ARE reads it as a literal backspace, so the same pattern silently
+// matches different text per deployment. \A, \Z, \z, \m, \M, \y and numeric
+// backreferences diverge the same way and stay rejected.
+var portableEscapes = map[rune]struct{}{
+	'd': {}, 'D': {},
+	's': {}, 'S': {},
+	'w': {}, 'W': {},
+	'n': {}, 'r': {}, 't': {}, 'f': {},
+}
+
 func validatePortableRegex(pattern string) error {
 	runes := []rune(pattern)
 	inCharacterClass := false
@@ -33,10 +48,12 @@ func validatePortableRegex(pattern string) error {
 				return fmt.Errorf("invalid portable regular expression %q: trailing backslash", pattern)
 			}
 			escaped := runes[index+1]
-			if unicode.IsLetter(escaped) || unicode.IsDigit(escaped) {
+			_, portable := portableEscapes[escaped]
+			if !portable && (unicode.IsLetter(escaped) || unicode.IsDigit(escaped)) {
 				return fmt.Errorf(
-					"non-portable regex escape \\%c in %q; use literals, character ranges, "+
-						"grouping, alternation, anchors, and quantifiers",
+					"non-portable regex escape \\%c in %q; portable escapes are "+
+						"\\d \\D \\s \\S \\w \\W \\n \\r \\t \\f, plus literals, character "+
+						"ranges, grouping, alternation, anchors, and quantifiers",
 					escaped,
 					pattern,
 				)

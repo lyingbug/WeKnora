@@ -778,8 +778,9 @@ Examples:
 - Multiple terms (RECOMMENDED): "psionic.*engine" (matches both words in order)
 - Prefix matching: "^entity/.*" (finds all entities)
 - Plain text: "engine" (matches anywhere in title/content/slug/summary)
-Use the portable syntax shared by supported databases: literals, character ranges, grouping, alternation,
-anchors, and quantifiers. Do not use engine-specific escapes such as \d, \s, \w, \b or constructs beginning with "(?".
+Use the portable syntax shared by supported databases: literals, character ranges and classes
+(\d \D \s \S \w \W), grouping, alternation, anchors, and quantifiers. Do not use \b (it means a word
+boundary on some databases and a literal backspace on others), other letter escapes, or constructs beginning with "(?".
 IMPORTANT — JSON escaping: every backslash in a regex MUST be written as \\ inside the JSON tool arguments.
 For example, to search for literal "C++" write "C\\+\\+", NOT "C\+\+".
 Plain "\+" is an invalid JSON escape and will fail to parse.

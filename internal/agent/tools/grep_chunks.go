@@ -25,10 +25,11 @@ Returns matching chunks with a short cN chunk source ID, a parent dN document ID
 Examples:
 - Alternation (RECOMMENDED): "stardust|skyvault|psionic" (matches any of the words)
 - Multiple terms in order: "psionic.*engine" (matches both words in order)
-- Anchors and character ranges: "^chapter[ ]+[0-9]+"
+- Anchors and character classes: "^chapter\\s+\\d+"
 - Plain text: "engine" (matches literal substring anywhere in chunk content)
-Use the portable syntax shared by supported databases: literals, character ranges, grouping, alternation,
-anchors, and quantifiers. Do not use engine-specific escapes such as \d, \s, \w, \b or constructs beginning with "(?".
+Use the portable syntax shared by supported databases: literals, character ranges and classes
+(\d \D \s \S \w \W), grouping, alternation, anchors, and quantifiers. Do not use \b (it means a word
+boundary on some databases and a literal backspace on others), other letter escapes, or constructs beginning with "(?".
 IMPORTANT — JSON escaping: every backslash in a regex MUST be written as \\ inside the JSON tool arguments.
 For example, to search for literal "C++" write "C\\+\\+", NOT "C\+\+".
 Plain "\+" is an invalid JSON escape and will fail to parse.
