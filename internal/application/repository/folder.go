@@ -80,17 +80,17 @@ func (r *folderRepository) ListByIDs(
 	ids := append([]string(nil), folderIDs...)
 	sort.Strings(ids)
 	var folders []*types.Folder
-	query := r.db.WithContext(ctx).
+	// Existence checks for a folder scope run on the read path of every
+	// folder-scoped question, so they stay lock-free: taking FOR UPDATE here
+	// would serialize concurrent questions against the same folder and block
+	// renames and moves behind them.
+	err := r.db.WithContext(ctx).
 		Where(
 			"tenant_id = ? AND knowledge_base_id = ? AND id IN ?",
 			tenantID,
 			knowledgeBaseID,
 			ids,
-		)
-	if r.db.Dialector.Name() == "postgres" {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
-	}
-	err := query.
+		).
 		Order("id ASC").
 		Find(&folders).Error
 	return folders, err
