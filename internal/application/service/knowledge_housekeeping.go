@@ -21,6 +21,7 @@ package service
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -209,6 +210,79 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 	} else if resSummary.RowsAffected > 0 {
 		logger.Infof(ctx, "[Housekeeping] recovered %d stuck summary rows", resSummary.RowsAffected)
 	}
+
+	// Sweep C: prune cold processing artifacts.
+	h.pruneProcessingArtifacts(ctx)
+}
+
+// pruneProcessingArtifacts drops artifact rows that have not been read within
+// the retention window. Artifacts are a pure cache — a pruned entry simply
+// costs one recompute — but their payloads hold parse output and embeddings,
+// so without a sweep the table grows without bound.
+//
+// Only inline rows are considered. An offloaded payload lives in object
+// storage, and deleting its manifest here would orphan the object.
+func (h *HousekeepingService) pruneProcessingArtifacts(ctx context.Context) {
+	retention := artifactRetention()
+	if retention <= 0 {
+		return
+	}
+	cutoff := time.Now().Add(-retention)
+
+	// Bound the work per sweep so a first run against a long-neglected
+	// table cannot hold locks for minutes. Whatever is left over is picked
+	// up by the next tick five minutes later.
+	const (
+		batchSize     = 2000
+		maxBatches    = 25
+		coldCondition = "inline_payload = ? AND COALESCE(last_hit_at, created_at) < ?"
+	)
+	var pruned int64
+	for i := 0; i < maxBatches; i++ {
+		var ids []int64
+		if err := h.db.WithContext(ctx).
+			Table("processing_artifacts").
+			Where(coldCondition, true, cutoff).
+			Limit(batchSize).
+			Pluck("id", &ids).Error; err != nil {
+			logger.Warnf(ctx, "[Housekeeping] artifact prune scan failed: %v", err)
+			return
+		}
+		if len(ids) == 0 {
+			break
+		}
+		res := h.db.WithContext(ctx).
+			Table("processing_artifacts").
+			Where("id IN ?", ids).
+			Delete(nil)
+		if res.Error != nil {
+			logger.Warnf(ctx, "[Housekeeping] artifact prune delete failed: %v", res.Error)
+			return
+		}
+		pruned += res.RowsAffected
+		if len(ids) < batchSize {
+			break
+		}
+	}
+	if pruned > 0 {
+		logger.Infof(ctx, "[Housekeeping] pruned %d processing artifact(s) idle for over %s", pruned, retention)
+	}
+}
+
+// artifactRetention reports how long an unread artifact is kept. Default-on at
+// 30 days; operators can retune with WEKNORA_ARTIFACT_RETENTION_DAYS, and a
+// value of 0 disables pruning entirely.
+func artifactRetention() time.Duration {
+	const defaultDays = 30
+	v := strings.TrimSpace(os.Getenv("WEKNORA_ARTIFACT_RETENTION_DAYS"))
+	if v == "" {
+		return defaultDays * 24 * time.Hour
+	}
+	days, err := strconv.Atoi(v)
+	if err != nil || days < 0 {
+		return defaultDays * 24 * time.Hour
+	}
+	return time.Duration(days) * 24 * time.Hour
 }
 
 // filterByLastSpanActivity returns the subset of candidates whose most
