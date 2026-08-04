@@ -198,9 +198,9 @@ type exportTaskStatusResponse struct {
 			FileToken string `json:"file_token"`
 			FileSize  int64  `json:"file_size"`
 			// JobStatus: 0=success, 1=initializing, 2=processing
-			JobStatus    int    `json:"job_status"`
-			JobErrorMsg  string `json:"job_error_msg"`
-			FileName     string `json:"file_name"`
+			JobStatus   int    `json:"job_status"`
+			JobErrorMsg string `json:"job_error_msg"`
+			FileName    string `json:"file_name"`
 		} `json:"result"`
 	} `json:"data"`
 }

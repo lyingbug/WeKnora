@@ -2,9 +2,12 @@ package router
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
+	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/handler"
 )
 
@@ -74,6 +77,13 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kb.POST("/url", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateKnowledgeFromURL)
 		kb.POST("/manual", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateManualKnowledge)
 		kbRead.GET("", g.Viewer(), g.KBAccessRead("id"), handler.ListKnowledge)
+		kb.PATCH(
+			"/:knowledge_id/folder",
+			requireUUIDPathParam("id", "knowledge base ID"),
+			g.OwnedKBOrAdmin(),
+			g.KBAccessWrite("id"),
+			handler.MoveKnowledgeToFolder,
+		)
 		// Clearing all contents under a KB is a destructive op; gate
 		// behind Admin instead of Contributor.
 		kb.With(apiKeyFullAccess()).DELETE("", g.Admin(), g.KBAccessWrite("id"), handler.ClearKnowledgeBaseContents)
@@ -127,6 +137,67 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		k.POST("/batch-reparse", g.Contributor(), handler.BatchReparseKnowledge)
 		k.POST("/batch-delete", g.Contributor(), handler.BatchDeleteKnowledge)
 		k.POST("/move", g.Contributor(), handler.MoveKnowledge)
+
+		// Folder batch move remains JWT Contributor-only because its KB scope is
+		// carried in the request body and API-key scope validation is not supported.
+		kgrp.POST(
+			"/batch-move-folder",
+			g.Contributor(),
+			handler.BatchMoveKnowledgeToFolder,
+		)
+	}
+}
+
+// RegisterFolderRoutes wires the knowledge-base folder APIs. Reads inherit
+// the KB read guard; mutations inherit the same creator/admin plus KB-write
+// matrix used by tags, documents, FAQ entries, and other KB sub-resources.
+func RegisterFolderRoutes(r *gin.RouterGroup, handler *handler.FolderHandler, g *rbacGuards) {
+	if handler == nil {
+		return
+	}
+	folders := g.apiKeyGroup(
+		r.Group("/knowledge-bases/:id/folders"),
+		apiKeyIngest(apiKeyFullAccess()),
+	)
+	folderRead := folders.With(apiKeyRetrieve(apiKeyFullAccess()))
+	validateKBID := requireUUIDPathParam("id", "knowledge base ID")
+
+	folderRead.GET("", validateKBID, g.Viewer(), g.KBAccessRead("id"), handler.ListFolders)
+	folderRead.GET("/:folder_id", validateKBID, g.Viewer(), g.KBAccessRead("id"), handler.GetFolder)
+	folders.POST("", validateKBID, g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateFolder)
+	folders.PATCH(
+		"/:folder_id/name",
+		validateKBID,
+		g.OwnedKBOrAdmin(),
+		g.KBAccessWrite("id"),
+		handler.RenameFolder,
+	)
+	folders.PATCH(
+		"/:folder_id/parent",
+		validateKBID,
+		g.OwnedKBOrAdmin(),
+		g.KBAccessWrite("id"),
+		handler.MoveFolder,
+	)
+	folders.DELETE(
+		"/:folder_id",
+		validateKBID,
+		g.OwnedKBOrAdmin(),
+		g.KBAccessWrite("id"),
+		handler.DeleteFolder,
+	)
+}
+
+func requireUUIDPathParam(param, label string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		value := strings.TrimSpace(c.Param(param))
+		id, err := uuid.Parse(value)
+		if err != nil || id == uuid.Nil {
+			_ = c.Error(errors.NewBadRequestError("invalid " + label))
+			c.Abort()
+			return
+		}
+		c.Next()
 	}
 }
 

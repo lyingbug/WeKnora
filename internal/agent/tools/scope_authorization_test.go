@@ -158,6 +158,58 @@ func TestAuthorizeKnowledgeInSearchTargetsKeepsCrossTargetUnion(t *testing.T) {
 	}
 }
 
+func TestAuthorizeKnowledgeInSearchTargetsTreatsExplicitEmptyAsHardBoundary(t *testing.T) {
+	service := &scopeKnowledgeService{
+		knowledge: &types.Knowledge{ID: "doc-tagged", KnowledgeBaseID: "kb-1"},
+		tags:      map[string][]*types.KnowledgeTag{"doc-tagged": {testKnowledgeTag("tag-a")}},
+	}
+	targets := types.SearchTargets{{
+		Type:            types.SearchTargetTypeKnowledgeBase,
+		KnowledgeBaseID: "kb-1",
+		KnowledgeIDsSet: true,
+		ScopeTagIDs:     []string{"tag-a"},
+	}}
+
+	if searchTargetIsWholeKB(targets[0]) {
+		t.Fatal("an explicitly empty document scope must not become whole-KB access")
+	}
+	if _, err := authorizeKnowledgeInSearchTargets(
+		context.Background(), targets, "doc-tagged", service,
+	); err == nil {
+		t.Fatal("an explicitly empty folder scope must reject every document")
+	}
+}
+
+func TestAuthorizeKnowledgeInSearchTargetsIntersectsExplicitIDsWithPhysicalTags(t *testing.T) {
+	targets := types.SearchTargets{{
+		Type:            types.SearchTargetTypeKnowledge,
+		KnowledgeBaseID: "kb-1",
+		KnowledgeIDs:    []string{"faq-1"},
+		KnowledgeIDsSet: true,
+		TagIDs:          []string{"tag-a"},
+		ScopeTagIDs:     []string{"tag-a"},
+	}}
+
+	withoutTag := &scopeKnowledgeService{
+		knowledge: &types.Knowledge{ID: "faq-1", KnowledgeBaseID: "kb-1"},
+	}
+	if _, err := authorizeKnowledgeInSearchTargets(
+		context.Background(), targets, "faq-1", withoutTag,
+	); err == nil {
+		t.Fatal("a whitelisted FAQ outside the selected tag must be rejected")
+	}
+
+	withTag := &scopeKnowledgeService{
+		knowledge: &types.Knowledge{ID: "faq-1", KnowledgeBaseID: "kb-1"},
+		tags:      map[string][]*types.KnowledgeTag{"faq-1": {testKnowledgeTag("tag-a")}},
+	}
+	if _, err := authorizeKnowledgeInSearchTargets(
+		context.Background(), targets, "faq-1", withTag,
+	); err != nil {
+		t.Fatalf("the folder/document and physical-tag intersection should authorize: %v", err)
+	}
+}
+
 func TestNewWikiScopesDropsTagsOfResolvedDocumentTargets(t *testing.T) {
 	targets := types.SearchTargets{{
 		Type:            types.SearchTargetTypeKnowledge,

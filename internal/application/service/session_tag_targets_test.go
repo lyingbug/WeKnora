@@ -32,8 +32,10 @@ func (s *tagTargetKnowledgeBaseService) GetKnowledgeBasesByIDsOnly(
 
 type tagTargetKnowledgeService struct {
 	interfaces.KnowledgeService
-	knowledges []*types.Knowledge
-	tagIDs     map[string][]string
+	knowledges     []*types.Knowledge
+	tagIDs         map[string][]string
+	folderIDs      map[string][]string
+	folderScopeErr error
 }
 
 func (s *tagTargetKnowledgeService) GetKnowledgeBatchWithSharedAccess(
@@ -77,6 +79,32 @@ func (s *tagTargetKnowledgeService) ListKnowledgeIDsByTagIDs(
 		}
 	}
 	return out, nil
+}
+
+func (s *tagTargetKnowledgeService) ListKnowledgeIDsByFolderScopes(
+	_ context.Context,
+	_ uint64,
+	kbID string,
+	folderIDs []string,
+) ([]string, error) {
+	if s.folderScopeErr != nil {
+		return nil, s.folderScopeErr
+	}
+	if s.folderIDs == nil {
+		return []string{}, nil
+	}
+	seen := make(map[string]struct{})
+	var result []string
+	for _, folderID := range folderIDs {
+		for _, knowledgeID := range s.folderIDs[kbID+"/"+folderID] {
+			if _, exists := seen[knowledgeID]; exists {
+				continue
+			}
+			seen[knowledgeID] = struct{}{}
+			result = append(result, knowledgeID)
+		}
+	}
+	return result, nil
 }
 
 func knowledgeBelongsToKB(knowledges []*types.Knowledge, knowledgeID string, kbID string) bool {

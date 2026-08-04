@@ -29,6 +29,10 @@
               </div>
 
               <div class="files-list-wrap">
+                <p v-if="targetFolderLabel" class="target-folder-note">
+                  <t-icon name="folder" />
+                  <span>{{ t('knowledgeFolder.createTarget', { name: targetFolderLabel }) }}</span>
+                </p>
                 <div v-if="mode === 'manual' && manualPreview" class="manual-source-panel">
                   <p class="manual-source-title" :title="manualPreview.title">{{ manualPreview.title }}</p>
                   <p class="manual-source-meta">
@@ -583,6 +587,7 @@ const props = withDefaults(defineProps<{
   tagId?: string
   acceptFileTypes?: string
   supportedFileTypes?: string[]
+  targetFolderLabel?: string
 }>(), {
   mode: 'file',
   files: () => [],
@@ -592,6 +597,7 @@ const props = withDefaults(defineProps<{
   reparsePreview: null,
   acceptFileTypes: '',
   supportedFileTypes: () => [],
+  targetFolderLabel: '',
 })
 
 const emit = defineEmits<{
@@ -1458,6 +1464,25 @@ const handleConfirm = () => {
   min-height: 0;
   padding: 6px 8px 12px;
   overflow: hidden;
+}
+
+.target-folder-note {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: var(--td-bg-color-component);
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+
+  span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .files-list {

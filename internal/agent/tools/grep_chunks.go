@@ -269,6 +269,42 @@ func (t *GrepChunksTool) resolveGrepScope() (fullKBIDs, knowledgeIDs []string, t
 		// search to every document carrying the tag.
 		targetKnowledgeIDs, targetTagIDs := searchTargetScope(target)
 		switch {
+		case target.KnowledgeIDsSet && len(targetKnowledgeIDs) == 0:
+			continue
+		case target.KnowledgeIDsSet && len(targetKnowledgeIDs) > 0 && len(target.TagIDs) > 0:
+			tenantID := target.TenantID
+			if tenantID == 0 {
+				tenantID = t.searchTargets.GetTenantIDForKB(target.KnowledgeBaseID)
+			}
+			tagIDs := dedupNonEmptyStrings(target.TagIDs)
+			if len(tagIDs) == 0 || tenantID == 0 {
+				continue
+			}
+			scopeKey := fmt.Sprintf("%s:%d:%s:%s",
+				target.KnowledgeBaseID,
+				tenantID,
+				strings.Join(tagIDs, "\x00"),
+				strings.Join(targetKnowledgeIDs, "\x00"),
+			)
+			if seenTagScope[scopeKey] {
+				continue
+			}
+			seenTagScope[scopeKey] = true
+			tagTargets = append(tagTargets, &types.SearchTarget{
+				Type:            types.SearchTargetTypeKnowledge,
+				KnowledgeBaseID: target.KnowledgeBaseID,
+				TenantID:        tenantID,
+				KnowledgeIDs:    targetKnowledgeIDs,
+				KnowledgeIDsSet: true,
+				TagIDs:          tagIDs,
+			})
+		case len(targetKnowledgeIDs) > 0:
+			for _, kid := range targetKnowledgeIDs {
+				if !seenKnowledge[kid] {
+					seenKnowledge[kid] = true
+					knowledgeIDs = append(knowledgeIDs, kid)
+				}
+			}
 		case len(targetTagIDs) > 0:
 			tenantID := target.TenantID
 			if tenantID == 0 {
@@ -289,13 +325,6 @@ func (t *GrepChunksTool) resolveGrepScope() (fullKBIDs, knowledgeIDs []string, t
 				TenantID:        tenantID,
 				TagIDs:          tagIDs,
 			})
-		case len(targetKnowledgeIDs) > 0:
-			for _, kid := range targetKnowledgeIDs {
-				if !seenKnowledge[kid] {
-					seenKnowledge[kid] = true
-					knowledgeIDs = append(knowledgeIDs, kid)
-				}
-			}
 		default:
 			if !seenKB[target.KnowledgeBaseID] {
 				seenKB[target.KnowledgeBaseID] = true
@@ -343,6 +372,18 @@ func scopeClause(
 			tenantID = kbTenantMap[target.KnowledgeBaseID]
 		}
 		if tenantID == 0 {
+			continue
+		}
+		if target.KnowledgeIDsSet {
+			if len(target.KnowledgeIDs) == 0 {
+				continue
+			}
+			clauses = append(clauses,
+				"(chunks.knowledge_base_id = ? AND chunks.tenant_id = ? AND chunks.knowledge_id IN ? AND EXISTS ("+
+					"SELECT 1 FROM knowledge_tag_relations ktr "+
+					"WHERE ktr.knowledge_id = chunks.knowledge_id AND ktr.tag_id IN ?"+
+					"))")
+			args = append(args, target.KnowledgeBaseID, tenantID, target.KnowledgeIDs, target.TagIDs)
 			continue
 		}
 		clauses = append(clauses,

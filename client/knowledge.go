@@ -25,6 +25,7 @@ type Knowledge struct {
 	ID               string          `json:"id"`
 	TenantID         uint64          `json:"tenant_id"`
 	KnowledgeBaseID  string          `json:"knowledge_base_id"`
+	FolderID         *string         `json:"folder_id"`
 	TagID            string          `json:"tag_id"`
 	Type             string          `json:"type"`
 	Title            string          `json:"title"`
@@ -86,14 +87,14 @@ var ErrDuplicateURL = errors.New("URL already exists")
 // KnowledgeProcessOverrides stores per-upload parse config overrides sent as process_config.
 // When nil, the server uses the knowledge base defaults only.
 type KnowledgeProcessOverrides struct {
-	ParserEngineRules        []ParserEngineRule            `json:"parser_engine_rules,omitempty"`
-	ChunkingConfig           *ChunkingConfig               `json:"chunking_config,omitempty"`
-	EnableMultimodel         *bool                         `json:"enable_multimodel,omitempty"`
-	VLMConfig                *VLMConfig                    `json:"vlm_config,omitempty"`
-	ASRConfig                *ASRConfig                    `json:"asr_config,omitempty"`
-	QuestionGenerationConfig *QuestionGenerationConfig     `json:"question_generation_config,omitempty"`
-	GraphEnabled             *bool                         `json:"graph_enabled,omitempty"`
-	ExtractConfig            *ExtractConfig                `json:"extract_config,omitempty"`
+	ParserEngineRules        []ParserEngineRule        `json:"parser_engine_rules,omitempty"`
+	ChunkingConfig           *ChunkingConfig           `json:"chunking_config,omitempty"`
+	EnableMultimodel         *bool                     `json:"enable_multimodel,omitempty"`
+	VLMConfig                *VLMConfig                `json:"vlm_config,omitempty"`
+	ASRConfig                *ASRConfig                `json:"asr_config,omitempty"`
+	QuestionGenerationConfig *QuestionGenerationConfig `json:"question_generation_config,omitempty"`
+	GraphEnabled             *bool                     `json:"graph_enabled,omitempty"`
+	ExtractConfig            *ExtractConfig            `json:"extract_config,omitempty"`
 }
 
 // CreateKnowledgeFromFile creates a knowledge entry from a local file path
@@ -108,6 +109,33 @@ type KnowledgeProcessOverrides struct {
 func (c *Client) CreateKnowledgeFromFile(ctx context.Context,
 	knowledgeBaseID string, filePath string, metadata map[string]string, enableMultimodel *bool, customFileName string, channel string,
 	processConfig *KnowledgeProcessOverrides,
+) (*Knowledge, error) {
+	return c.CreateKnowledgeFromFileInFolder(
+		ctx,
+		knowledgeBaseID,
+		filePath,
+		metadata,
+		enableMultimodel,
+		customFileName,
+		channel,
+		processConfig,
+		nil,
+	)
+}
+
+// CreateKnowledgeFromFileInFolder creates a knowledge entry from a local file
+// and optionally places it directly in folderID. A nil folderID preserves the
+// legacy behavior and creates the knowledge in the knowledge-base root.
+func (c *Client) CreateKnowledgeFromFileInFolder(
+	ctx context.Context,
+	knowledgeBaseID string,
+	filePath string,
+	metadata map[string]string,
+	enableMultimodel *bool,
+	customFileName string,
+	channel string,
+	processConfig *KnowledgeProcessOverrides,
+	folderID *string,
 ) (*Knowledge, error) {
 	// Open the local file
 	file, err := os.Open(filePath)
@@ -174,6 +202,12 @@ func (c *Client) CreateKnowledgeFromFile(ctx context.Context,
 		}
 	}
 
+	if folderID != nil {
+		if err := writer.WriteField("folder_id", *folderID); err != nil {
+			return nil, fmt.Errorf("failed to write folder_id field: %w", err)
+		}
+	}
+
 	if processConfig != nil {
 		processConfigBytes, err := json.Marshal(processConfig)
 		if err != nil {
@@ -236,6 +270,9 @@ type CreateKnowledgeFromURLRequest struct {
 	Channel string `json:"channel,omitempty"`
 	// ProcessConfig is optional per-upload parse config overrides (KnowledgeProcessOverrides).
 	ProcessConfig *KnowledgeProcessOverrides `json:"process_config,omitempty"`
+	// FolderID optionally places the new knowledge directly in a folder.
+	// Nil or omitted means the knowledge-base root.
+	FolderID *string `json:"folder_id,omitempty"`
 }
 
 // CreateKnowledgeFromURL creates a knowledge entry from a URL.
@@ -527,7 +564,7 @@ func (c *Client) ReparseKnowledge(ctx context.Context, knowledgeID string) (*Kno
 //   - pending      — task has not started
 //   - processing   — DocReader / chunking / embedding stage
 //   - finalizing   — primary parse done, enrichment subtasks (summary,
-//                    question generation, graph extract) still running
+//     question generation, graph extract) still running
 //
 // Returns an error when the knowledge is in a terminal state
 // (completed, failed) or already being deleted.
@@ -693,10 +730,11 @@ func (c *Client) UpdateImageInfo(ctx context.Context,
 
 // CreateManualKnowledgeRequest contains the parameters for creating a manual Markdown knowledge entry.
 type CreateManualKnowledgeRequest struct {
-	Title   string `json:"title"`
-	Content string `json:"content"`
-	TagID   string `json:"tag_id,omitempty"`
-	Channel string `json:"channel,omitempty"`
+	Title    string  `json:"title"`
+	Content  string  `json:"content"`
+	TagID    string  `json:"tag_id,omitempty"`
+	Channel  string  `json:"channel,omitempty"`
+	FolderID *string `json:"folder_id,omitempty"`
 }
 
 // UpdateManualKnowledgeRequest contains the parameters for updating a manual Markdown knowledge entry.

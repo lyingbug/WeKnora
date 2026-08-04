@@ -35,6 +35,12 @@ func searchTargetScope(target *types.SearchTarget) (knowledgeIDs, tagIDs []strin
 		return nil, nil
 	}
 	knowledgeIDs = dedupNonEmptyStrings(target.KnowledgeIDs)
+	if target.KnowledgeIDsSet && len(knowledgeIDs) == 0 {
+		// An explicitly empty document set is a hard boundary (for example,
+		// a selected folder subtree with no documents), not a tag-only or
+		// whole-KB scope.
+		return nil, nil
+	}
 	if len(knowledgeIDs) > 0 {
 		return knowledgeIDs, nil
 	}
@@ -48,7 +54,8 @@ func searchTargetIsWholeKB(target *types.SearchTarget) bool {
 		return false
 	}
 	knowledgeIDs, tagIDs := searchTargetScope(target)
-	return target.Type == types.SearchTargetTypeKnowledgeBase &&
+	return !target.KnowledgeIDsSet &&
+		target.Type == types.SearchTargetTypeKnowledgeBase &&
 		len(knowledgeIDs) == 0 && len(tagIDs) == 0
 }
 
@@ -197,6 +204,7 @@ func searchTargetsAllowKnowledgeID(
 
 	var tagIDs []string
 	matchedKB := false
+	var matchedKnowledgeTagIDs []string
 	for _, target := range searchTargets {
 		if target == nil || target.KnowledgeBaseID != kbID {
 			continue
@@ -205,13 +213,35 @@ func searchTargetsAllowKnowledgeID(
 		if searchTargetIsWholeKB(target) {
 			return true, nil
 		}
+		if target.KnowledgeIDsSet && len(target.KnowledgeIDs) == 0 {
+			continue
+		}
 		targetKnowledgeIDs, targetTagIDs := searchTargetScope(target)
 		for _, allowedID := range targetKnowledgeIDs {
 			if allowedID == knowledgeID {
+				// Physical TagIDs on an explicit document whitelist represent
+				// an intersection (used by FAQ folder+tag scopes). ScopeTagIDs
+				// alone are only a logical trace of an already-resolved
+				// document scope and must not be checked again.
+				if target.KnowledgeIDsSet && len(target.TagIDs) > 0 {
+					matchedKnowledgeTagIDs = append(matchedKnowledgeTagIDs, target.TagIDs...)
+					continue
+				}
 				return true, nil
 			}
 		}
-		tagIDs = append(tagIDs, targetTagIDs...)
+		if !target.KnowledgeIDsSet {
+			tagIDs = append(tagIDs, targetTagIDs...)
+		}
+	}
+	if len(matchedKnowledgeTagIDs) > 0 && knowledgeService != nil {
+		matches, err := knowledgeIDsMatchingAnyTag(ctx, []string{knowledgeID}, matchedKnowledgeTagIDs, knowledgeService.GetKnowledgeTags)
+		if err != nil {
+			return false, err
+		}
+		if matches[knowledgeID] {
+			return true, nil
+		}
 	}
 	if !matchedKB || len(tagIDs) == 0 || knowledgeService == nil {
 		return false, nil
