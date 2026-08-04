@@ -32,6 +32,19 @@ test('the platform shell can shrink below the former desktop minimum width', () 
   assert.doesNotMatch(platform, /\.main\s*\{[^}]*min-width:\s*600px/)
 })
 
+test('the control bar stays on one row on phones', () => {
+  // flex-wrap would push the model selector and send button onto a second
+  // row, growing the composer and moving send out of thumb reach.
+  assert.match(inputField, /\.mobile\(\{[\s\S]*?\.control-bar\s*\{[^}]*flex-wrap:\s*nowrap;/)
+  assert.match(inputField, /\.mobile\(\{[\s\S]*?\.control-left\s*\{[^}]*overflow-x:\s*auto;/)
+})
+
+test('the tablet sidebar collapse watcher runs on first render', () => {
+  // Breakpoints are resolved at module load, so a non-immediate watcher
+  // never fires when the app opens straight into a tablet width.
+  assert.match(platform, /watch\(isTabletRef,[\s\S]*?\{\s*immediate:\s*true\s*\}\)/)
+})
+
 test('image drag suppression stays in a global style block', () => {
   // `img { user-drag: none }` applies app-wide; a scoped block would only
   // reach this component's own template.

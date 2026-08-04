@@ -74,7 +74,9 @@ const { t } = useI18n();
 // 响应式断点
 const isTablet = computed(() => isTabletRef.value)
 
-// 平板模式自动折叠侧边栏；桌面模式恢复用户偏好
+// 平板模式自动折叠侧边栏；桌面模式恢复用户偏好。
+// immediate 是必需的：断点在模块加载时已求值，若首次进入就已是平板宽度，
+// 非 immediate 的 watcher 永远不会触发，侧栏会保持 260px 展开。
 let tabletOverrideActive = false
 watch(isTabletRef, (val) => {
   if (val) {
@@ -86,7 +88,7 @@ watch(isTabletRef, (val) => {
     if (shouldCollapse) uiStore.collapseSidebar(false)
     else uiStore.expandSidebar(false)
   }
-})
+}, { immediate: true })
 
 // 移动端：路由变化时关闭 Drawer
 watch(() => route.fullPath, () => {

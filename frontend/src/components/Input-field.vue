@@ -3480,6 +3480,7 @@ const getImgSrc = (url: string) => {
 
 .model-selector-name {
   flex: 1;
+  min-width: 0;
   font-size: 12px;
   font-weight: 500;
   color: var(--td-text-color-secondary, #666);
@@ -3503,6 +3504,65 @@ const getImgSrc = (url: string) => {
 .model-selector-trigger.disabled .model-dropdown-arrow {
   color: var(--td-text-color-placeholder, #999);
 }
+
+// 窄屏：控制栏保持单行。默认的 flex-wrap 会把模型选择器和发送按钮挤到第二行，
+// 既抬高输入框又让发送键离开拇指区。可选控件改为横向滑动，发送键固定不收缩。
+.mobile({
+  .control-bar {
+    left: 12px;
+    right: 12px;
+    bottom: 10px;
+    gap: 6px;
+    flex-wrap: nowrap;
+    max-height: none;
+  }
+
+  .control-left {
+    gap: 4px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+
+  .control-right {
+    flex-shrink: 0;
+  }
+
+  .agent-mode-btn {
+    max-width: 104px;
+    padding: 0 8px;
+  }
+
+  .agent-mode-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .model-display {
+    min-width: 0;
+    margin-left: 0;
+    flex-shrink: 1;
+  }
+
+  .model-selector-trigger {
+    min-width: 72px;
+    max-width: 104px;
+    padding: 2px 6px;
+  }
+
+  :deep(.t-textarea__inner) {
+    min-height: 104px !important;
+    padding-bottom: 50px;
+  }
+});
 
 .model-selector-overlay {
   position: fixed;
