@@ -224,3 +224,16 @@ MySQL 和 PostgreSQL 在 Wiki 搜索功能上存在已知差异：
 
 两种数据库的匹配和排序语义不同，结果集合不可直接比较。MySQL 的 `LIKE` 与
 `JSON_CONTAINS` 查询在大型知识库中也可能更慢。
+
+## Schema 上的两处刻意差异
+
+以下两项是 MySQL schema 与 PostgreSQL 的有意分歧，运维时可能会注意到：
+
+- **`knowledges.metadata_external_id` 生成列**。PostgreSQL 用表达式索引
+  `(knowledge_base_id, (metadata->>'external_id'))` 支撑数据源同步时的按外部 ID
+  查询。MySQL 没有表达式索引，改用一个虚拟生成列加前缀索引来提供同一条查询路径。
+  它由 `metadata` 自动派生，不需要也不应该被写入。
+
+- **`chunks.seq_id` / `knowledge_tags.seq_id` 的自增起始值**分别是 `100000000`
+  与 `10000000`，与 PostgreSQL 序列的起始值一致。FAQ 导入允许调用方指定小于起始值
+  的 `seq_id`，因此起始值以下是导入专用的保留区间；自动生成的值不能进入该区间。

@@ -167,11 +167,22 @@ CREATE TABLE knowledges (
     processed_at DATETIME(6) NULL,
     error_message TEXT,
     deleted_at DATETIME(6) NULL DEFAULT NULL,
+    -- Materializes metadata->>'$.external_id' so the datasource sync lookups
+    -- can be indexed, mirroring the PostgreSQL expression index
+    -- idx_knowledges_kb_metadata_external_id from migration 000076.
+    --
+    -- LONGTEXT rather than VARCHAR(n): the extracted value has no length bound
+    -- on PostgreSQL, and a typed generated column rejects the whole INSERT with
+    -- error 1406 once a value overflows it. utf8mb4_bin matches the PostgreSQL
+    -- index's text_pattern_ops so LIKE-prefix comparisons order bytewise.
+    metadata_external_id LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin
+        GENERATED ALWAYS AS (metadata ->> '$.external_id') VIRTUAL,
     INDEX idx_knowledges_tenant_id (tenant_id),
     INDEX idx_knowledges_base_created (knowledge_base_id, created_at),
     INDEX idx_knowledges_parse_status (parse_status),
     INDEX idx_knowledges_enable_status (enable_status),
-    INDEX idx_knowledges_summary_status (summary_status)
+    INDEX idx_knowledges_summary_status (summary_status),
+    INDEX idx_knowledges_kb_metadata_external_id (knowledge_base_id, metadata_external_id(191))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- sessions
@@ -186,7 +197,7 @@ CREATE TABLE sessions (
     max_rounds INT NOT NULL DEFAULT 5,
     enable_rewrite BOOLEAN NOT NULL DEFAULT TRUE,
     fallback_strategy VARCHAR(255) NOT NULL DEFAULT 'fixed',
-    fallback_response TEXT NOT NULL DEFAULT (''),
+    fallback_response TEXT NOT NULL DEFAULT ('很抱歉，我暂时无法回答这个问题。'),
     keyword_threshold FLOAT NOT NULL DEFAULT 0.5,
     vector_threshold FLOAT NOT NULL DEFAULT 0.5,
     rerank_model_id VARCHAR(64),
@@ -278,7 +289,11 @@ CREATE TABLE chunks (
     INDEX idx_chunks_content_hash (content_hash),
     INDEX idx_chunks_kb_tenant (knowledge_base_id, tenant_id),
     INDEX idx_chunks_knowledge_enabled (knowledge_id, is_enabled, deleted_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+-- AUTO_INCREMENT matches the start value of the PostgreSQL chunks_seq_id_seq
+-- sequence. FAQ import lets callers pin a seq_id below it (see
+-- types.FAQImportEntry.ID), so anything below 100000000 is a reserved range
+-- that generated values must never enter.
+) ENGINE=InnoDB AUTO_INCREMENT=100000000 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- chunk_revisions
 CREATE TABLE chunk_revisions (
@@ -313,7 +328,8 @@ CREATE TABLE knowledge_tags (
     UNIQUE idx_knowledge_tags_seq_id (seq_id),
     UNIQUE idx_knowledge_tags_kb_name (tenant_id, knowledge_base_id, name),
     INDEX idx_knowledge_tags_kb (tenant_id, knowledge_base_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+-- Matches the start value of the PostgreSQL knowledge_tags_seq_id_seq sequence.
+) ENGINE=InnoDB AUTO_INCREMENT=10000000 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- knowledge_tag_relations
 CREATE TABLE knowledge_tag_relations (
@@ -583,6 +599,10 @@ CREATE TABLE im_channel_sessions (
     INDEX idx_im_channel_tenant (tenant_id),
     INDEX idx_im_channel_session (session_id),
     INDEX idx_im_channel_deleted (deleted_at),
+    -- PostgreSQL indexes this partially (WHERE im_channel_id <> ''). MySQL has
+    -- no partial indexes; a full index covers the same lookups and only costs
+    -- the extra entries for rows whose channel is unset.
+    INDEX idx_im_channel_sessions_channel (im_channel_id),
     live_marker CHAR(1) GENERATED ALWAYS AS (CASE WHEN deleted_at IS NULL THEN '1' ELSE NULL END) VIRTUAL,
     live_thread_marker CHAR(1) GENERATED ALWAYS AS (CASE WHEN deleted_at IS NULL AND thread_id <> '' THEN '1' ELSE NULL END) VIRTUAL,
     UNIQUE idx_im_channel_sessions_live_channel (platform, user_id, chat_id, tenant_id, agent_id, live_marker),
