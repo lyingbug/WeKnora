@@ -923,6 +923,15 @@ export default {
     editor: {
       createTitle: 'Create Agent',
       editTitle: 'Edit Agent',
+      buttons: {
+        create: 'Create Agent',
+        saveAndClose: 'Save and Close',
+      },
+      postCreateHint: {
+        title: 'Created successfully',
+        footer: 'Keep adjusting settings, configure sharing and publishing, then click "Save and Close".',
+        integrationDesc: 'Go to Integrations to configure IM, web embed, and other publishing channels',
+      },
       basicInfo: 'Basic Info',
       basicInfoDesc: 'Configure agent name, description, and run mode',
       promptsConfig: 'Prompts',
@@ -1136,6 +1145,11 @@ export default {
       selfHostedEndpoint: 'Self-hosted Endpoint',
       formulaRecognition: 'Formula Recognition',
       tableRecognition: 'Table Recognition',
+      parseMethodLabel: 'PDF Parsing Method',
+      parseMethodAuto: 'Auto-detect (Recommended)',
+      parseMethodOCR: 'Force OCR',
+      parseMethodText: 'Text extraction only',
+      parseMethodHint: 'Auto mode uses OCR for scanned PDFs and extracts the native text layer from digital PDFs.',
       sealRecognition: 'Seal Recognition',
       chartRecognition: 'Chart Recognition',
       language: 'Language',
@@ -2068,6 +2082,33 @@ export default {
         'faq.import_started': 'FAQ import started',
         'faq.import_completed': 'FAQ import completed',
         'faq.import_failed': 'FAQ import failed'
+      },
+      outcomes: {
+        accepted: 'Accepted',
+        success: 'Success',
+        failed: 'Failed',
+        partial: 'Partial',
+        canceled: 'Canceled',
+        denied: 'Denied'
+      },
+      detailValues: {
+        user: 'User initiated',
+        manual: 'Manual',
+        schedule: 'Scheduled',
+        system: 'System',
+        pending: 'Pending',
+        completed: 'Completed',
+        partial: 'Partially completed',
+        canceled: 'Canceled',
+        failed: 'Failed',
+        enqueue: 'Task submission',
+        reuse_vectors: 'Reuse vectors',
+        reparse: 'Reparse',
+        viewer: 'Read-only',
+        editor: 'Can edit',
+        admin: 'Manage',
+        append: 'Append',
+        replace: 'Replace'
       }
     },
     titleCreate: 'Create Knowledge Base',
@@ -2303,7 +2344,13 @@ export default {
     },
     buttons: {
       create: 'Create Knowledge Base',
-      save: 'Save Configuration'
+      save: 'Save Configuration',
+      saveAndClose: 'Save and Close',
+    },
+    postCreateHint: {
+      title: 'Created successfully',
+      footer: 'Keep adjusting settings, configure sharing and data sources, then click "Save and Close".',
+      followUpDesc: 'Configure data sources on the left, or use Share Management to publish to spaces',
     },
     share: {
       description: 'Share the knowledge base with spaces so members can access and use it',
@@ -2585,6 +2632,9 @@ export default {
     refreshSuggestedQuestions: 'More',
     thinking: 'Thinking...',
     thinkingAlt: 'Thinking in progress',
+    preparingAnswer: 'Preparing an answer…',
+    connectingModelAndGeneratingAnswer: 'Connecting to the model and generating an answer…',
+    modelStillResponding: 'The model is taking longer than usual, still waiting…',
     deepThoughtCompleted: 'Deep thinking completed',
     deepThoughtAlt: 'Deep thinking finished',
     referencesTitle: 'Referenced {count} related item(s)',

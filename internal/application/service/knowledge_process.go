@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -185,14 +184,29 @@ func finalizeIndexedKnowledgeState(
 		knowledge.SummaryStatus = types.SummaryStatusNone
 	} else {
 		// No text chunks and no pending multimodal work: there is nothing for
-		// post-process to enrich, so complete immediately.
+		// post-process to enrich, so complete immediately. This is the only
+		// route to 'completed' that bypasses FinalizeSubtask, so it has to
+		// clear error_message itself — otherwise a successfully indexed row
+		// keeps reporting a failure from an earlier attempt.
 		knowledge.ParseStatus = types.ParseStatusCompleted
 		knowledge.SummaryStatus = types.SummaryStatusNone
+		knowledge.ErrorMessage = ""
 	}
 
 	knowledge.EnableStatus = "enabled"
 	knowledge.StorageSize = totalStorageSize
 	knowledge.ProcessedAt = &now
+	knowledge.UpdatedAt = now
+}
+
+// markKnowledgeProcessing makes the top-level knowledge state describe the
+// attempt that is starting now. Clearing error_message is part of that: the
+// column is only meaningful for the attempt that produced it, so a row
+// re-entering processing must not keep surfacing the previous attempt's
+// failure while it is visibly running again.
+func markKnowledgeProcessing(knowledge *types.Knowledge, now time.Time) {
+	knowledge.ParseStatus = types.ParseStatusProcessing
+	knowledge.ErrorMessage = ""
 	knowledge.UpdatedAt = now
 }
 
@@ -2343,9 +2357,8 @@ func (s *knowledgeService) ReparseKnowledge(
 
 		if _, err := s.enqueueManualProcessing(ctx, existing, meta.Content, true); err != nil {
 			logger.Errorf(ctx, "Failed to enqueue manual reparse task: %v", err)
-			existing.ParseStatus = "failed"
-			existing.ErrorMessage = "Failed to enqueue processing task"
-			s.repo.UpdateKnowledge(ctx, existing)
+			s.markKnowledgeEnqueueFailed(ctx, existing)
+			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		} else {
 			recordReparseStarted()
 		}
@@ -2406,7 +2419,8 @@ func (s *knowledgeService) ReparseKnowledge(
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to marshal reparse task payload: %v", err)
-			return existing, nil
+			s.markKnowledgeEnqueueFailed(ctx, existing)
+			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 
 		task := asynq.NewTask(
@@ -2417,15 +2431,14 @@ func (s *knowledgeService) ReparseKnowledge(
 		info, err := s.task.Enqueue(task)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to enqueue reparse task: %v", err)
-			return existing, nil
+			s.markKnowledgeEnqueueFailed(ctx, existing)
+			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 		logger.Infof(ctx, "Enqueued reparse task: id=%s queue=%s knowledge_id=%s", info.ID, info.Queue, existing.ID)
 		recordReparseStarted()
 
 		// For data tables (csv, xlsx, xls), also enqueue summary task
-		if slices.Contains([]string{"csv", "xlsx", "xls"}, getFileType(existing.FileName)) {
-			NewDataTableSummaryTask(ctx, s.task, tenantID, existing.ID, kb.SummaryModelID, kb.EmbeddingModelID)
-		}
+		enqueueDataTableSummaryIfNeeded(ctx, s.task, tenantID, existing.ID, existing.FileName, existing.FileType, kb.SummaryModelID, kb.EmbeddingModelID)
 
 		return existing, nil
 	}
@@ -2460,7 +2473,8 @@ func (s *knowledgeService) ReparseKnowledge(
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to marshal file URL reparse task payload: %v", err)
-			return existing, nil
+			s.markKnowledgeEnqueueFailed(ctx, existing)
+			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 
 		task := asynq.NewTask(
@@ -2471,10 +2485,13 @@ func (s *knowledgeService) ReparseKnowledge(
 		info, err := s.task.Enqueue(task)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to enqueue file URL reparse task: %v", err)
-			return existing, nil
+			s.markKnowledgeEnqueueFailed(ctx, existing)
+			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 		logger.Infof(ctx, "Enqueued file URL reparse task: id=%s queue=%s knowledge_id=%s", info.ID, info.Queue, existing.ID)
 		recordReparseStarted()
+
+		enqueueDataTableSummaryIfNeeded(ctx, s.task, tenantID, existing.ID, existing.FileName, existing.FileType, kb.SummaryModelID, kb.EmbeddingModelID)
 
 		return existing, nil
 	}
@@ -2507,7 +2524,8 @@ func (s *knowledgeService) ReparseKnowledge(
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to marshal URL reparse task payload: %v", err)
-			return existing, nil
+			s.markKnowledgeEnqueueFailed(ctx, existing)
+			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 
 		task := asynq.NewTask(
@@ -2518,7 +2536,8 @@ func (s *knowledgeService) ReparseKnowledge(
 		info, err := s.task.Enqueue(task)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to enqueue URL reparse task: %v", err)
-			return existing, nil
+			s.markKnowledgeEnqueueFailed(ctx, existing)
+			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 		logger.Infof(ctx, "Enqueued URL reparse task: id=%s queue=%s knowledge_id=%s", info.ID, info.Queue, existing.ID)
 		recordReparseStarted()
@@ -2527,7 +2546,13 @@ func (s *knowledgeService) ReparseKnowledge(
 	}
 
 	logger.Warnf(ctx, "Knowledge %s has no parseable content (no file, URL, or manual content)", knowledgeID)
-	return existing, nil
+	existing.ParseStatus = types.ParseStatusFailed
+	existing.ErrorMessage = "Knowledge has no parseable content"
+	if err := s.repo.UpdateKnowledge(ctx, existing); err != nil {
+		logger.Errorf(ctx, "Failed to persist unparseable knowledge state for %s: %v",
+			secutils.SanitizeForLog(knowledgeID), err)
+	}
+	return existing, werrors.NewBadRequestError("Knowledge has no parseable content")
 }
 
 // resetKnowledgeForReparse makes the top-level knowledge state describe the
@@ -2966,8 +2991,7 @@ func (s *knowledgeService) ProcessManualUpdate(ctx context.Context, t *asynq.Tas
 		return nil
 	}
 	// Update status to processing
-	knowledge.ParseStatus = "processing"
-	knowledge.UpdatedAt = time.Now()
+	markKnowledgeProcessing(knowledge, time.Now())
 	if err := s.repo.UpdateKnowledge(ctx, knowledge); err != nil {
 		logger.Errorf(ctx, "ProcessManualUpdate: failed to update status to processing: %v", err)
 		return nil
@@ -3102,8 +3126,7 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		logger.Infof(ctx, "Knowledge aborted (%s) before marking processing: %s", status, knowledge.ID)
 		return nil
 	}
-	knowledge.ParseStatus = "processing"
-	knowledge.UpdatedAt = time.Now()
+	markKnowledgeProcessing(knowledge, time.Now())
 	if err := s.repo.UpdateKnowledge(ctx, knowledge); err != nil {
 		logger.Errorf(ctx, "failed to update knowledge status to processing: %v", err)
 		return nil
@@ -3185,7 +3208,7 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 			return fmt.Errorf("failed to download file from URL: %w", err)
 		}
 
-		if resolvedFileType != "" && !allowedFileURLExtensions[strings.ToLower(resolvedFileType)] {
+		if resolvedFileType != "" && !isSupportedImportExtension(resolvedFileType) {
 			logger.Errorf(ctx, "Unsupported file type resolved from file URL: %s", resolvedFileType)
 			knowledge.ParseStatus = "failed"
 			knowledge.ErrorMessage = fmt.Sprintf("unsupported file type: %s", resolvedFileType)
@@ -3746,18 +3769,43 @@ func (s *knowledgeService) ProcessKnowledgeListReparse(ctx context.Context, t *a
 	ctx = context.WithValue(ctx, types.TenantIDContextKey, payload.TenantID)
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
 
-	var failed int
-	for _, id := range payload.KnowledgeIDs {
-		if _, err := s.ReparseKnowledge(ctx, id, payload.ProcessConfig); err != nil {
-			logger.Errorf(ctx, "Failed to reparse knowledge %s: %v", id, err)
-			failed++
-		}
-	}
-
-	if failed > 0 {
-		logger.Warnf(ctx, "Knowledge list reparse completed with %d failures out of %d", failed, len(payload.KnowledgeIDs))
-	}
+	outcome, err := runKnowledgeListReparseSubmissions(payload.KnowledgeIDs, func(id string) error {
+		_, err := s.ReparseKnowledge(ctx, id, payload.ProcessConfig)
+		return err
+	})
 	logger.Infof(ctx, "Knowledge list reparse task finished: %d submitted, %d failed",
-		len(payload.KnowledgeIDs)-failed, failed)
-	return nil
+		outcome.Submitted, outcome.Failed)
+	return err
+}
+
+type knowledgeListReparseOutcome struct {
+	Submitted int
+	Failed    int
+}
+
+// runKnowledgeListReparseSubmissions attempts every item so one bad document
+// cannot block the remainder of the batch. A partial failure is non-retryable:
+// retrying the wrapper task would destructively reparse items that were already
+// submitted successfully. Failed rows remain selectable for an explicit retry.
+func runKnowledgeListReparseSubmissions(
+	ids []string,
+	submit func(string) error,
+) (knowledgeListReparseOutcome, error) {
+	var outcome knowledgeListReparseOutcome
+	failures := make([]error, 0)
+	for _, id := range ids {
+		if err := submit(id); err != nil {
+			failures = append(failures, fmt.Errorf("knowledge %s: %w", secutils.SanitizeForLog(id), err))
+			outcome.Failed++
+			continue
+		}
+		outcome.Submitted++
+	}
+	if len(failures) == 0 {
+		return outcome, nil
+	}
+	return outcome, fmt.Errorf(
+		"%w: batch reparse submitted %d item(s) and failed %d: %w",
+		asynq.SkipRetry, outcome.Submitted, outcome.Failed, errors.Join(failures...),
+	)
 }
