@@ -19,13 +19,26 @@ const toolErrorHint = "\n\n[Analyze the error above and try a different approach
 type ToolRegistry struct {
 	tools             map[string]types.Tool
 	maxToolOutputSize int // maximum chars for tool output (0 = use DefaultMaxToolOutput)
+
+	// relevanceScope is the retrieval prior the tools of one run share:
+	// semantic search writes its document ranking into it and the lexical
+	// tools read it back to decide what to look at first. The registry owns it
+	// because it is the only object whose lifetime is exactly one agent run
+	// and that both tool registration and the engine loop can reach.
+	relevanceScope *RelevanceScope
 }
 
 // NewToolRegistry creates a new tool registry
 func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{
-		tools: make(map[string]types.Tool),
+		tools:          make(map[string]types.Tool),
+		relevanceScope: NewRelevanceScope(),
 	}
+}
+
+// RelevanceScope returns the retrieval prior shared by this run's tools.
+func (r *ToolRegistry) RelevanceScope() *RelevanceScope {
+	return r.relevanceScope
 }
 
 // SetMaxToolOutputSize sets the maximum character length for tool output.

@@ -131,6 +131,11 @@ type KnowledgeSearchTool struct {
 	chatModel            chat.Chat      // Optional chat model for LLM-based reranking
 	config               *config.Config // Global config for fallback values
 
+	// scope receives the document ranking this tool produces, so the lexical
+	// tools that run later in the same turn know which documents to look at
+	// first. Never nil.
+	scope *RelevanceScope
+
 	seenMu     sync.Mutex
 	seenChunks map[string]bool
 }
@@ -154,8 +159,18 @@ func NewKnowledgeSearchTool(
 		rerankModel:          rerankModel,
 		chatModel:            chatModel,
 		config:               cfg,
+		scope:                NewRelevanceScope(),
 		seenChunks:           make(map[string]bool),
 	}
+}
+
+// WithRelevanceScope shares the run's relevance scope so the ranking produced
+// here can guide the lexical tools that run afterwards.
+func (t *KnowledgeSearchTool) WithRelevanceScope(scope *RelevanceScope) *KnowledgeSearchTool {
+	if scope != nil {
+		t.scope = scope
+	}
+	return t
 }
 
 // Execute executes the knowledge search tool
@@ -375,6 +390,17 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 				i+1, total, r.Score, r.QueryType, r.KnowledgeID, r.ID)
 		}
 	}
+
+	// Hand the ranking to the rest of the turn. The ordering is what matters,
+	// not the chunks themselves: it tells grep_chunks which documents to scan
+	// before it runs out of candidate budget.
+	rankedKnowledgeIDs := make([]string, 0, len(deduplicatedResults))
+	for _, r := range deduplicatedResults {
+		if r.KnowledgeID != "" {
+			rankedKnowledgeIDs = append(rankedKnowledgeIDs, r.KnowledgeID)
+		}
+	}
+	t.scope.RecordRankedDocuments(queries, rankedKnowledgeIDs)
 
 	// Enrich image info for search results (lazy-loaded from child image chunks)
 	if t.chunkService != nil && len(deduplicatedResults) > 0 {
