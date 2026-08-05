@@ -394,13 +394,16 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 	// Hand the ranking to the rest of the turn. The ordering is what matters,
 	// not the chunks themselves: it tells grep_chunks which documents to scan
 	// before it runs out of candidate budget.
-	rankedKnowledgeIDs := make([]string, 0, len(deduplicatedResults))
-	for _, r := range deduplicatedResults {
-		if r.KnowledgeID != "" {
-			rankedKnowledgeIDs = append(rankedKnowledgeIDs, r.KnowledgeID)
-		}
-	}
-	t.scope.RecordRankedDocuments(queries, rankedKnowledgeIDs)
+	//
+	// Two lists are recorded, best first. The reranked results are the most
+	// trustworthy ordering but there are only a handful of them — far too few
+	// to steer a scan over a large knowledge base. The retrieval candidates
+	// that reranking discarded are a much wider, still relevance-ordered view
+	// of the same question, and they cost nothing extra to reuse: a document
+	// that was merely not worth quoting is still a far better place to grep
+	// than one retrieval never surfaced at all.
+	t.scope.RecordRankedDocuments(queries, rankedKnowledgeIDs(deduplicatedResults))
+	t.scope.RecordRankedDocuments(nil, rankedKnowledgeIDs(sortedByScore(deduplicatedBeforeRerank)))
 
 	// Enrich image info for search results (lazy-loaded from child image chunks)
 	if t.chunkService != nil && len(deduplicatedResults) > 0 {
@@ -426,6 +429,37 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 	}
 	logger.Infof(ctx, "[Tool][KnowledgeSearch] Output: %s", result.Output)
 	return result, nil
+}
+
+// rankedKnowledgeIDs projects search results onto their owning documents,
+// preserving order and collapsing the repeats that several chunks from one
+// document produce.
+func rankedKnowledgeIDs(results []*searchResultWithMeta) []string {
+	out := make([]string, 0, len(results))
+	seen := make(map[string]bool, len(results))
+	for _, r := range results {
+		if r == nil || r.KnowledgeID == "" || seen[r.KnowledgeID] {
+			continue
+		}
+		seen[r.KnowledgeID] = true
+		out = append(out, r.KnowledgeID)
+	}
+	return out
+}
+
+// sortedByScore returns results ordered most-relevant-first without disturbing
+// the caller's slice. Deduplication upstream reads from a map, so the input
+// order is not meaningful and has to be re-established here.
+func sortedByScore(results []*searchResultWithMeta) []*searchResultWithMeta {
+	ordered := make([]*searchResultWithMeta, len(results))
+	copy(ordered, results)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Score != ordered[j].Score {
+			return ordered[i].Score > ordered[j].Score
+		}
+		return ordered[i].KnowledgeID < ordered[j].KnowledgeID
+	})
+	return ordered
 }
 
 // getKnowledgeBaseTypes fetches knowledge base types for the given IDs

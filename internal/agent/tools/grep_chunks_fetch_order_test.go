@@ -77,8 +77,8 @@ func newFetchOrderDB(t *testing.T, docCount, chunksPerDoc int) (*gorm.DB, []stri
 func fetchOrderBaseQuery(db *gorm.DB) func() *gorm.DB {
 	return func() *gorm.DB {
 		return db.Table("chunks").
-			Select("chunks.id, chunks.content, chunks.chunk_index, chunks.knowledge_id, " +
-				"chunks.knowledge_base_id, chunks.chunk_type, chunks.metadata, chunks.created_at, " +
+			Select("chunks.id, chunks.content, chunks.chunk_index, chunks.knowledge_id, "+
+				"chunks.knowledge_base_id, chunks.chunk_type, chunks.metadata, chunks.created_at, "+
 				"knowledges.title as knowledge_title").
 			Joins("JOIN knowledges ON chunks.knowledge_id = knowledges.id").
 			Where("chunks.is_enabled = ?", true).
