@@ -6236,7 +6236,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "按 ID 列表批量重新解析单个知识库下的多个知识条目",
+                "description": "按 ID 列表或筛选条件批量重新解析单个知识库下的多个知识条目；两者二选一，单次最多 1000 条",
                 "consumes": [
                     "application/json"
                 ],
@@ -22122,13 +22122,51 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.batchReparseKnowledgeFilter": {
+            "type": "object",
+            "properties": {
+                "end_time": {
+                    "type": "string"
+                },
+                "file_type": {
+                    "type": "string"
+                },
+                "folder_path": {
+                    "description": "FolderPath is opt-in by presence, mirroring the list endpoint: an empty\nstring means the knowledge base root, a missing field means \"any folder\".",
+                    "type": "string"
+                },
+                "folder_recursive": {
+                    "type": "boolean"
+                },
+                "keyword": {
+                    "type": "string"
+                },
+                "parse_status": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "start_time": {
+                    "type": "string"
+                },
+                "tag_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "internal_handler.batchReparseKnowledgeRequest": {
             "type": "object",
             "required": [
-                "ids",
                 "kb_id"
             ],
             "properties": {
+                "filter": {
+                    "$ref": "#/definitions/internal_handler.batchReparseKnowledgeFilter"
+                },
                 "ids": {
                     "type": "array",
                     "items": {

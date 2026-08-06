@@ -875,17 +875,32 @@ curl --location --get 'http://localhost:8080/api/v1/knowledge/search' \
 
 ## POST `/knowledge/batch-reparse` - 同一知识库内批量重新解析
 
-按 ID 列表在单个知识库内批量重新解析知识（异步任务）。单次最多 200 个 ID；服务侧会校验所有 ID 存在并属于同一 `kb_id`。
+在单个知识库内批量重新解析知识（异步任务）。可以按 **ID 列表** 或按 **筛选条件** 指定目标，两者互斥且必须二选一。单次最多 1000 个知识；服务侧按每 200 个拆分为一个异步任务入队。
 
 **请求体**:
 
-| 字段             | 类型     | 必填 | 说明                                             |
-| ---------------- | -------- | ---- | ------------------------------------------------ |
-| `kb_id`          | string   | 是   | 目标知识库 ID                                    |
-| `ids`            | string[] | 是   | 待重新解析的知识 ID 列表（≤ 200）                |
-| `process_config` | object   | 否   | 本批次共用的处理配置覆盖；省略时沿用各知识原配置 |
+| 字段             | 类型     | 必填 | 说明                                                              |
+| ---------------- | -------- | ---- | ----------------------------------------------------------------- |
+| `kb_id`          | string   | 是   | 目标知识库 ID                                                     |
+| `ids`            | string[] | 否   | 待重新解析的知识 ID 列表（≤ 1000）；与 `filter` 互斥              |
+| `filter`         | object   | 否   | 筛选条件，服务端解析出全部匹配的知识；与 `ids` 互斥                |
+| `process_config` | object   | 否   | 本批次共用的处理配置覆盖；省略时沿用各知识原配置                  |
 
-**请求**:
+`filter` 字段与 `GET /knowledge-bases/:id/knowledge` 的筛选参数一一对应，至少需要一个能收窄范围的条件（否则返回 400，避免误重建整个知识库）：
+
+| 字段               | 类型     | 说明                                                                 |
+| ------------------ | -------- | -------------------------------------------------------------------- |
+| `tag_ids`          | string[] | 标签 ID 列表（OR 语义）                                              |
+| `keyword`          | string   | 文件名 / 标题关键词                                                  |
+| `file_type`        | string   | 文件类型                                                             |
+| `parse_status`     | string   | 解析状态，例如 `failed`                                              |
+| `source`           | string   | 来源渠道                                                             |
+| `start_time`       | string   | 更新时间起点                                                         |
+| `end_time`         | string   | 更新时间终点                                                         |
+| `folder_path`      | string   | 文件夹路径；传空字符串表示知识库根目录，不传表示不按文件夹过滤       |
+| `folder_recursive` | bool     | 为 `true` 时包含子文件夹                                             |
+
+**请求**（重建全部解析失败的文档）:
 
 ```curl
 curl --location 'http://localhost:8080/api/v1/knowledge/batch-reparse' \
@@ -893,10 +908,9 @@ curl --location 'http://localhost:8080/api/v1/knowledge/batch-reparse' \
 --header 'Content-Type: application/json' \
 --data '{
     "kb_id": "kb-00000001",
-    "ids": [
-        "4c4e7c1a-09cf-485b-a7b5-24b8cdc5acf5",
-        "9c8af585-ae15-44ce-8f73-45ad18394651"
-    ]
+    "filter": {
+        "parse_status": "failed"
+    }
 }'
 ```
 
@@ -908,14 +922,22 @@ curl --location 'http://localhost:8080/api/v1/knowledge/batch-reparse' \
     "message": "Batch reparse task submitted",
     "data": {
         "task_id": "a1b2c3d4",
-        "reparse_count": 2
+        "task_ids": ["a1b2c3d4", "e5f6g7h8"],
+        "reparse_count": 245,
+        "submitted_count": 245,
+        "skipped_in_flight_count": 5,
+        "enqueue_failed_count": 0
     }
 }
 ```
 
+`task_id` 与 `reparse_count` 为兼容旧客户端保留，分别等于 `task_ids[0]` 与 `submitted_count`。
+
+`filter` 模式下，仍处于 `pending` / `processing` / `finalizing` 的知识会被跳过（计入 `skipped_in_flight_count`），避免清空正在写入的内容；`deleting` 状态与未发布的手工草稿也会被排除。当全部匹配项都不可提交时返回 200，`submitted_count` 为 0。
+
 HTTP 成功表示批处理包装任务已入队。后台会尝试提交列表中的每个知识；单项提交失败时，该知识会进入 `failed` 状态并保留错误信息，批处理任务也会在运行队列中标记失败。为避免重复清理已成功提交的知识，出现部分失败后不会自动重试整个批次；可筛选失败知识后再次批量重新解析。
 
-任一 ID 不属于 `kb_id` 或不存在时，返回 400 并整批拒绝。
+`ids` 模式下任一 ID 不属于 `kb_id` 或不存在时，返回 400 并整批拒绝；`filter` 模式下匹配数为 0 或超过 1000 时同样返回 400。
 
 ## POST `/knowledge/batch-delete` - 同一知识库内批量删除
 

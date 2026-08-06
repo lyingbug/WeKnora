@@ -5486,6 +5486,8 @@ export default {
     batchReparseSuccess: '已提交 {count} 个重建任务',
     batchReparseFailed: '批量重建失败',
     batchReparseSkippedInFlight: '已跳过 {count} 个正在解析中的文档',
+    selectAllFiltered: '选择全部 {count} 个筛选结果',
+    allFilteredSelected: '已选择全部 {count} 个筛选结果',
     statusCompleted: '已完成',
     statusProcessing: '解析中',
     statusFinalizing: '优化中',

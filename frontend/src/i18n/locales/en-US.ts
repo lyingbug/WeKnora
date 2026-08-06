@@ -605,6 +605,8 @@ export default {
     batchReparseSuccess: 'Submitted {count} rebuild tasks',
     batchReparseFailed: 'Batch rebuild failed',
     batchReparseSkippedInFlight: 'Skipped {count} document(s) still being parsed',
+    selectAllFiltered: 'Select all {count} matching documents',
+    allFilteredSelected: 'All {count} matching documents selected',
     statusCompleted: 'Completed',
     statusProcessing: 'Processing',
     statusFinalizing: 'Optimizing',

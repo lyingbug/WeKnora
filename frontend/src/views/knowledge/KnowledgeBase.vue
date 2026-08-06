@@ -33,6 +33,7 @@ import {
   cancelKnowledgeParse,
   batchDeleteKnowledge,
   batchReparseKnowledge,
+  batchReparseKnowledgeByFilter,
   getKnowledgeSpans,
   getKnowledgeDetails,
   listKnowledgeFolders,
@@ -41,6 +42,7 @@ import {
   type KnowledgeFolderTree,
 } from "@/api/knowledge-base/index";
 import { knowledgeSpansPayloadHasTrace } from '@/utils/knowledgeTrace';
+import { hasActiveDocumentFilter as hasActiveDocumentFilterParams } from './batchReparseSelection';
 import FAQEntryManager from './components/FAQEntryManager.vue';
 import DocumentListView from './components/DocumentListView.vue';
 import DocumentCardView from './components/DocumentCardView.vue';
@@ -492,8 +494,55 @@ const awaitBatchReparseReflection = async (ids: string[]) => {
   pendingReparseAck.value.clear();
 };
 
+// "Select all matches" hands the active filter to the server, which resolves the
+// IDs itself. That is what lets a user rebuild every failed document in a large
+// knowledge base without paging through the list to tick each row.
+const selectAllFiltered = ref(false);
+const hasActiveDocumentFilter = computed(() => hasActiveDocumentFilterParams(filterParams.value));
+const enableSelectAllFiltered = () => {
+  if (!hasActiveDocumentFilter.value) return;
+  selectAllFiltered.value = true;
+};
+
+const confirmFilteredBatchReparse = async () => {
+  batchReparsing.value = true;
+  try {
+    const res: any = await batchReparseKnowledgeByFilter(kbId.value, filterParams.value);
+    if (!res?.success) {
+      MessagePlugin.error(res?.message || t('knowledgeBase.batchReparseFailed'));
+      return;
+    }
+    const submitted = Number(res?.data?.submitted_count ?? res?.data?.reparse_count ?? 0);
+    const skipped = Number(res?.data?.skipped_in_flight_count ?? 0);
+    if (submitted === 0) {
+      MessagePlugin.info(t('knowledgeBase.rebuildInProgress'));
+    } else {
+      MessagePlugin.success(t('knowledgeBase.batchReparseSuccess', { count: submitted }));
+    }
+    if (skipped > 0) {
+      MessagePlugin.warning(t('knowledgeBase.batchReparseSkippedInFlight', { count: skipped }));
+    }
+    selectAllFiltered.value = false;
+    clearSelection();
+    batchMode.value = false;
+    // The submitted set spans pages the browser never loaded, so reload the
+    // list instead of patching statuses optimistically.
+    await loadKnowledgeFiles(kbId.value);
+    scheduleWikiStatusProbes();
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('knowledgeBase.batchReparseFailed'));
+  } finally {
+    batchReparsing.value = false;
+  }
+};
+
 const confirmBatchReparse = async () => {
-  if (batchReparsing.value || batchDeleting.value || selectedIds.value.size === 0) return;
+  if (batchReparsing.value || batchDeleting.value) return;
+  if (selectAllFiltered.value) {
+    await confirmFilteredBatchReparse();
+    return;
+  }
+  if (selectedIds.value.size === 0) return;
   const allIds = Array.from(selectedIds.value);
   const ids = allIds.filter((id) => {
     const item = cardList.value.find((c) => c.id === id);
@@ -2025,6 +2074,11 @@ const handleBatchCancel = () => {
   clearSelection();
   batchMode.value = false;
 };
+// A cross-page selection is only meaningful for the filter it was made under,
+// so drop it whenever the filter changes or batch mode is toggled.
+watch([filterParams, batchMode], () => {
+  selectAllFiltered.value = false;
+});
 // 切到卡片视图时，如果列表视图里已经勾选过文档，需要自动开启批量管理模式，
 // 否则卡片视图默认不渲染 checkbox，会看不到勾选态。
 watch(viewMode, (mode) => {
@@ -2631,8 +2685,10 @@ async function createNewSession(value: string): Promise<void> {
                 <DocumentBatchBar :count="selectedIds.size" :delete-loading="batchDeleting"
                   :reparse-loading="batchReparsing" :tag-loading="batchTagging" :visible="batchMode || selectedIds.size > 0"
                   :show-move-to-folder="canEdit" :folder-options="folderOptions"
+                  :filter-active="hasActiveDocumentFilter" :filtered-total="total"
+                  :all-filtered-selected="selectAllFiltered"
                   @cancel="handleBatchCancel" @delete="confirmBatchDelete" @reparse="confirmBatchReparse"
-                  @batch-tag="handleBatchTag"
+                  @batch-tag="handleBatchTag" @select-all-filtered="enableSelectAllFiltered"
                   @move-to-folder="(path: string) => moveKnowledgeIntoFolder(Array.from(selectedIds), path)" />
               </div>
             </div>
