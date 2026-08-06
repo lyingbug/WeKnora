@@ -129,7 +129,9 @@ const otherActionsDisabled = computed(
   position: relative;
   z-index: 5;
   width: 100%;
-  max-width: 560px;
+  // Wide enough for the extra "select all matches" affordance without pushing
+  // the clear-selection button out of view.
+  max-width: 680px;
   margin: 0 auto;
   padding: 0 4px;
   box-sizing: border-box;
@@ -137,9 +139,10 @@ const otherActionsDisabled = computed(
 
 .batch-bar-inner {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px 12px;
   padding: 8px 12px;
   background: var(--td-bg-color-container);
   border: 1px solid var(--td-component-stroke);
