@@ -1,7 +1,7 @@
 <template>
   <div class="memory-graph">
     <div class="memory-graph__toolbar">
-      <t-radio-group v-model="mode" variant="default-filled" @change="load">
+      <t-radio-group v-model="mode" variant="default-filled">
         <t-radio-button value="personal">{{ t('memory.graph.modePersonal') }}</t-radio-button>
         <t-radio-button value="bridged">{{ t('memory.graph.modeBridged') }}</t-radio-button>
       </t-radio-group>
@@ -44,7 +44,7 @@
  * are the user's own understanding, the dashed satellites are the wiki pages
  * that understanding is anchored to.
  */
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 
@@ -103,6 +103,11 @@ function onSelect(id: string) {
     emit('open', node.slug)
   }
 }
+
+// Watch the model rather than handling @change: TDesign fires the change
+// callback around the v-model write, so a handler that reads mode.value could
+// see the previous selection and fetch the wrong graph.
+watch(mode, load)
 
 onMounted(load)
 </script>

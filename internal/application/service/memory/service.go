@@ -351,7 +351,7 @@ func (s *Service) createPage(
 		Summary:        firstNonEmpty(strings.TrimSpace(req.Summary), DeriveMemoryTitle(req.Content)),
 		Aliases:        req.Aliases,
 		FolderPath:     req.FolderPath,
-		OutLinks:       ParseMemoryLinks(req.Content),
+		OutLinks:       s.resolveLinkTargets(ctx, sc.Space.ID, req.Content),
 		Strength:       1,
 		Confidence:     0.9,
 		LastEditSource: editSource,
@@ -387,7 +387,7 @@ func (s *Service) updateExistingPage(
 	page.Status = status
 	page.Content = req.Content
 	page.Summary = firstNonEmpty(strings.TrimSpace(req.Summary), page.Summary)
-	page.OutLinks = ParseMemoryLinks(req.Content)
+	page.OutLinks = s.resolveLinkTargets(ctx, sc.Space.ID, req.Content)
 	page.LastEditSource = editSource
 	if req.Aliases != nil {
 		page.Aliases = req.Aliases
@@ -417,6 +417,68 @@ func (s *Service) updateExistingPage(
 	}
 	s.syncInboundLinks(ctx, sc.Space.ID, page.Slug, previousLinks, page.OutLinks)
 	return page, nil
+}
+
+// resolveLinkTargets turns the raw text inside [[...]] into canonical slugs.
+//
+// People write the title they see — [[检索召回率]] — not the addressable slug
+// — [[project/检索召回率]] — and a link that silently fails to resolve is worse
+// than no link, because the graph quietly loses an edge the user believes they
+// drew. Resolution happens once at write time so both the backlink bookkeeping
+// and the graph read plain slugs, and an unresolvable target is preserved
+// verbatim rather than dropped: the user may be linking to something they are
+// about to write.
+func (s *Service) resolveLinkTargets(ctx context.Context, spaceID, content string) types.MemoryStringList {
+	raw := ParseMemoryLinks(content)
+	if len(raw) == 0 {
+		return nil
+	}
+
+	direct, err := s.pages.GetBySlugs(ctx, spaceID, raw)
+	if err != nil {
+		return raw
+	}
+	known := make(map[string]struct{}, len(direct))
+	for _, page := range direct {
+		known[page.Slug] = struct{}{}
+	}
+
+	unresolved := make([]string, 0, len(raw))
+	for _, target := range raw {
+		if _, ok := known[target]; !ok {
+			unresolved = append(unresolved, target)
+		}
+	}
+	if len(unresolved) == 0 {
+		return raw
+	}
+
+	byTitle := map[string]string{}
+	if all, err := s.pages.ListAll(ctx, spaceID); err == nil {
+		for _, page := range all {
+			byTitle[strings.ToLower(strings.TrimSpace(page.Title))] = page.Slug
+			for _, alias := range page.Aliases {
+				byTitle[strings.ToLower(strings.TrimSpace(alias))] = page.Slug
+			}
+		}
+	}
+
+	out := make(types.MemoryStringList, 0, len(raw))
+	seen := map[string]struct{}{}
+	for _, target := range raw {
+		resolved := target
+		if _, ok := known[target]; !ok {
+			if slug, found := byTitle[strings.ToLower(strings.TrimSpace(target))]; found {
+				resolved = slug
+			}
+		}
+		if _, dup := seen[resolved]; dup {
+			continue
+		}
+		seen[resolved] = struct{}{}
+		out = append(out, resolved)
+	}
+	return out
 }
 
 // syncInboundLinks keeps the reverse edges consistent.
@@ -538,7 +600,7 @@ func (s *Service) RevertPage(
 	page.Content = revision.Content
 	page.Summary = revision.Summary
 	page.Structured = revision.Structured
-	page.OutLinks = ParseMemoryLinks(revision.Content)
+	page.OutLinks = s.resolveLinkTargets(ctx, sc.Space.ID, revision.Content)
 	page.LastEditSource = types.MemoryEditSourceRevert
 
 	if err := s.pages.UpdateWithRevision(ctx, page, snapshot, 0); err != nil {

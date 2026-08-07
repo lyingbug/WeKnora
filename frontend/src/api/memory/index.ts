@@ -14,6 +14,19 @@ function encodeSlugPath(slug: string): string {
   return slug.split("/").map(encodeURIComponent).join("/");
 }
 
+
+// The shared `get` helper takes an axios config, not a params object, so query
+// parameters have to travel as `{ params }`. Passing them positionally looks
+// right and silently sends no query string at all, which is a failure mode that
+// only shows up as "the backend ignored my filter".
+function query(params: Record<string, any>) {
+  const clean: Record<string, any> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") clean[key] = value;
+  }
+  return { params: clean };
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -306,7 +319,7 @@ export function listMemoryPages(params: {
   sort_by?: string;
   sort_order?: string;
 }) {
-  return get("/api/v1/memory/pages", params);
+  return get("/api/v1/memory/pages", query(params));
 }
 
 export function getMemoryPage(slug: string) {
@@ -326,7 +339,7 @@ export function deleteMemoryPage(slug: string) {
 }
 
 export function searchMemoryPages(q: string, limit = 20) {
-  return get("/api/v1/memory/search", { q, limit });
+  return get("/api/v1/memory/search", query({ q, limit }));
 }
 
 export function listMemoryRevisions(slug: string) {
@@ -347,7 +360,7 @@ export function listMemoryNotes(params: {
   page?: number;
   page_size?: number;
 }) {
-  return get("/api/v1/memory/notes", params);
+  return get("/api/v1/memory/notes", query(params));
 }
 
 export function promoteMemoryNote(id: string, body: Record<string, any> = {}) {
@@ -369,7 +382,7 @@ export function getMemoryGraph(params: {
   types?: string;
   limit?: number;
 }) {
-  return get("/api/v1/memory/graph", params);
+  return get("/api/v1/memory/graph", query(params));
 }
 
 export function getMemoryStats() {
@@ -377,7 +390,7 @@ export function getMemoryStats() {
 }
 
 export function listMemoryAnchors(kbId?: string) {
-  return get("/api/v1/memory/anchors", kbId ? { kb_id: kbId } : {});
+  return get("/api/v1/memory/anchors", query({ kb_id: kbId }));
 }
 
 export function addMemoryAnchor(body: {

@@ -6,7 +6,6 @@
         class="memory-list__search"
         :placeholder="t('memory.list.searchPlaceholder')"
         clearable
-        @change="reload"
       >
         <template #prefix-icon><t-icon name="search" /></template>
       </t-input>
@@ -18,12 +17,11 @@
         multiple
         clearable
         :min-collapsed-num="2"
-        @change="reload"
       >
         <t-option v-for="type in MEMORY_TYPES" :key="type" :value="type" :label="typeLabel(type)" />
       </t-select>
 
-      <t-radio-group v-model="statusFilter" variant="default-filled" @change="reload">
+      <t-radio-group v-model="statusFilter" variant="default-filled">
         <t-radio-button value="active">{{ t('memory.list.statusActive') }}</t-radio-button>
         <t-radio-button value="archived">{{ t('memory.list.statusArchived') }}</t-radio-button>
       </t-radio-group>
@@ -96,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
 
@@ -215,6 +213,11 @@ function confirmDelete(page: MemoryPage) {
     },
   })
 }
+
+// Watching the filters is both simpler and safer than per-control @change
+// handlers: TDesign fires those around the v-model write, so a handler could
+// read the previous value and filter by it.
+watch([query, typeFilter, statusFilter], reload)
 
 onMounted(load)
 </script>

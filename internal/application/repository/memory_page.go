@@ -207,6 +207,10 @@ func (r *memoryPageRepository) List(
 
 	var pages []*types.MemoryPage
 	err := query.
+		// Pinned memories lead regardless of the chosen sort. Pinning is the
+		// user saying "this one matters"; letting it sort to the bottom of the
+		// list defeats the only thing pinning is for.
+		Order("pinned DESC").
 		Order(order).
 		Order("id ASC").
 		Limit(req.PageSize).
