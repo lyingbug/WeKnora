@@ -101,13 +101,19 @@ const { t, te } = useI18n()
 // Labels and help text are keyed by setting key, with the key itself as the
 // fallback: a setting added on the backend renders immediately rather than
 // showing an empty row while translations catch up.
+//
+// The dots in a setting key have to go, because i18n reads a dot as a path
+// separator and would look for a "write" object inside "memory" rather than for
+// the single entry named "memory.write.mode".
+const translationKey = computed(() => props.descriptor.key.replace(/\./g, '_'))
+
 const label = computed(() => {
-  const key = `memory.settings.keys.${props.descriptor.key}.label`
+  const key = `memory.settings.keys.${translationKey.value}.label`
   return te(key) ? t(key) : props.descriptor.key
 })
 
 const help = computed(() => {
-  const key = `memory.settings.keys.${props.descriptor.key}.help`
+  const key = `memory.settings.keys.${translationKey.value}.help`
   return te(key) ? t(key) : ''
 })
 
