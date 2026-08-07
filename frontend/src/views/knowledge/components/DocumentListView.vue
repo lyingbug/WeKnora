@@ -866,4 +866,178 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
   }
 }
 
+.row-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  gap: 2px;
+  padding: 4px 6px;
+}
+
+.row-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--td-text-color-primary);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 0.15s cubic-bezier(0.2, 0, 0, 1), transform 0.12s ease;
+
+  &:hover {
+    background: var(--td-bg-color-container-hover);
+  }
+
+  &:active {
+    background: var(--td-bg-color-container-active);
+    transform: scale(0.98);
+  }
+
+  .icon {
+    font-size: 16px;
+    color: var(--td-text-color-secondary);
+    transition: color 0.15s ease;
+  }
+
+  &:hover .icon {
+    color: var(--td-text-color-primary);
+  }
+
+  &.danger {
+    color: var(--td-error-color-6);
+    margin-top: 4px;
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      top: -3px;
+      left: 8px;
+      right: 8px;
+      height: 1px;
+      background: var(--td-component-stroke);
+    }
+
+    .icon {
+      color: var(--td-error-color-6);
+    }
+
+    &:hover {
+      background: var(--td-error-color-1);
+      color: var(--td-error-color-6);
+
+      .icon {
+        color: var(--td-error-color-6);
+      }
+    }
+
+    &:active {
+      background: var(--td-error-color-2);
+    }
+  }
+}
+
+// ============================================================
+// 移动端适配：精简列，保留核心信息
+// ============================================================
+@media screen and (max-width: 767px) {
+  .doc-list-header,
+  .doc-list-row {
+    grid-template-columns:
+      36px // checkbox
+      1fr // name
+      auto // status + actions 合并
+      0px; // 隐藏 actions 列（合并到 status 列后）
+    column-gap: 4px;
+    padding: 0 8px;
+  }
+
+  // 隐藏次要列的表头
+  .cell-tag,
+  .cell-source,
+  .cell-size,
+  .cell-time,
+  .cell-actions {
+    display: none !important;
+  }
+
+  .cell-check {
+    width: 36px;
+    min-width: 36px;
+    padding: 0 4px;
+
+    :deep(.t-checkbox) {
+      transform: scale(0.9);
+    }
+  }
+
+  .cell-name {
+    min-width: 0;
+    padding: 8px 4px;
+  }
+
+  .row-file-name {
+    font-size: 13px;
+  }
+
+  .row-file-desc {
+    display: none; // 描述文字在移动端隐藏
+  }
+
+  .cell-status {
+    min-width: 0;
+    padding: 0 4px;
+    justify-content: flex-end;
+
+    .row-status-tag {
+      font-size: 11px;
+    }
+  }
+
+  // 行高缩小
+  .doc-list-row {
+    min-height: 50px;
+  }
+
+  .doc-list-header {
+    height: 36px;
+    font-size: 11px;
+  }
+
+  // 操作按钮移动到行内末尾
+  .row-more-btn {
+    display: inline-flex !important;
+    width: 24px;
+    height: 24px;
+    opacity: 0.7;
+  }
+}
+
+// ============================================================
+// 平板适配：隐藏标签和来源列，保留核心列
+// ============================================================
+@media screen and (min-width: 768px) and (max-width: 1023px) {
+  .doc-list-header,
+  .doc-list-row {
+    grid-template-columns:
+      40px // checkbox
+      minmax(180px, 2fr) // name
+      minmax(80px, 0.8fr) // tag (keep)
+      0px // source (hide)
+      80px // size
+      minmax(80px, 0.6fr) // status
+      120px // time
+      44px; // actions
+  }
+
+  .cell-source {
+    display: none !important;
+  }
+
+  .doc-list-row {
+    min-height: 52px;
+  }
+}
 </style>

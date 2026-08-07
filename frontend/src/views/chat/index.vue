@@ -1038,7 +1038,7 @@ onBeforeRouteUpdate((to, from, next) => {
     flex-direction: column;
     align-items: center;
     max-width: calc(100vw - 260px);
-    min-width: 400px;
+    min-width: 0; // 响应式：不再限制 min-width
 
     &.is-sidebar-collapsed {
         max-width: calc(100vw - 60px);
@@ -1050,6 +1050,20 @@ onBeforeRouteUpdate((to, from, next) => {
         padding: 0;
         overflow-x: hidden;
     }
+
+    // 平板：侧边栏折叠时
+    .tablet({
+        max-width: calc(100vw - 60px);
+        padding: 16px 0 16px 16px;
+    });
+
+    // 手机：全宽，减小间距
+    .mobile({
+        max-width: 100%;
+        min-width: 100%;
+        padding: 12px;
+        font-size: 16px;
+    });
 
     &:not(.is-embedded) {
         @media (min-width: 960px) {
@@ -1222,6 +1236,11 @@ onBeforeRouteUpdate((to, from, next) => {
         box-sizing: border-box;
         overflow-x: hidden;
     }
+
+    .mobile({
+        min-height: auto;
+        padding: 0 4px 8px;
+    });
 }
 
 .msg_list {
@@ -1232,6 +1251,11 @@ onBeforeRouteUpdate((to, from, next) => {
     flex: 1;
     margin: 0 auto;
     width: 100%;
+
+    .mobile({
+        gap: 12px;
+        padding: 0 4px;
+    });
 
     /*
       给每条消息加 layout/style containment：

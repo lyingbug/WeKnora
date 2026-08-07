@@ -3729,43 +3729,74 @@ async function createNewSession(value: string): Promise<void> {
   margin: 0 16px 0 4px;
 }
 
-@media (max-width: 1250px) and (min-width: 1045px) {
-  .answers-input {
-    transform: translateX(-329px);
+// ============================================================
+// 移动端适配
+// ============================================================
+@media screen and (max-width: 767px) {
+  // 容器 padding 缩小
+  .knowledge-layout {
+    padding: 12px 12px 0;
+    margin: 0;
+    gap: 12px;
   }
 
-  :deep(.t-textarea__inner) {
-    width: 654px !important;
+  // FAQ 包装器
+  .faq-manager-wrapper {
+    padding: 12px;
+    margin: 0;
+  }
+
+  // Wiki 主区域
+  .wiki-main-area {
+    margin: 0;
+  }
+
+  // 文档筛选栏：整行全宽
+  .doc-filter-bar {
+    gap: 8px;
+  }
+
+  .doc-filter-field {
+    width: 100% !important;
+    flex: 1 1 100%;
+
+    &--wide {
+      width: 100% !important;
+    }
+  }
+
+  .doc-filter-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  // 面包屑/标签切换
+  .breadcrumb-tab {
+    font-size: 13px;
   }
 }
 
-@media (max-width: 1045px) {
-  .answers-input {
-    transform: translateX(-250px);
+// ============================================================
+// 平板适配
+// ============================================================
+@media screen and (min-width: 768px) and (max-width: 1023px) {
+  .knowledge-layout {
+    padding: 16px 20px 0;
+    margin: 0 8px 0 2px;
+    gap: 14px;
   }
 
-  :deep(.t-textarea__inner) {
-    width: 500px !important;
-  }
-}
-
-@media (max-width: 750px) {
-  .answers-input {
-    transform: translateX(-182px);
+  .faq-manager-wrapper {
+    padding: 16px 20px;
+    margin: 0 8px 0 2px;
   }
 
-  :deep(.t-textarea__inner) {
-    width: 340px !important;
-  }
-}
+  .doc-filter-field {
+    width: 120px;
 
-@media (max-width: 600px) {
-  .answers-input {
-    transform: translateX(-164px);
-  }
-
-  :deep(.t-textarea__inner) {
-    width: 300px !important;
+    &--wide {
+      width: 220px;
+    }
   }
 }
 
