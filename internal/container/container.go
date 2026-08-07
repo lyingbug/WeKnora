@@ -338,6 +338,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(chatpipeline.NewPluginChatCompletion))
 	must(container.Invoke(chatpipeline.NewPluginChatCompletionStream))
 	must(container.Invoke(chatpipeline.NewPluginFilterTopK))
+	// Memory recall runs after query understanding and before retrieval; the
+	// boost plugin rides CHUNK_RERANK alongside the wiki boost.
+	must(container.Invoke(chatpipeline.NewPluginMemoryRecall))
+	must(container.Invoke(chatpipeline.NewPluginMemoryBoost))
 	must(container.Invoke(chatpipeline.NewPluginQueryUnderstand))
 	must(container.Invoke(chatpipeline.NewPluginLoadHistory))
 	must(container.Invoke(chatpipeline.NewPluginExtractEntity))

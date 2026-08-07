@@ -260,7 +260,7 @@ var memorySettingDescriptors = []MemorySettingDescriptor{
 	},
 	{
 		Key: SettingMemoryChannels, Group: MemoryGroupGeneral, Kind: memoryKindStringList,
-		Default: []string{MemoryChannelWeb}, Merge: mergeIntersect,
+		Default: []string{MemoryChannelWeb}, Merge: mergeOverride,
 		Levels:  []string{MemoryLayerTenant},
 		Allowed: []string{MemoryChannelWeb, MemoryChannelAPI, MemoryChannelIM, MemoryChannelEmbed},
 	},
@@ -338,7 +338,7 @@ var memorySettingDescriptors = []MemorySettingDescriptor{
 	},
 	{
 		Key: SettingMemoryRecallResidentTypes, Group: MemoryGroupRecall, Kind: memoryKindStringList,
-		Default: []string{MemoryTypeProfile, MemoryTypePreference}, Merge: mergeIntersect,
+		Default: []string{MemoryTypeProfile, MemoryTypePreference}, Merge: mergeOverride,
 		Levels:  []string{MemoryLayerTenant, MemoryLayerUser},
 		Allowed: AllMemoryTypes(),
 	},
@@ -809,9 +809,11 @@ func (r MemorySettingsResolution) EditableAt(key, layer string) bool {
 	if !ok || v.LockedBy == "" {
 		return true
 	}
-	// A wider layer constrains the value; a narrower one can only tighten it
-	// further, which for veto-style merges means it cannot change anything.
-	return memoryLayerRank(v.LockedBy) >= memoryLayerRank(layer)
+	// The key is already at its most restrictive value. A layer at least as
+	// narrow as the one that pinned it can still relax its own contribution;
+	// anything narrower than that is looking at a control that would do
+	// nothing, and should be told so rather than left to discover it.
+	return memoryLayerRank(layer) <= memoryLayerRank(v.LockedBy)
 }
 
 // ResolveMemorySettings folds the layers, widest first, into effective values.
@@ -825,6 +827,18 @@ func ResolveMemorySettings(layers ...MemorySettingsLayer) MemorySettingsResoluti
 			values[desc.Key] = current
 			continue
 		}
+		// The built-in default is not a layer. Combining it as if it were would
+		// make defaults unoverridable in the restrictive direction: a key that
+		// defaults to false and merges with AND could never be switched on, and
+		// one that defaults to true and merges with OR could never be switched
+		// off. So the first layer to set a key takes it outright, and only
+		// subsequent layers combine.
+		//
+		// Deny lists are the exception: they accumulate onto the built-ins,
+		// because dropping the shipped credential patterns the moment a
+		// workspace adds one of its own would be a silent downgrade.
+		explicitlySet := desc.Merge == mergeUnion
+
 		for _, layer := range layers {
 			raw, present := layer.Patch[desc.Key]
 			if !present {
@@ -838,16 +852,25 @@ func ResolveMemorySettings(layers ...MemorySettingsLayer) MemorySettingsResoluti
 			if candidate == nil {
 				continue
 			}
+			if !explicitlySet {
+				current = MemorySettingValue{Value: candidate, Source: layer.Layer}
+				explicitlySet = true
+				continue
+			}
 			current = mergeSettingValue(desc, current, candidate, layer.Layer)
 		}
+		current.LockedBy = lockedBy(desc, current)
 		values[desc.Key] = current
 	}
 
 	return MemorySettingsResolution{Values: values, Settings: buildMemorySettings(values)}
 }
 
-// mergeSettingValue folds one layer's candidate into the running value and
-// records whether that layer now constrains what narrower layers can do.
+// mergeSettingValue folds one layer's candidate into the running value.
+//
+// Only reached once a wider layer has already set the key, so every branch here
+// is answering the same question: may this narrower layer change what the wider
+// one decided, and in which direction.
 func mergeSettingValue(
 	desc MemorySettingDescriptor, current MemorySettingValue, candidate any, layer string,
 ) MemorySettingValue {
@@ -855,90 +878,95 @@ func mergeSettingValue(
 	case mergeAnd:
 		cur, _ := current.Value.(bool)
 		cand, _ := candidate.(bool)
-		if !cand {
-			// A false at any layer vetoes everything narrower.
-			if current.LockedBy == "" || memoryLayerRank(layer) < memoryLayerRank(current.LockedBy) {
-				current.LockedBy = layer
-			}
-			return MemorySettingValue{Value: false, Source: layer, LockedBy: current.LockedBy}
-		}
-		if cur {
-			return MemorySettingValue{Value: true, Source: layer, LockedBy: current.LockedBy}
+		if cur && !cand {
+			// Turning something off is always allowed.
+			return MemorySettingValue{Value: false, Source: layer}
 		}
 		return current
 
 	case mergeOr:
-		cand, _ := candidate.(bool)
-		if cand {
-			if current.LockedBy == "" || memoryLayerRank(layer) < memoryLayerRank(current.LockedBy) {
-				current.LockedBy = layer
-			}
-			return MemorySettingValue{Value: true, Source: layer, LockedBy: current.LockedBy}
-		}
 		cur, _ := current.Value.(bool)
-		if cur {
-			return current
+		cand, _ := candidate.(bool)
+		if !cur && cand {
+			// Turning a safety switch on is always allowed.
+			return MemorySettingValue{Value: true, Source: layer}
 		}
-		return MemorySettingValue{Value: false, Source: layer, LockedBy: current.LockedBy}
+		return current
 
 	case mergeMin:
 		curF, _ := toFloat(current.Value)
 		candF, _ := toFloat(candidate)
-		if candF <= curF {
-			return MemorySettingValue{Value: candidate, Source: layer, LockedBy: current.LockedBy}
-		}
-		// The wider layer's smaller budget stands and caps this layer.
-		if current.Source != memoryLayerDefault {
-			current.LockedBy = current.Source
+		if candF < curF {
+			return MemorySettingValue{Value: candidate, Source: layer}
 		}
 		return current
 
 	case mergeMax:
 		curF, _ := toFloat(current.Value)
 		candF, _ := toFloat(candidate)
-		if candF >= curF {
-			return MemorySettingValue{Value: candidate, Source: layer, LockedBy: current.LockedBy}
-		}
-		if current.Source != memoryLayerDefault {
-			current.LockedBy = current.Source
+		if candF > curF {
+			return MemorySettingValue{Value: candidate, Source: layer}
 		}
 		return current
 
 	case mergeStrictestEnum:
 		curIdx := indexOf(desc.Allowed, toStringValue(current.Value))
 		candIdx := indexOf(desc.Allowed, toStringValue(candidate))
-		if candIdx <= curIdx {
-			return MemorySettingValue{Value: candidate, Source: layer, LockedBy: current.LockedBy}
-		}
-		if current.Source != memoryLayerDefault {
-			current.LockedBy = current.Source
+		if candIdx < curIdx {
+			return MemorySettingValue{Value: candidate, Source: layer}
 		}
 		return current
 
 	case mergeIntersect:
 		cur, _ := toStringList(current.Value)
 		cand, _ := toStringList(candidate)
-		merged := intersectStrings(cur, cand)
-		locked := current.LockedBy
-		if len(merged) < len(cur) && current.Source != memoryLayerDefault {
-			locked = current.Source
-		}
-		if len(merged) < len(cand) {
-			// The wider layer removed entries this layer wanted.
-			if current.Source != memoryLayerDefault {
-				locked = current.Source
-			}
-		}
-		return MemorySettingValue{Value: merged, Source: layer, LockedBy: locked}
+		return MemorySettingValue{Value: intersectStrings(cur, cand), Source: layer}
 
 	case mergeUnion:
 		cur, _ := toStringList(current.Value)
 		cand, _ := toStringList(candidate)
-		return MemorySettingValue{Value: unionStrings(cur, cand), Source: layer, LockedBy: current.LockedBy}
+		return MemorySettingValue{Value: unionStrings(cur, cand), Source: layer}
 
 	default: // mergeOverride
-		return MemorySettingValue{Value: candidate, Source: layer, LockedBy: current.LockedBy}
+		return MemorySettingValue{Value: candidate, Source: layer}
 	}
+}
+
+// lockedBy names the layer that has pinned a key, or "" when narrower layers
+// can still change it.
+//
+// A key is only reported as locked when it has already reached its most
+// restrictive value, because that is the one case where a narrower layer's
+// edit would do nothing at all. A budget capped by a workspace is not locked:
+// an agent can still lower it further, and greying that control out would be a
+// lie. Getting this distinction right is what makes the settings UI honest
+// instead of merely defensive.
+func lockedBy(desc MemorySettingDescriptor, value MemorySettingValue) string {
+	if desc.HardLocked {
+		return MemoryLayerDeployment
+	}
+	if value.Source == memoryLayerDefault {
+		return ""
+	}
+	switch desc.Merge {
+	case mergeAnd:
+		if enabled, _ := value.Value.(bool); !enabled {
+			return value.Source
+		}
+	case mergeOr:
+		if enabled, _ := value.Value.(bool); enabled {
+			return value.Source
+		}
+	case mergeStrictestEnum:
+		if len(desc.Allowed) > 0 && toStringValue(value.Value) == desc.Allowed[0] {
+			return value.Source
+		}
+	case mergeIntersect:
+		if list, _ := toStringList(value.Value); len(list) == 0 {
+			return value.Source
+		}
+	}
+	return ""
 }
 
 // MemorySettings is the typed view the rest of the code reads. Building it once

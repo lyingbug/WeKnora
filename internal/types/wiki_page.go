@@ -682,6 +682,10 @@ type WikiGraphNode struct {
 	PageType string `json:"page_type"`
 	// Number of inbound + outbound links
 	LinkCount int `json:"link_count"`
+	// Memory carries this caller's engagement with the page when the request
+	// asked for the illumination overlay. Omitted entirely otherwise, so a
+	// client that never asks for it sees the response it always saw.
+	Memory *MemoryOverlayNode `json:"memory,omitempty"`
 }
 
 // WikiGraphEdge represents a directed edge in the wiki link graph

@@ -33,6 +33,11 @@ const (
 	// Set high enough that a single incidental token overlap does not drag an
 	// unrelated memory into the prompt.
 	minLexicalScore = 0.12
+	// minQueryCoverage is the share of the query's meaningful tokens a memory
+	// must match. Inverse document frequency alone cannot carry this: a space
+	// with a handful of memories gives every token the same weight, so one
+	// incidental word in common would be enough to surface something unrelated.
+	minQueryCoverage = 0.25
 	// recencyHalfLifeDays shapes the recency bonus only; real decay lives in
 	// the lifecycle sweep.
 	recencyHalfLifeDays = 60.0
@@ -89,6 +94,29 @@ func tokenize(text string) []string {
 	return tokens
 }
 
+// stopwords carry no signal about which memory is relevant. Only Latin words
+// are listed: CJK is tokenised into bigrams, where particles rarely form a
+// bigram that matches across unrelated sentences.
+var stopwords = map[string]struct{}{}
+
+func init() {
+	for _, w := range []string{
+		"a", "an", "the", "of", "in", "on", "at", "to", "for", "with", "and", "or",
+		"is", "are", "was", "were", "be", "been", "am", "do", "does", "did",
+		"i", "me", "my", "you", "your", "we", "our", "it", "its", "that", "this",
+		"what", "which", "who", "how", "why", "when", "where", "can", "could",
+		"should", "would", "will", "have", "has", "had", "not", "no", "so", "as",
+		"from", "by", "about", "into", "than", "then", "there", "here",
+	} {
+		stopwords[w] = struct{}{}
+	}
+}
+
+func isStopword(token string) bool {
+	_, ok := stopwords[token]
+	return ok
+}
+
 func isCJK(r rune) bool {
 	return unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) ||
 		unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r)
@@ -123,7 +151,12 @@ func indexPage(page *types.MemoryPage) pageIndex {
 
 // scoreMemories ranks pages against a query using tf-idf cosine-ish overlap.
 func scoreMemories(query string, pages []*types.MemoryPage, now nowFunc) []types.MemoryRecallItem {
-	queryTokens := tokenize(query)
+	queryTokens := make([]string, 0, 16)
+	for _, token := range tokenize(query) {
+		if !isStopword(token) {
+			queryTokens = append(queryTokens, token)
+		}
+	}
 	if len(queryTokens) == 0 || len(pages) == 0 {
 		return nil
 	}
@@ -162,17 +195,27 @@ func scoreMemories(query string, pages []*types.MemoryPage, now nowFunc) []types
 	}
 	norm = math.Sqrt(norm)
 
+	// Coverage is measured against the distinct meaningful tokens of the query,
+	// not against every occurrence.
+	distinctQueryTokens := len(queryWeights)
+
 	items := make([]types.MemoryRecallItem, 0, len(indexes))
 	for _, idx := range indexes {
 		var dot float64
+		matched := 0
 		for token, weight := range queryWeights {
 			if tf, ok := idx.tokens[token]; ok {
 				// Sub-linear term frequency: the fifth occurrence of a word
 				// says much less than the first.
 				dot += weight * (1 + math.Log(float64(tf)))
+				matched++
 			}
 		}
 		if dot == 0 {
+			continue
+		}
+		if distinctQueryTokens > 0 &&
+			float64(matched)/float64(distinctQueryTokens) < minQueryCoverage {
 			continue
 		}
 		lexical := dot / (norm * math.Sqrt(float64(idx.length)+1))

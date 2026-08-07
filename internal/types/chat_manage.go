@@ -128,6 +128,22 @@ type PipelineState struct {
 	ImageDescription     string            `json:"-"`
 	QuotedContext        string            `json:"-"` // Quoted message text, injected at LLM prompt stage
 	SystemPromptOverride string            `json:"-"`
+
+	// MemorySpaceID is the caller's long-term memory space for this turn.
+	// Empty when memory is off, which every memory stage treats as "skip".
+	MemorySpaceID string `json:"-"`
+	// MemorySettings are the settings resolved once at the start of the turn,
+	// so no stage has to re-derive them.
+	MemorySettings MemorySettings `json:"-"`
+	// MemoryContext holds the memories selected for injection this turn.
+	MemoryContext *MemoryRecallResult `json:"-"`
+	// MemoryAnchorHints let the rerank stage prefer knowledge-base content the
+	// caller has already engaged with.
+	MemoryAnchorHints []MemoryAnchorHint `json:"-"`
+	// MemoryBlockRendered guards against injecting the memory block twice: the
+	// pure-chat path assembles its prompt before the pipeline runs, while the
+	// RAG path rebuilds it during INTO_CHAT_MESSAGE.
+	MemoryBlockRendered bool `json:"-"`
 }
 
 // PipelineContext holds runtime context for the current pipeline execution.
@@ -243,6 +259,10 @@ func (c *ChatManage) Clone() *ChatManage {
 			IntentPromptOverrides:    maps.Clone(c.IntentPromptOverrides),
 		},
 		PipelineState: PipelineState{
+			MemorySpaceID:        c.MemorySpaceID,
+			MemorySettings:       c.MemorySettings,
+			MemoryContext:        c.MemoryContext,
+			MemoryAnchorHints:    append([]MemoryAnchorHint(nil), c.MemoryAnchorHints...),
 			RewriteQuery:         c.RewriteQuery,
 			Intent:               c.Intent,
 			ImageDescription:     c.ImageDescription,
@@ -265,6 +285,7 @@ const (
 	CHUNK_SEARCH           EventType = "chunk_search"
 	CHUNK_SEARCH_PARALLEL  EventType = "chunk_search_parallel"
 	ENTITY_SEARCH          EventType = "entity_search"
+	MEMORY_RECALL          EventType = "memory_recall"
 	CHUNK_RERANK           EventType = "chunk_rerank"
 	WEB_FETCH              EventType = "web_fetch"
 	CHUNK_MERGE            EventType = "chunk_merge"

@@ -61,6 +61,7 @@ func registerMemoryComponents(c *dig.Container, redisAvailable bool) {
 	must(c.Provide(memorysvc.NewRecallService))
 	must(c.Provide(memorysvc.NewWriterService))
 
+	must(c.Provide(memorysvc.NewTaskHandler))
 	must(c.Provide(handler.NewMemoryHandler))
 }
 

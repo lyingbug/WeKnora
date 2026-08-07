@@ -123,6 +123,10 @@ type sessionService struct {
 	webSearchProviderRepo interfaces.WebSearchProviderRepository // Repository for web search provider entities
 	kbShareService        interfaces.KBShareService              // Service for KB sharing operations
 	suggestionRepo        interfaces.MessageSuggestionRepository
+	memoryService         interfaces.MemoryService         // Long-term memory space resolution
+	memorySettings        interfaces.MemorySettingsService // Layered memory settings
+	memoryRecall          interfaces.MemoryRecallService   // Memory recall and anchor recording
+	memoryWriter          interfaces.MemoryWriterService   // Memory write path (gate + extraction)
 }
 
 // NewSessionService creates a new session service instance with all required dependencies
@@ -140,6 +144,10 @@ func NewSessionService(cfg *config.Config,
 	webSearchProviderRepo interfaces.WebSearchProviderRepository,
 	kbShareService interfaces.KBShareService,
 	suggestionRepo interfaces.MessageSuggestionRepository,
+	memoryService interfaces.MemoryService,
+	memorySettings interfaces.MemorySettingsService,
+	memoryRecall interfaces.MemoryRecallService,
+	memoryWriter interfaces.MemoryWriterService,
 ) interfaces.SessionService {
 	return &sessionService{
 		cfg:                   cfg,
@@ -156,6 +164,10 @@ func NewSessionService(cfg *config.Config,
 		webSearchProviderRepo: webSearchProviderRepo,
 		kbShareService:        kbShareService,
 		suggestionRepo:        suggestionRepo,
+		memoryService:         memoryService,
+		memorySettings:        memorySettings,
+		memoryRecall:          memoryRecall,
+		memoryWriter:          memoryWriter,
 	}
 }
 

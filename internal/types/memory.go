@@ -624,7 +624,10 @@ var memoryHashNoise = regexp.MustCompile(`[\s\p{P}]+`)
 // is asked to judge similarity.
 func NormalizeStatement(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
-	return memoryHashNoise.ReplaceAllString(s, " ")
+	// Trim again after collapsing: a trailing full stop becomes a trailing
+	// space, and without this "I prefer concise answers." and "i prefer
+	// concise answers" would hash differently and both be stored.
+	return strings.TrimSpace(memoryHashNoise.ReplaceAllString(s, " "))
 }
 
 // ---------------------------------------------------------------------------
