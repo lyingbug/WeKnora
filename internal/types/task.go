@@ -42,6 +42,10 @@ const (
 	QueueSync           = "sync"
 	QueueMaintenance    = "low"
 	QueueWiki           = "wiki"
+	// QueueMemory carries long-term memory extraction, consolidation and the
+	// decay sweep. It rides the maintenance pool: memory work is background by
+	// design and must never compete with anything a user is waiting on.
+	QueueMemory = "memory"
 )
 
 // QueueDefinition is the single source of truth for queue topology. Worker
@@ -80,6 +84,9 @@ var queueDefinitions = []QueueDefinition{
 		TypeKnowledgeListDelete, TypeKnowledgeListReparse, TypeKnowledgeMove,
 	}},
 	{Name: QueueWiki, Pool: WorkerPoolWiki, Weight: 1, TaskTypes: []string{TypeWikiIngest, TypeWikiFinalize}},
+	{Name: QueueMemory, Pool: WorkerPoolMaintenance, Weight: 1, TaskTypes: []string{
+		TypeMemoryExtract, TypeMemoryConsolidate, TypeMemoryDecay,
+	}},
 }
 
 // QueueDefinitions returns a copy so callers cannot mutate global topology.
@@ -245,6 +252,9 @@ const (
 	TypeManualProcess            = "manual:process"             // 手工知识更新任务（cleanup + 重新索引）
 	TypeDataSourceSync           = "datasource:sync"            // 数据源同步任务
 	TypeWikiIngest               = "wiki:ingest"                // Wiki 页面同步任务
+	TypeMemoryExtract            = "memory:extract"             // 长期记忆抽取（去抖窗口）
+	TypeMemoryConsolidate        = "memory:consolidate"         // 长期记忆巩固（去重/合并/冲突）
+	TypeMemoryDecay              = "memory:decay"               // 长期记忆衰减与保留期清理
 	TypeWikiFinalize             = "wiki:finalize"              // Wiki KB 级收尾任务（防抖：索引重建/死链清理/交叉链接）
 	TypeTemporaryDocumentProcess = "temporary_document:process" // 会话临时文档解析任务
 )
@@ -497,6 +507,31 @@ type KnowledgePostProcessPayload struct {
 	KnowledgeBaseID string `json:"knowledge_base_id"`
 	Language        string `json:"language,omitempty"` // Request locale for {{language}} in prompt templates
 	Attempt         int    `json:"attempt,omitempty"`
+}
+
+// MemoryExtractPayload identifies one debounce window worth of conversation to
+// distil into candidate memories.
+type MemoryExtractPayload struct {
+	TracingContext
+	TenantID  uint64 `json:"tenant_id"`
+	SpaceID   string `json:"space_id"`
+	SessionID string `json:"session_id"`
+	Language  string `json:"language,omitempty"`
+}
+
+// MemoryConsolidatePayload asks the writer to fold a space's pending
+// observations into pages.
+type MemoryConsolidatePayload struct {
+	TracingContext
+	TenantID uint64 `json:"tenant_id"`
+	SpaceID  string `json:"space_id"`
+}
+
+// MemoryDecayPayload sweeps one space, or every space when SpaceID is empty.
+type MemoryDecayPayload struct {
+	TracingContext
+	TenantID uint64 `json:"tenant_id,omitempty"`
+	SpaceID  string `json:"space_id,omitempty"`
 }
 
 // KnowledgeAutoTagPayload identifies a document whose parsed content should be

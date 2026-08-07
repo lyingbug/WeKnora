@@ -129,6 +129,11 @@ type CustomAgentConfig struct {
 	// so agents saved before this option was introduced keep their existing behavior.
 	CitationEnabled *bool `yaml:"citation_enabled" json:"citation_enabled"`
 
+	// Memory holds agent-level long-term memory overrides (read/write toggles,
+	// injection budget, extraction model). A sparse patch, so an agent that
+	// never touched memory settings simply inherits the workspace policy.
+	Memory MemorySettingsPatch `yaml:"memory" json:"memory,omitempty"`
+
 	// ===== Agent Mode Settings =====
 	// Maximum iterations for ReAct loop (only for agent type)
 	MaxIterations int `yaml:"max_iterations" json:"max_iterations"`

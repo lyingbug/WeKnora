@@ -43,6 +43,13 @@ type UserPreferences struct {
 	// UI hides self-service password rotation until the user sets a known
 	// password via ChangePassword (which clears this flag).
 	OidcOnlyLogin *bool `json:"oidc_only_login,omitempty"`
+
+	// Memory holds this person's long-term memory settings. It is the narrowest
+	// layer a human controls, and it always wins in the restrictive direction:
+	// whatever a workspace enables, an individual can still switch off for
+	// themselves. Stored here rather than in a new table because it is a
+	// handful of scalars and users.preferences already exists.
+	Memory MemorySettingsPatch `json:"memory,omitempty"`
 }
 
 // Value implements driver.Valuer so GORM persists UserPreferences as

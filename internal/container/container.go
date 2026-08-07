@@ -304,6 +304,15 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewTemporaryDocumentService))
 	must(container.Invoke(startTemporaryDocumentCleanup))
 
+	// Long-term memory. Registered after the task enqueuer because the write
+	// path schedules through it, and after the services it resolves settings
+	// from (tenant, user, agent).
+	logger.Debugf(ctx, "[Container] Registering long-term memory...")
+	registerMemoryComponents(container, redisAvailable)
+	must(container.Invoke(func(writer interfaces.MemoryWriterService) {
+		startMemoryDecaySweep(context.Background(), writer)
+	}))
+
 	// Chat pipeline components for processing chat requests
 	logger.Debugf(ctx, "[Container] Registering chat pipeline plugins...")
 
