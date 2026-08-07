@@ -79,7 +79,21 @@ export interface WikiGraphMeta {
 }
 
 export interface WikiGraphData {
-  nodes: { slug: string; title: string; page_type: string; link_count: number }[];
+  nodes: {
+    slug: string;
+    title: string;
+    page_type: string;
+    link_count: number;
+    // Present only when the request asked for overlay=memory.
+    memory?: {
+      heat: number;
+      state: 'unlit' | 'touched' | 'familiar' | 'mastered' | 'flagged';
+      anchor_count: number;
+      memory_count: number;
+      relations: string[];
+      last_seen_at?: string;
+    };
+  }[];
   edges: { source: string; target: string }[];
   meta: WikiGraphMeta;
 }
@@ -304,6 +318,10 @@ export interface WikiGraphQueryParams {
   depth?: number;
   types?: string[];
   limit?: number;
+  // overlay=memory decorates each node with the caller's own engagement, so
+  // the shared knowledge graph can be shown lit up per person. Additive: the
+  // response is unchanged when it is omitted.
+  overlay?: 'memory';
 }
 
 // getWikiGraph fetches a slice of the wiki link graph. Without params the
@@ -321,6 +339,7 @@ export function getWikiGraph(kbId: string, params?: WikiGraphQueryParams) {
     if (params.types && params.types.length > 0) {
       query.set('types', params.types.join(','));
     }
+    if (params.overlay) query.set('overlay', params.overlay);
   }
   const qs = query.toString();
   return get(`/api/v1/knowledgebase/${kbId}/wiki/graph${qs ? '?' + qs : ''}`);

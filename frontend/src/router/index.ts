@@ -129,6 +129,12 @@ const router = createRouter({
           },
         },
         {
+          path: "memory",
+          name: "memoryCenter",
+          component: () => import("../views/memory/MemoryCenter.vue"),
+          meta: { requiresInit: true, requiresAuth: true }
+        },
+        {
           path: "agents",
           name: "agentList",
           component: () => import("../views/agent/AgentList.vue"),

@@ -95,6 +95,15 @@ var toolHandlePolicies = map[string]toolHandlePolicy{
 	"web_search": {
 		sourceOutput: true,
 	},
+	// Long-term memory tools address the caller's own memories by slug, never
+	// by a durable chunk, document or knowledge-base identifier, so there is
+	// nothing to compact in their arguments. The empty policies are still
+	// required: silence would make the tools opt out of ID handling by
+	// accident and let raw identifiers reach the model if that ever changed.
+	"memory_search":    {},
+	"memory_read_page": {},
+	"memory_remember":  {},
+	"memory_forget":    {},
 	"wiki_read_page": {
 		sourceOutput: true,
 	},
