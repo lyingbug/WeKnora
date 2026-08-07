@@ -18,6 +18,9 @@ export const SETTINGS_SECTION_MIN_ROLE: Record<string, SettingsRoleKey> = {
   // backend guards PUT /memory/tenant-settings with Admin. Showing the entry to
   // anyone else would only produce a 403 on save.
   memory: 'admin',
+  // A person's own memory settings are theirs; the backend scopes them to the
+  // request principal, so any member of the workspace may open this.
+  'memory-personal': 'viewer',
   vectorstore: 'admin',
   parser: 'admin',
   storage: 'admin',

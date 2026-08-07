@@ -73,6 +73,13 @@ func (s *sessionService) AgentQA(
 		agentConfig.VLMModelID = req.CustomAgent.Config.VLMModelID
 	}
 
+	// Long-term memory brief. Agent mode has memory tools, but a tool only
+	// fires once the model decides to reach for it, and it cannot know it
+	// should until it already knows something about the person. A short brief
+	// up front is what makes the agent answer in the user's language and stay
+	// on their project without being told again.
+	agentConfig.MemoryBrief = s.buildAgentMemoryBrief(ctx, req)
+
 	// Resolve model ID using shared helper (AgentQA requires a model, so error if not found)
 	effectiveModelID, err := s.resolveChatModelID(ctx, req, agentConfig.KnowledgeBases, agentConfig.KnowledgeIDs)
 	if err != nil {

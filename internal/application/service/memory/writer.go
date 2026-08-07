@@ -43,6 +43,7 @@ type writerService struct {
 	enqueuer interfaces.TaskEnqueuer
 	settings interfaces.MemorySettingsService
 	service  *Service
+	anchors  *anchorResolver
 
 	// spaceLocks serialises consolidation per space. In standard deployments a
 	// Redis lock would additionally coordinate across processes; here a
@@ -64,6 +65,9 @@ func NewWriterService(
 	enqueuer interfaces.TaskEnqueuer,
 	settings interfaces.MemorySettingsService,
 	service *Service,
+	wiki interfaces.WikiPageService,
+	kbs interfaces.KnowledgeBaseService,
+	anchorRepo interfaces.MemoryAnchorRepository,
 ) interfaces.MemoryWriterService {
 	return &writerService{
 		spaces:   spaces,
@@ -75,6 +79,7 @@ func NewWriterService(
 		enqueuer: enqueuer,
 		settings: settings,
 		service:  service,
+		anchors:  newAnchorResolver(wiki, kbs, anchorRepo),
 	}
 }
 
@@ -127,7 +132,10 @@ func (w *writerService) ConsiderSession(ctx context.Context, req types.MemoryExt
 		debounce = 60 * time.Second
 	}
 	payload, err := json.Marshal(types.MemoryExtractPayload{
-		TenantID: req.TenantID, SpaceID: req.SpaceID, SessionID: req.SessionID,
+		TenantID:         req.TenantID,
+		SpaceID:          req.SpaceID,
+		SessionID:        req.SessionID,
+		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
 	})
 	if err != nil {
 		return
@@ -200,7 +208,8 @@ User messages from this conversation:
 %s`
 
 // Extract runs one extraction window.
-func (w *writerService) Extract(ctx context.Context, tenantID uint64, spaceID, sessionID string) error {
+func (w *writerService) Extract(ctx context.Context, req types.MemoryExtractPayload) error {
+	tenantID, spaceID, sessionID := req.TenantID, req.SpaceID, req.SessionID
 	space, err := w.spaces.GetByID(ctx, tenantID, spaceID)
 	if err != nil {
 		return err
@@ -238,7 +247,7 @@ func (w *writerService) Extract(ctx context.Context, tenantID uint64, spaceID, s
 
 	// Consolidation is a separate job so a slow merge cannot make the
 	// extraction task time out and retry the model call.
-	w.scheduleConsolidation(ctx, tenantID, spaceID)
+	w.scheduleConsolidation(ctx, tenantID, spaceID, req.KnowledgeBaseIDs)
 	return nil
 }
 
@@ -425,8 +434,12 @@ func trimStrings(values []string, maxItems, maxRunes int) []string {
 // Consolidation
 // ---------------------------------------------------------------------------
 
-func (w *writerService) scheduleConsolidation(ctx context.Context, tenantID uint64, spaceID string) {
-	payload, err := json.Marshal(types.MemoryConsolidatePayload{TenantID: tenantID, SpaceID: spaceID})
+func (w *writerService) scheduleConsolidation(
+	ctx context.Context, tenantID uint64, spaceID string, knowledgeBaseIDs []string,
+) {
+	payload, err := json.Marshal(types.MemoryConsolidatePayload{
+		TenantID: tenantID, SpaceID: spaceID, KnowledgeBaseIDs: knowledgeBaseIDs,
+	})
 	if err != nil {
 		return
 	}
@@ -446,7 +459,8 @@ func (w *writerService) scheduleConsolidation(ctx context.Context, tenantID uint
 // When review is required this stops after validation and leaves the notes in
 // the inbox: the user decides what becomes a memory. That is the default,
 // because trust in this feature is built by asking first.
-func (w *writerService) Consolidate(ctx context.Context, tenantID uint64, spaceID string) error {
+func (w *writerService) Consolidate(ctx context.Context, req types.MemoryConsolidatePayload) error {
+	tenantID, spaceID := req.TenantID, req.SpaceID
 	unlock := w.lockSpace(spaceID)
 	defer unlock()
 
@@ -476,15 +490,22 @@ func (w *writerService) Consolidate(ctx context.Context, tenantID uint64, spaceI
 		Space:    space,
 	}
 	for _, note := range pending {
-		if err := w.consolidateNote(ctx, sc, note); err != nil {
+		page, err := w.consolidateNote(ctx, sc, note)
+		if err != nil {
 			logger.Warnf(ctx, "memory: failed to consolidate note %s: %v", note.ID, err)
+			continue
 		}
+		// Anchor resolution runs after the page exists, because an anchor is a
+		// statement about a memory and needs one to point at.
+		w.anchors.resolve(ctx, tenantID, spaceID, page, note, req.KnowledgeBaseIDs, settings)
 	}
 	return nil
 }
 
 // consolidateNote merges one observation into the page graph.
-func (w *writerService) consolidateNote(ctx context.Context, sc *scope, note *types.MemoryNote) error {
+func (w *writerService) consolidateNote(
+	ctx context.Context, sc *scope, note *types.MemoryNote,
+) (*types.MemoryPage, error) {
 	slug := BuildMemorySlug(note.NoteType, subjectOrStatement(note))
 
 	existing, err := w.pages.GetBySlug(ctx, sc.Space.ID, slug)
@@ -502,13 +523,18 @@ func (w *writerService) consolidateNote(ctx context.Context, sc *scope, note *ty
 		EditSource: types.MemoryEditSourcePipeline,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	page.NoteRefs.Add(note.ID)
 	if err := w.pages.Update(ctx, page, 0); err != nil {
-		return err
+		return nil, err
 	}
-	return w.notes.UpdateStatus(ctx, sc.Space.ID, note.ID, types.MemoryNoteStatusMerged, page.ID)
+	if err := w.notes.UpdateStatus(
+		ctx, sc.Space.ID, note.ID, types.MemoryNoteStatusMerged, page.ID,
+	); err != nil {
+		return nil, err
+	}
+	return page, nil
 }
 
 // mergeIntoPage reconciles a new observation with an existing memory on the
@@ -520,7 +546,7 @@ func (w *writerService) consolidateNote(ctx context.Context, sc *scope, note *ty
 // can be reverted.
 func (w *writerService) mergeIntoPage(
 	ctx context.Context, sc *scope, page *types.MemoryPage, note *types.MemoryNote,
-) error {
+) (*types.MemoryPage, error) {
 	if types.NormalizeStatement(page.Summary) == types.NormalizeStatement(note.Statement) {
 		// Same thing said twice: reinforce rather than rewrite.
 		page.Strength = 1
@@ -529,9 +555,14 @@ func (w *writerService) mergeIntoPage(
 		now := time.Now()
 		page.LastSeenAt = &now
 		if err := w.pages.Update(ctx, page, 0); err != nil {
-			return err
+			return nil, err
 		}
-		return w.notes.UpdateStatus(ctx, sc.Space.ID, note.ID, types.MemoryNoteStatusMerged, page.ID)
+		if err := w.notes.UpdateStatus(
+			ctx, sc.Space.ID, note.ID, types.MemoryNoteStatusMerged, page.ID,
+		); err != nil {
+			return nil, err
+		}
+		return page, nil
 	}
 
 	// A different statement about the same subject supersedes the old one. The
@@ -546,13 +577,18 @@ func (w *writerService) mergeIntoPage(
 		EditSource: types.MemoryEditSourcePipeline,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	updated.NoteRefs.Add(note.ID)
 	if err := w.pages.Update(ctx, updated, 0); err != nil {
-		return err
+		return nil, err
 	}
-	return w.notes.UpdateStatus(ctx, sc.Space.ID, note.ID, types.MemoryNoteStatusMerged, updated.ID)
+	if err := w.notes.UpdateStatus(
+		ctx, sc.Space.ID, note.ID, types.MemoryNoteStatusMerged, updated.ID,
+	); err != nil {
+		return nil, err
+	}
+	return updated, nil
 }
 
 func subjectOrStatement(note *types.MemoryNote) string {
@@ -709,10 +745,41 @@ func (w *writerService) Decay(ctx context.Context, tenantID uint64, spaceID stri
 	}
 
 	w.enforceCapacity(ctx, spaceID, settings)
+	w.enforceRetention(ctx, spaceID, settings)
 	if archived > 0 {
 		logger.Infof(ctx, "memory: archived %d faded memories in space %s", archived, spaceID)
 	}
 	return nil
+}
+
+// enforceRetention honours the configured retention window.
+//
+// This is the one place that deletes rather than archives, and it only runs when
+// an operator has asked for it: both knobs default to 0, meaning "keep archived
+// memories indefinitely". A compliance regime that requires data to disappear
+// needs an actual delete, but nobody should get one by accident.
+func (w *writerService) enforceRetention(
+	ctx context.Context, spaceID string, settings types.MemorySettings,
+) {
+	days := settings.PurgeArchivedAfterDays
+	if days <= 0 {
+		// Falling back to the overall retention window keeps a single setting
+		// meaningful for operators who only want to express "keep nothing older
+		// than N days" without thinking about archival as a separate stage.
+		days = settings.RetentionDays
+	}
+	if days <= 0 {
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	purged, err := w.pages.PurgeArchivedBefore(ctx, spaceID, cutoff, 200)
+	if err != nil {
+		logger.Warnf(ctx, "memory: retention purge failed for space %s: %v", spaceID, err)
+		return
+	}
+	if purged > 0 {
+		logger.Infof(ctx, "memory: purged %d archived memories past retention in space %s", purged, spaceID)
+	}
 }
 
 // enforceCapacity archives the weakest memories once a space is over its cap.

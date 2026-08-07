@@ -53,7 +53,7 @@ func (h *TaskHandler) handleExtract(ctx context.Context, task *asynq.Task) error
 		return nil
 	}
 	logger.Infof(ctx, "memory: extracting for space %s session %s", payload.SpaceID, payload.SessionID)
-	return h.writer.Extract(ctx, payload.TenantID, payload.SpaceID, payload.SessionID)
+	return h.writer.Extract(ctx, payload)
 }
 
 func (h *TaskHandler) handleConsolidate(ctx context.Context, task *asynq.Task) error {
@@ -64,7 +64,7 @@ func (h *TaskHandler) handleConsolidate(ctx context.Context, task *asynq.Task) e
 	if payload.SpaceID == "" {
 		return nil
 	}
-	return h.writer.Consolidate(ctx, payload.TenantID, payload.SpaceID)
+	return h.writer.Consolidate(ctx, payload)
 }
 
 func (h *TaskHandler) handleDecay(ctx context.Context, task *asynq.Task) error {

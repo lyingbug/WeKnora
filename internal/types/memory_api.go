@@ -475,6 +475,10 @@ type MemoryExtractTrigger struct {
 	TurnIndex int
 	// Explicit marks a user-initiated "remember this", which bypasses the gate.
 	Explicit bool
+	// KnowledgeBaseIDs are the knowledge bases the conversation was scoped to.
+	// Anchor resolution needs them: an entity name only means something relative
+	// to a particular wiki.
+	KnowledgeBaseIDs []string
 }
 
 // MemoryExplicitWriteRequest stores a memory the user asked for by hand.

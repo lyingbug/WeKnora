@@ -5927,7 +5927,6 @@ export default {
       memories: '记忆',
       inbox: '待确认',
       graph: '图谱',
-      settings: '设置',
     },
     stats: {
       active: '生效记忆',
@@ -5936,11 +5935,13 @@ export default {
       archived: '已归档',
     },
     actions: {
+      openSettings: '记忆设置',
       create: '新建记忆',
       export: '导出',
       forgetAll: '全部忘记',
     },
     disabled: {
+      openSettings: '前往设置',
       message: '长期记忆尚未为你的账号启用。可在系统设置中由工作空间管理员开启，你也可以在个人设置里随时关闭它。',
     },
     types: {
@@ -6042,7 +6043,17 @@ export default {
       coverage: '已点亮 {lit}/{total}（{percent}%）',
       coverageHint: '你接触过的页面占知识库的比例。',
     },
+    agentSettings: {
+      readEnabled: '使用长期记忆',
+      readEnabledDesc: '让这个智能体在回答时读取用户的长期记忆。关掉后它只写不读。',
+      injectionBudget: '记忆注入预算（token）',
+      injectionBudgetDesc: '这个智能体最多让记忆占用多少上下文。工作空间设了更小的值时以更小的为准。',
+      writeEnabled: '允许写入记忆',
+      writeEnabledDesc: '关掉后与这个智能体的对话不会产生任何记忆。记住什么、允许记哪几类，由用户在个人设置里决定。',
+    },
     settings: {
+      personalTitle: '长期记忆',
+      workspaceTitle: '长期记忆策略',
       showAdvanced: '显示全部设置',
       save: '保存',
       saved: '设置已保存',
@@ -6122,8 +6133,6 @@ export default {
         'memory.recall.max_items': { label: '单次条数上限', help: '一轮对话最多注入多少条记忆。' },
         'memory.recall.injection_token_budget': { label: '注入 token 预算', help: '记忆占用的上下文上限，超出按优先级截断。' },
         'memory.recall.timeout_ms': { label: '召回超时（毫秒）', help: '超时直接跳过，绝不拖慢回答。' },
-        'memory.recall.show_used_memories': { label: '显示本次用到的记忆', help: '在回答旁展示这一轮实际注入了哪些记忆。' },
-        'memory.recall.cite_memories': { label: '回答中引用记忆', help: '让回答可以指明依据的是哪条记忆。' },
         'memory.boost.enabled': { label: '个性化召回加权', help: '默认关闭：开启前建议先在你的场景里评测。' },
         'memory.boost.factor': { label: '加权系数', help: '锚定过的检索结果得分乘以该系数。' },
         'memory.anchor.runtime_enabled': { label: '自动记录接触', help: '回答引用了哪些 Wiki 页就记一条锚点，零模型开销。' },
@@ -6149,8 +6158,6 @@ export default {
         'memory.privacy.forget_enabled': { label: '允许删除', help: '允许成员删除自己的记忆。' },
         'memory.insights.enabled': { label: '启用洞察', help: '基于匿名聚合发现知识库缺口。' },
         'memory.insights.k_anonymity': { label: 'k-匿名阈值', help: '少于这么多人接触过的条目不会展示。' },
-        'memory.insights.member_coverage_visible': { label: '公开我的掌握度', help: '授权管理员查看你在知识库上的覆盖率。' },
-        'memory.insights.auto_file_wiki_issues': { label: '自动提 Wiki 问题', help: '发现内容缺口时自动创建 Wiki 问题单。' },
       },
     },
     errors: {

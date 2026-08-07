@@ -517,14 +517,20 @@ type MemoryExtractPayload struct {
 	SpaceID   string `json:"space_id"`
 	SessionID string `json:"session_id"`
 	Language  string `json:"language,omitempty"`
+	// KnowledgeBaseIDs carries the conversation's retrieval scope through to
+	// consolidation, where the extractor's anchor candidates are resolved
+	// against those wikis. An entity name only means something relative to a
+	// particular knowledge base.
+	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty"`
 }
 
 // MemoryConsolidatePayload asks the writer to fold a space's pending
 // observations into pages.
 type MemoryConsolidatePayload struct {
 	TracingContext
-	TenantID uint64 `json:"tenant_id"`
-	SpaceID  string `json:"space_id"`
+	TenantID         uint64   `json:"tenant_id"`
+	SpaceID          string   `json:"space_id"`
+	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty"`
 }
 
 // MemoryDecayPayload sweeps one space, or every space when SpaceID is empty.

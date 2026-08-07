@@ -5923,10 +5923,11 @@ export default {
   memory: {
     title: 'My memory',
     subtitle: 'What WeKnora remembers about you: your role, your preferences, what you are working on, the conclusions you reached and the questions you left open. Everything here can be read, edited and deleted.',
-    tabs: { memories: 'Memories', inbox: 'To review', graph: 'Graph', settings: 'Settings' },
+    tabs: { memories: 'Memories', inbox: 'To review', graph: 'Graph' },
     stats: { active: 'Active', pending: 'To review', anchors: 'Anchors', archived: 'Archived' },
-    actions: { create: 'New memory', export: 'Export', forgetAll: 'Forget everything' },
+    actions: { openSettings: 'Memory settings', create: 'New memory', export: 'Export', forgetAll: 'Forget everything' },
     disabled: {
+      openSettings: 'Open settings',
       message: 'Long-term memory is not enabled for your account. A workspace administrator can turn it on in system settings, and you can switch it off for yourself at any time.',
     },
     types: {
@@ -6023,7 +6024,17 @@ export default {
       coverage: '{lit}/{total} lit ({percent}%)',
       coverageHint: 'How much of this knowledge base you have engaged with.',
     },
+    agentSettings: {
+      readEnabled: 'Use long-term memory',
+      readEnabledDesc: 'Let this agent read the user\'s long-term memory when answering. Off means it writes but never reads.',
+      injectionBudget: 'Injection budget (tokens)',
+      injectionBudgetDesc: 'How much context memory may occupy for this agent. A smaller workspace budget still wins.',
+      writeEnabled: 'Allow writing memories',
+      writeEnabledDesc: 'Off means conversations with this agent record nothing. What may be recorded, and of which kinds, stays the user\'s decision in their own settings.',
+    },
     settings: {
+      personalTitle: 'Long-term memory',
+      workspaceTitle: 'Memory policy',
       showAdvanced: 'Show all settings',
       save: 'Save',
       saved: 'Settings saved',
@@ -6103,8 +6114,6 @@ export default {
         'memory.recall.max_items': { label: 'Maximum memories per turn', help: 'How many memories may be injected at once.' },
         'memory.recall.injection_token_budget': { label: 'Token budget', help: 'Context memory may occupy; anything over is dropped by priority.' },
         'memory.recall.timeout_ms': { label: 'Recall timeout (ms)', help: 'Exceeding it skips memory rather than slowing the answer.' },
-        'memory.recall.show_used_memories': { label: 'Show which memories were used', help: 'Display the memories injected into each answer.' },
-        'memory.recall.cite_memories': { label: 'Cite memories in answers', help: 'Let answers point at the memory they relied on.' },
         'memory.boost.enabled': { label: 'Personalised ranking', help: 'Off by default: measure it in your own setting before turning it on.' },
         'memory.boost.factor': { label: 'Boost factor', help: 'Score multiplier for results you have engaged with.' },
         'memory.anchor.runtime_enabled': { label: 'Record what I read', help: 'Note which wiki pages an answer cited. Costs no model call.' },
@@ -6130,8 +6139,6 @@ export default {
         'memory.privacy.forget_enabled': { label: 'Allow deletion', help: 'Let members delete their own memories.' },
         'memory.insights.enabled': { label: 'Enable insights', help: 'Surface knowledge-base gaps from anonymised aggregates.' },
         'memory.insights.k_anonymity': { label: 'k-anonymity threshold', help: 'Entries fewer than this many people engaged with are suppressed.' },
-        'memory.insights.member_coverage_visible': { label: 'Share my coverage', help: 'Let administrators see how much of a knowledge base you have covered.' },
-        'memory.insights.auto_file_wiki_issues': { label: 'File wiki issues automatically', help: 'Raise a wiki issue when a content gap is detected.' },
       },
     },
     errors: {

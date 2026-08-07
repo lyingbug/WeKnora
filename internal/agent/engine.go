@@ -112,6 +112,9 @@ func (e *AgentEngine) systemPromptOptions(ctx context.Context) *BuildSystemPromp
 	if e.skillsManager != nil && e.skillsManager.IsEnabled() {
 		opts.SkillsMetadata = e.skillsManager.GetAllMetadata()
 	}
+	if e.config != nil {
+		opts.MemoryBrief = e.config.MemoryBrief
+	}
 	return opts
 }
 

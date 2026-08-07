@@ -1,111 +1,115 @@
 <template>
-  <div class="memory-center">
-    <header class="memory-center__header">
-      <div class="memory-center__title">
-        <h1>{{ t('memory.title') }}</h1>
-        <p>{{ t('memory.subtitle') }}</p>
+  <div class="memory-center-container">
+    <div class="memory-center-content">
+      <div class="header" style="--wails-draggable: drag">
+        <div class="header-title" style="--wails-draggable: drag">
+          <div class="title-row" style="--wails-draggable: drag">
+            <h2 style="--wails-draggable: drag">{{ t('memory.title') }}</h2>
+
+            <t-tooltip v-if="!disabled" :content="t('memory.actions.create')" placement="bottom">
+              <t-button variant="text" theme="default" size="small" class="header-action-btn"
+                style="--wails-draggable: no-drag" @click="openCreate">
+                <template #icon><t-icon name="add" /></template>
+              </t-button>
+            </t-tooltip>
+
+            <t-tooltip v-if="!disabled" :content="t('memory.actions.export')" placement="bottom">
+              <t-button variant="text" theme="default" size="small" class="header-action-btn"
+                style="--wails-draggable: no-drag" @click="exportMemory">
+                <template #icon><t-icon name="download" /></template>
+              </t-button>
+            </t-tooltip>
+
+            <!-- Settings live where the layer they belong to lives: a person's
+                 own preferences under account settings, the workspace policy
+                 under workspace settings, and the per-agent overrides in the
+                 agent editor. This page only links to them. -->
+            <t-tooltip :content="t('memory.actions.openSettings')" placement="bottom">
+              <t-button variant="text" theme="default" size="small" class="header-action-btn"
+                style="--wails-draggable: no-drag" @click="openSettings">
+                <template #icon><t-icon name="setting" /></template>
+              </t-button>
+            </t-tooltip>
+
+            <t-tooltip v-if="!disabled" :content="t('memory.actions.forgetAll')" placement="bottom">
+              <t-button variant="text" theme="danger" size="small" class="header-action-btn"
+                style="--wails-draggable: no-drag" @click="confirmForgetAll">
+                <template #icon><t-icon name="delete" /></template>
+              </t-button>
+            </t-tooltip>
+          </div>
+          <p class="header-subtitle" style="--wails-draggable: drag">{{ t('memory.subtitle') }}</p>
+        </div>
+
+        <div v-if="!disabled" class="header-meta">
+          <span>{{ t('memory.stats.active') }} <b>{{ stats.active_pages }}</b></span>
+          <span>{{ t('memory.stats.anchors') }} <b>{{ stats.total_anchors }}</b></span>
+          <span v-if="stats.archived_pages > 0">
+            {{ t('memory.stats.archived') }} <b>{{ stats.archived_pages }}</b>
+          </span>
+        </div>
       </div>
-      <div class="memory-center__actions">
-        <t-button variant="outline" @click="exportMemory">
-          <template #icon><t-icon name="download" /></template>
-          {{ t('memory.actions.export') }}
-        </t-button>
-        <t-button theme="danger" variant="outline" @click="confirmForgetAll">
-          <template #icon><t-icon name="delete" /></template>
-          {{ t('memory.actions.forgetAll') }}
-        </t-button>
-        <t-button theme="primary" @click="openCreate">
-          <template #icon><t-icon name="add" /></template>
-          {{ t('memory.actions.create') }}
-        </t-button>
-      </div>
-    </header>
 
-    <t-alert
-      v-if="disabled"
-      theme="info"
-      class="memory-center__notice"
-      :message="t('memory.disabled.message')"
-    />
-
-    <div v-else class="memory-center__body">
-      <div class="memory-center__stats">
-        <div class="memory-stat">
-          <span class="memory-stat__value">{{ stats.active_pages }}</span>
-          <span class="memory-stat__label">{{ t('memory.stats.active') }}</span>
-        </div>
-        <div class="memory-stat">
-          <span class="memory-stat__value">{{ stats.pending_notes }}</span>
-          <span class="memory-stat__label">{{ t('memory.stats.pending') }}</span>
-        </div>
-        <div class="memory-stat">
-          <span class="memory-stat__value">{{ stats.total_anchors }}</span>
-          <span class="memory-stat__label">{{ t('memory.stats.anchors') }}</span>
-        </div>
-        <div class="memory-stat">
-          <span class="memory-stat__value">{{ stats.archived_pages }}</span>
-          <span class="memory-stat__label">{{ t('memory.stats.archived') }}</span>
-        </div>
-      </div>
-
-      <t-tabs v-model="activeTab" class="memory-center__tabs">
-        <t-tab-panel value="memories" :label="t('memory.tabs.memories')">
-          <MemoryList
-            :key="`list-${refreshKey}`"
-            @edit="openEdit"
-            @changed="refreshStats"
-          />
-        </t-tab-panel>
-
-        <t-tab-panel value="inbox">
-          <template #label>
-            <t-badge :count="stats.pending_notes" :max-count="99" :offset="[-6, 2]">
-              {{ t('memory.tabs.inbox') }}
-            </t-badge>
+      <div class="memory-center-main">
+        <t-alert v-if="disabled" theme="info" :message="t('memory.disabled.message')">
+          <template #operation>
+            <t-link theme="primary" hover="color" @click="openSettings">
+              {{ t('memory.disabled.openSettings') }}
+            </t-link>
           </template>
-          <MemoryInbox :key="`inbox-${refreshKey}`" @changed="refreshAll" />
-        </t-tab-panel>
+        </t-alert>
 
-        <t-tab-panel value="graph" :label="t('memory.tabs.graph')">
-          <MemoryGraphPanel :key="`graph-${refreshKey}`" @open="openBySlug" />
-        </t-tab-panel>
+        <template v-else>
+          <t-tabs v-model="activeTab" class="memory-tabs">
+            <t-tab-panel value="memories" :label="t('memory.tabs.memories')">
+              <MemoryList :key="`list-${refreshKey}`" @edit="openEdit" @changed="refreshStats" />
+            </t-tab-panel>
 
-        <t-tab-panel value="settings" :label="t('memory.tabs.settings')">
-          <MemorySettingsPanel level="user" @saved="refreshAll" />
-        </t-tab-panel>
-      </t-tabs>
+            <t-tab-panel value="inbox">
+              <template #label>
+                <t-badge :count="stats.pending_notes" :max-count="99" :offset="[-6, 2]">
+                  {{ t('memory.tabs.inbox') }}
+                </t-badge>
+              </template>
+              <MemoryInbox :key="`inbox-${refreshKey}`" @changed="refreshAll" />
+            </t-tab-panel>
+
+            <t-tab-panel value="graph" :label="t('memory.tabs.graph')">
+              <MemoryGraphPanel :key="`graph-${refreshKey}`" @open="openBySlug" />
+            </t-tab-panel>
+          </t-tabs>
+        </template>
+      </div>
     </div>
 
-    <MemoryEditorDialog
-      v-model:visible="editorVisible"
-      :slug="editorSlug"
-      @saved="onEditorSaved"
-    />
+    <MemoryEditorDialog v-model:visible="editorVisible" :slug="editorSlug" @saved="onEditorSaved" />
   </div>
 </template>
 
 <script setup lang="ts">
 /**
- * The memory centre.
+ * The memory centre: where a person reads, edits and prunes what is remembered
+ * about them.
  *
- * Everything a person can do with their own memory lives on one page, because
- * the feature only earns trust if "what does it know about me, and how do I
- * change it" has a single obvious answer. Four tabs, in the order people ask
- * the questions: what is remembered, what is waiting for my approval, how it
- * all connects, and what it is allowed to do.
+ * Explicitly NOT where memory is configured. Settings belong to the layer that
+ * owns them — personal preferences under account settings, workspace policy
+ * under workspace settings, per-agent overrides in the agent editor — and
+ * duplicating them here would give the same value two homes and leave the user
+ * guessing which one wins.
  */
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
 
 import { getMemorySpace, forgetMemories, exportMemoryUrl, type MemoryStats } from '@/api/memory'
 import MemoryList from './components/MemoryList.vue'
 import MemoryInbox from './components/MemoryInbox.vue'
 import MemoryGraphPanel from './components/MemoryGraphPanel.vue'
-import MemorySettingsPanel from './components/MemorySettingsPanel.vue'
 import MemoryEditorDialog from './components/MemoryEditorDialog.vue'
 
 const { t } = useI18n()
+const router = useRouter()
 
 const activeTab = ref('memories')
 const disabled = ref(false)
@@ -130,7 +134,7 @@ async function refreshStats() {
     disabled.value = false
   } catch (error: any) {
     // A 404 here is the ordinary "memory is switched off for me" state, not a
-    // fault, so it gets an explanation rather than an error toast.
+    // fault, so it gets an explanation and a way to change it.
     if (error?.response?.status === 404) {
       disabled.value = true
       return
@@ -164,6 +168,10 @@ function onEditorSaved() {
   refreshAll()
 }
 
+function openSettings() {
+  router.push({ path: '/platform/settings', query: { section: 'memory-personal' } })
+}
+
 function exportMemory() {
   window.open(exportMemoryUrl(), '_blank')
 }
@@ -193,79 +201,95 @@ onMounted(refreshStats)
 </script>
 
 <style scoped lang="less">
-.memory-center {
-  padding: 24px 32px 40px;
-  max-width: 1240px;
-  margin: 0 auto;
+/* Mirrors the shell used by AgentList and KnowledgeBaseList: fill the content
+   area, no max-width or centering, padding on the header and main rather than
+   the container so a scrollbar sits flush with the right edge. */
+.memory-center-container {
+  margin: 0;
+  height: 100%;
+  box-sizing: border-box;
+  flex: 1;
+  display: flex;
+  position: relative;
+  min-height: 0;
+}
 
-  &__header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
-    margin-bottom: 20px;
-  }
+.memory-center-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 0 0 28px;
+  overflow: hidden;
+}
 
-  &__title {
-    h1 {
-      margin: 0;
-      font-size: 22px;
-      font-weight: 600;
-      color: var(--td-text-color-primary, #000);
-    }
+.memory-center-main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 28px 8px 0;
+}
 
-    p {
-      margin: 6px 0 0;
-      font-size: 13px;
-      color: var(--td-text-color-secondary, #666);
-      max-width: 620px;
-      line-height: 1.6;
-    }
-  }
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-right: 28px;
+}
 
-  &__actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
+.header-title {
+  min-width: 0;
+}
 
-  &__notice {
-    margin-top: 12px;
-  }
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 
-  &__stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  &__tabs {
-    background: var(--td-bg-color-container, #fff);
-    border-radius: 10px;
+  h2 {
+    margin: 0 6px 0 0;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 28px;
+    color: var(--td-text-color-primary);
   }
 }
 
-.memory-stat {
+.header-action-btn {
+  color: var(--td-text-color-placeholder);
+
+  &:hover {
+    color: var(--td-brand-color);
+  }
+}
+
+.header-subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--td-text-color-secondary);
+  max-width: 720px;
+}
+
+/* Counts belong beside the title as a quiet line, not as a row of cards: no
+   other list page in the app has stat cards, and four of them pushed the actual
+   memories below the fold. */
+.header-meta {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 14px 16px;
-  background: var(--td-bg-color-container, #fff);
-  border: 1px solid var(--td-component-stroke, #e7e7e7);
-  border-radius: 10px;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
 
-  &__value {
-    font-size: 22px;
+  b {
     font-weight: 600;
-    line-height: 1.2;
-    color: var(--td-text-color-primary, #000);
+    color: var(--td-text-color-primary);
   }
+}
 
-  &__label {
-    font-size: 12px;
-    color: var(--td-text-color-secondary, #888);
-  }
+.memory-tabs {
+  background: transparent;
 }
 </style>

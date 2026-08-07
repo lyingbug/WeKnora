@@ -298,6 +298,9 @@ type BuildSystemPromptOptions struct {
 	SkillsMetadata []*skills.SkillMetadata
 	Language       string         // User language name for {{language}} placeholder (e.g. "Chinese (Simplified)")
 	Config         *config.Config // Config for reading prompt templates; nil falls back to hardcoded defaults
+	// MemoryBrief is a short, already-sanitised summary of what is known about
+	// this user. Empty when long-term memory is off or has nothing to say.
+	MemoryBrief string
 }
 
 // BuildSystemPrompt builds the progressive RAG system prompt
@@ -347,6 +350,18 @@ func BuildSystemPromptWithOptions(
 	// Append skills metadata if available (Level 1 - Progressive Disclosure)
 	if options != nil && len(options.SkillsMetadata) > 0 {
 		basePrompt += formatSkillsMetadata(options.SkillsMetadata)
+	}
+
+	// Append what is already known about this user.
+	//
+	// The agent has memory tools, but a tool only fires if the model decides to
+	// reach for it — and it has no way to know it should until it already knows
+	// something about the person. A short brief up front is what makes an agent
+	// answer in the user's language and stay on their project without being
+	// asked twice. It is appended last, after skills, and framed as background
+	// rather than instruction for the same reason the RAG path does.
+	if options != nil && strings.TrimSpace(options.MemoryBrief) != "" {
+		basePrompt += "\n\n" + options.MemoryBrief
 	}
 
 	return basePrompt

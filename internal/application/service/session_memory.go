@@ -4,9 +4,15 @@ import (
 	"context"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/application/service/memory"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+// agentMemoryBriefTokens caps the background line in an agent system prompt.
+// Kept well below the RAG injection budget: an agent turn already carries tool
+// schemas and a long instruction template, and it can fetch detail on demand.
+const agentMemoryBriefTokens = 200
 
 // Long-term memory hooks on the chat path.
 //
@@ -166,5 +172,66 @@ func (s *sessionService) considerMemoryExtraction(
 		Settings:  chatManage.MemorySettings,
 		UserText:  chatManage.Query,
 		TurnIndex: turnIndex,
+		// The turn's retrieval scope travels with the trigger so consolidation
+		// can resolve entity names the extractor proposed against the right
+		// wikis. Without it the candidates are collected and never used.
+		KnowledgeBaseIDs: chatManage.KnowledgeBaseIDs,
 	})
+}
+
+// buildAgentMemoryBrief renders the background line an agent receives.
+//
+// Separate from the RAG recall path because the shape of the need differs: the
+// RAG prompt wants the memories relevant to this question, while an agent wants
+// to know who it is talking to and can fetch the rest with memory_search. So the
+// brief carries only the resident memories and open questions, under a much
+// tighter budget.
+//
+// Returns "" on any problem. A missing brief costs a slightly less personal
+// answer; a failure here must not cost the answer itself.
+func (s *sessionService) buildAgentMemoryBrief(ctx context.Context, req *types.QARequest) string {
+	if s.memoryService == nil || s.memorySettings == nil || s.memoryRecall == nil {
+		return ""
+	}
+
+	space, err := s.memoryService.EnsureSpace(ctx)
+	if err != nil || space == nil {
+		return ""
+	}
+
+	opts := types.MemorySettingsResolveOptions{
+		TenantID:   req.Session.TenantID,
+		SpaceID:    space.ID,
+		SpacePatch: space.Config,
+	}
+	if userID, ok := types.UserIDFromContext(ctx); ok {
+		opts.UserID = userID
+	}
+	if req.CustomAgent != nil {
+		opts.AgentID = req.CustomAgent.ID
+		opts.AgentPatch = req.CustomAgent.Config.Memory
+	}
+	resolution, err := s.memorySettings.Resolve(ctx, opts)
+	if err != nil || !resolution.Settings.Enabled || !resolution.Settings.RecallEnabled {
+		return ""
+	}
+
+	result := s.memoryRecall.Recall(ctx, types.MemoryRecallRequest{
+		TenantID:         req.Session.TenantID,
+		SpaceID:          space.ID,
+		Query:            req.Query,
+		Settings:         resolution.Settings,
+		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
+		Language:         types.LanguageNameFromContext(ctx),
+	})
+	if result == nil {
+		return ""
+	}
+
+	brief := memory.FormatMemoryBrief(result, types.LanguageNameFromContext(ctx), agentMemoryBriefTokens)
+	if brief != "" {
+		logger.Infof(ctx, "memory: agent brief attached for session %s (%d tokens)",
+			req.Session.ID, memory.EstimateTokens(brief))
+	}
+	return brief
 }

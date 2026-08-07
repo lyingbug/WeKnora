@@ -57,6 +57,10 @@ type MemoryPageRepository interface {
 	GetRevision(ctx context.Context, spaceID, pageID string, version int) (*types.MemoryPageRevision, error)
 	// ListForDecay returns active pages whose strength should be recomputed.
 	ListForDecay(ctx context.Context, spaceID string, limit int) ([]*types.MemoryPage, error)
+	// PurgeArchivedBefore permanently removes archived pages last touched before
+	// the cutoff. This is the only path that deletes rather than archives, and it
+	// exists so a retention policy can actually be honoured.
+	PurgeArchivedBefore(ctx context.Context, spaceID string, before time.Time, limit int) (int64, error)
 }
 
 // MemoryNoteRepository persists extracted observations.
@@ -170,9 +174,10 @@ type MemoryWriterService interface {
 	// ConsiderSession applies the write-mode gate and enqueues extraction.
 	ConsiderSession(ctx context.Context, req types.MemoryExtractTrigger)
 	// Extract runs one extraction window. Called by the task worker.
-	Extract(ctx context.Context, tenantID uint64, spaceID, sessionID string) error
-	// Consolidate folds pending notes into pages. Called by the task worker.
-	Consolidate(ctx context.Context, tenantID uint64, spaceID string) error
+	Extract(ctx context.Context, req types.MemoryExtractPayload) error
+	// Consolidate folds pending notes into pages, resolving anchor candidates
+	// against the knowledge bases the conversation was scoped to.
+	Consolidate(ctx context.Context, req types.MemoryConsolidatePayload) error
 	// Decay applies strength decay, archival and retention to one space.
 	Decay(ctx context.Context, tenantID uint64, spaceID string) error
 	// DecayAll sweeps every active space; the scheduled entry point.

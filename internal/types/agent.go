@@ -72,6 +72,13 @@ type AgentConfig struct {
 	// preserving tool_call/tool_result pairs.
 	MaxContextTokens int `json:"max_context_tokens,omitempty"`
 
+	// MemoryBrief is a short, pre-sanitised summary of what long-term memory
+	// knows about this user, appended to the system prompt. Computed by the
+	// session layer, which is the only place that knows whose memory it is;
+	// keeping it a plain string means the agent runtime needs no memory
+	// dependency of its own.
+	MemoryBrief string `json:"-"`
+
 	// Whether to execute independent tool calls in parallel (default: false).
 	// When enabled and the LLM returns multiple tool calls, they run concurrently via errgroup.
 	ParallelToolCalls bool `json:"parallel_tool_calls,omitempty"`

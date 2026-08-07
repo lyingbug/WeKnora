@@ -132,8 +132,6 @@ const (
 	SettingMemoryRecallMaxItems      = "memory.recall.max_items"
 	SettingMemoryRecallTokenBudget   = "memory.recall.injection_token_budget"
 	SettingMemoryRecallTimeoutMs     = "memory.recall.timeout_ms"
-	SettingMemoryRecallShowUsed      = "memory.recall.show_used_memories"
-	SettingMemoryRecallCite          = "memory.recall.cite_memories"
 
 	SettingMemoryBoostEnabled = "memory.boost.enabled"
 	SettingMemoryBoostFactor  = "memory.boost.factor"
@@ -162,10 +160,8 @@ const (
 	SettingMemoryExportEnabled   = "memory.privacy.export_enabled"
 	SettingMemoryForgetEnabled   = "memory.privacy.forget_enabled"
 
-	SettingMemoryInsightsEnabled  = "memory.insights.enabled"
-	SettingMemoryInsightsKAnon    = "memory.insights.k_anonymity"
-	SettingMemoryInsightsCoverage = "memory.insights.member_coverage_visible"
-	SettingMemoryInsightsAutoFile = "memory.insights.auto_file_wiki_issues"
+	SettingMemoryInsightsEnabled = "memory.insights.enabled"
+	SettingMemoryInsightsKAnon   = "memory.insights.k_anonymity"
 )
 
 // Write modes, ordered from most to least restrictive.
@@ -357,16 +353,6 @@ var memorySettingDescriptors = []MemorySettingDescriptor{
 		Default: 300, Merge: mergeMin,
 		Levels: []string{MemoryLayerDeployment, MemoryLayerTenant}, Min: f64(50), Max: f64(5000),
 	},
-	{
-		Key: SettingMemoryRecallShowUsed, Group: MemoryGroupRecall, Kind: memoryKindBool,
-		Default: true, Merge: mergeAnd,
-		Levels: []string{MemoryLayerTenant, MemoryLayerUser},
-	},
-	{
-		Key: SettingMemoryRecallCite, Group: MemoryGroupRecall, Kind: memoryKindBool,
-		Default: true, Merge: mergeAnd,
-		Levels: []string{MemoryLayerTenant, MemoryLayerUser},
-	},
 
 	// -- Personalised ranking ----------------------------------------------
 	{
@@ -507,16 +493,6 @@ var memorySettingDescriptors = []MemorySettingDescriptor{
 		Key: SettingMemoryInsightsKAnon, Group: MemoryGroupInsights, Kind: memoryKindInt,
 		Default: 5, Merge: mergeMax,
 		Levels: []string{MemoryLayerTenant}, Min: f64(3), Max: f64(1000),
-	},
-	{
-		Key: SettingMemoryInsightsCoverage, Group: MemoryGroupInsights, Kind: memoryKindBool,
-		Default: false, Merge: mergeAnd,
-		Levels: []string{MemoryLayerUser},
-	},
-	{
-		Key: SettingMemoryInsightsAutoFile, Group: MemoryGroupInsights, Kind: memoryKindBool,
-		Default: false, Merge: mergeAnd,
-		Levels: []string{MemoryLayerTenant},
 	},
 }
 
@@ -993,8 +969,6 @@ type MemorySettings struct {
 	RecallMaxItems       int
 	InjectionTokenBudget int
 	RecallTimeoutMs      int
-	ShowUsedMemories     bool
-	CiteMemories         bool
 
 	BoostEnabled bool
 	BoostFactor  float64
@@ -1023,10 +997,8 @@ type MemorySettings struct {
 	ExportEnabled     bool
 	ForgetEnabled     bool
 
-	InsightsEnabled       bool
-	InsightsKAnonymity    int
-	MemberCoverageVisible bool
-	AutoFileWikiIssues    bool
+	InsightsEnabled    bool
+	InsightsKAnonymity int
 }
 
 // DefaultMemorySettings returns the settings with no layer applied.
@@ -1104,8 +1076,6 @@ func buildMemorySettings(values map[string]MemorySettingValue) MemorySettings {
 		RecallMaxItems:       intAt(values, SettingMemoryRecallMaxItems),
 		InjectionTokenBudget: intAt(values, SettingMemoryRecallTokenBudget),
 		RecallTimeoutMs:      intAt(values, SettingMemoryRecallTimeoutMs),
-		ShowUsedMemories:     boolAt(values, SettingMemoryRecallShowUsed),
-		CiteMemories:         boolAt(values, SettingMemoryRecallCite),
 
 		BoostEnabled: boolAt(values, SettingMemoryBoostEnabled),
 		BoostFactor:  floatAt(values, SettingMemoryBoostFactor),
@@ -1134,10 +1104,8 @@ func buildMemorySettings(values map[string]MemorySettingValue) MemorySettings {
 		ExportEnabled:     boolAt(values, SettingMemoryExportEnabled),
 		ForgetEnabled:     boolAt(values, SettingMemoryForgetEnabled),
 
-		InsightsEnabled:       boolAt(values, SettingMemoryInsightsEnabled),
-		InsightsKAnonymity:    intAt(values, SettingMemoryInsightsKAnon),
-		MemberCoverageVisible: boolAt(values, SettingMemoryInsightsCoverage),
-		AutoFileWikiIssues:    boolAt(values, SettingMemoryInsightsAutoFile),
+		InsightsEnabled:    boolAt(values, SettingMemoryInsightsEnabled),
+		InsightsKAnonymity: intAt(values, SettingMemoryInsightsKAnon),
 	}
 }
 

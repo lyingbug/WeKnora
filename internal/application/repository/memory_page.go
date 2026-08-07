@@ -352,6 +352,37 @@ func (r *memoryPageRepository) BumpHits(
 		}).Error
 }
 
+// PurgeArchivedBefore hard-deletes archived pages past their retention window.
+//
+// Bounded by limit and ordered oldest-first so a sweep on a large space makes
+// steady progress instead of taking one long write lock — which on Lite, with a
+// single writer connection, would block the chat path behind it.
+func (r *memoryPageRepository) PurgeArchivedBefore(
+	ctx context.Context, spaceID string, before time.Time, limit int,
+) (int64, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	var ids []string
+	if err := r.db.WithContext(ctx).
+		Model(&types.MemoryPage{}).
+		Where("space_id = ? AND status = ? AND updated_at < ?",
+			spaceID, types.MemoryPageStatusArchived, before).
+		Order("updated_at ASC").
+		Limit(limit).
+		Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := r.db.WithContext(ctx).
+		Unscoped().
+		Where("space_id = ? AND id IN ?", spaceID, ids).
+		Delete(&types.MemoryPage{})
+	return result.RowsAffected, result.Error
+}
+
 func (r *memoryPageRepository) ListRevisions(
 	ctx context.Context, spaceID, pageID string,
 ) ([]*types.MemoryPageRevision, error) {

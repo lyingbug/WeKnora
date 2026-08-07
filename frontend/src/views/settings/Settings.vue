@@ -114,7 +114,12 @@
                     <ChatHistorySettings />
                   </div>
 
-                  <!-- 长期记忆（工作空间策略） -->
+                  <!-- 长期记忆 · 个人设置 -->
+                  <div v-if="currentSection === 'memory-personal'" class="section">
+                    <MemorySettingsPanel level="user" />
+                  </div>
+
+                  <!-- 长期记忆 · 工作空间策略 -->
                   <div v-if="currentSection === 'memory'" class="section">
                     <MemorySettingsPanel level="tenant" />
                   </div>
@@ -332,7 +337,8 @@ const navItems = computed(() => {
     { key: 'models', icon: 'control-platform', label: t('settings.modelManagement') },
     { key: 'websearch', icon: 'search', label: t('settings.webSearchConfig') },
     { key: 'chathistory', icon: 'chat', label: t('chatHistorySettings.title') },
-    { key: 'memory', icon: 'lightbulb', label: t('memory.title') },
+    { key: 'memory-personal', icon: 'lightbulb', label: t('memory.settings.personalTitle') },
+    { key: 'memory', icon: 'lightbulb', label: t('memory.settings.workspaceTitle') },
     { key: 'vectorstore', icon: 'data-base', label: t('settings.vectorStoreEngine') },
     { key: 'parser', icon: 'file-search', label: t('settings.parserEngine') },
     { key: 'storage', icon: 'cloud', label: t('settings.storageEngine') },
@@ -367,12 +373,12 @@ const navGroups = computed<NavGroup[]>(() => {
     {
       key: 'account',
       label: t('settings.navGroups.account'),
-      items: pickItems(['general', 'userprofile']),
+      items: pickItems(['general', 'userprofile', 'memory-personal']),
     },
     {
       key: 'workspace',
       label: t('settings.navGroups.workspace'),
-      items: pickItems(['tenant', 'members', 'chathistory']),
+      items: pickItems(['tenant', 'members', 'chathistory', 'memory']),
     },
     {
       key: 'models_runtime',

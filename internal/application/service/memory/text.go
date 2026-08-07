@@ -318,3 +318,56 @@ func memoryBlockLabels(language string) memoryLabels {
 		open:       "Open questions:",
 	}
 }
+
+// FormatMemoryBrief renders the compact background line an agent gets in its
+// system prompt.
+//
+// Much shorter than the RAG block: an agent turn already carries tool schemas
+// and a long instruction template, and it can call memory_search when it needs
+// detail. The brief exists only so the agent starts out knowing who it is
+// talking to — their language, how they want to be answered, and what they are
+// working on — rather than having to discover that by asking.
+func FormatMemoryBrief(result *types.MemoryRecallResult, language string, maxTokens int) string {
+	if result == nil || result.IsEmpty() {
+		return ""
+	}
+	if maxTokens <= 0 {
+		maxTokens = 200
+	}
+	labels := memoryBlockLabels(language)
+
+	var b strings.Builder
+	b.WriteString(labels.header)
+	b.WriteString("\n")
+	if !result.Preference.IsZero() {
+		fmt.Fprintf(&b, "%s: %s\n", labels.preference, result.Preference.Describe())
+	}
+
+	// Only the residents make the brief. A memory that merely matched the
+	// current question is better fetched with memory_search, where it costs
+	// nothing until it is actually wanted.
+	for _, item := range result.Items {
+		if !item.Resident {
+			continue
+		}
+		line := fmt.Sprintf("  - %s\n", SanitizeForInjection(item.Text))
+		if EstimateTokens(b.String()+line) > maxTokens {
+			break
+		}
+		b.WriteString(line)
+	}
+	for _, item := range result.OpenQuestions {
+		line := fmt.Sprintf("  - %s %s\n", labels.open, SanitizeForInjection(item.Text))
+		if EstimateTokens(b.String()+line) > maxTokens {
+			break
+		}
+		b.WriteString(line)
+	}
+
+	brief := strings.TrimRight(b.String(), "\n")
+	// A header with nothing under it is noise; drop the whole thing.
+	if !strings.Contains(brief, "\n") {
+		return ""
+	}
+	return brief
+}
