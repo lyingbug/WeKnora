@@ -479,6 +479,13 @@ type MemoryExtractTrigger struct {
 	// Anchor resolution needs them: an entity name only means something relative
 	// to a particular wiki.
 	KnowledgeBaseIDs []string
+	// ChatModelID is the model this turn used. Extraction falls back to it when
+	// no dedicated extraction model is configured, which is what the setting's
+	// own description promises.
+	ChatModelID string
+	// MessageID is the user message the trigger came from, kept so an explicit
+	// "remember this" has the same evidence trail as an extracted memory.
+	MessageID string
 }
 
 // MemoryExplicitWriteRequest stores a memory the user asked for by hand.

@@ -211,6 +211,11 @@ func (s *sessionService) AgentQA(
 			},
 		})
 	}
+
+	// The turn is over, so decide whether anything the user said is worth
+	// keeping. Best-effort: a memory that fails to store must not fail the answer.
+	s.considerAgentMemoryExtraction(ctx, req, effectiveModelID, len(llmContext)/2+1)
+
 	// Return empty - events will be handled by Handler via EventBus subscription
 	return nil
 }

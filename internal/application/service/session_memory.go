@@ -171,7 +171,11 @@ func (s *sessionService) considerMemoryExtraction(
 		SessionID: chatManage.SessionID,
 		Settings:  chatManage.MemorySettings,
 		UserText:  chatManage.Query,
+		MessageID: chatManage.UserMessageID,
 		TurnIndex: turnIndex,
+		// Extraction falls back to the conversation's model when no dedicated
+		// one is configured, so the turn's model travels with the trigger.
+		ChatModelID: chatManage.ChatModelID,
 		// The turn's retrieval scope travels with the trigger so consolidation
 		// can resolve entity names the extractor proposed against the right
 		// wikis. Without it the candidates are collected and never used.
@@ -190,13 +194,48 @@ func (s *sessionService) considerMemoryExtraction(
 // Returns "" on any problem. A missing brief costs a slightly less personal
 // answer; a failure here must not cost the answer itself.
 func (s *sessionService) buildAgentMemoryBrief(ctx context.Context, req *types.QARequest) string {
-	if s.memoryService == nil || s.memorySettings == nil || s.memoryRecall == nil {
+	if s.memoryRecall == nil {
+		return ""
+	}
+	space, settings, ok := s.resolveAgentMemory(ctx, req)
+	if !ok || !settings.RecallEnabled {
 		return ""
 	}
 
+	result := s.memoryRecall.Recall(ctx, types.MemoryRecallRequest{
+		TenantID:         req.Session.TenantID,
+		SpaceID:          space.ID,
+		Query:            req.Query,
+		Settings:         settings,
+		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
+		Language:         types.LanguageNameFromContext(ctx),
+	})
+	if result == nil {
+		return ""
+	}
+
+	brief := memory.FormatMemoryBrief(result, types.LanguageNameFromContext(ctx), agentMemoryBriefTokens)
+	if brief != "" {
+		logger.Infof(ctx, "memory: agent brief attached for session %s (%d tokens)",
+			req.Session.ID, memory.EstimateTokens(brief))
+	}
+	return brief
+}
+
+// resolveAgentMemory resolves whose memory an agent turn belongs to, and the
+// settings that apply once the agent's own overrides are folded in.
+//
+// Reports false when memory is off or unavailable, in which case the agent runs
+// exactly as it did before the feature existed.
+func (s *sessionService) resolveAgentMemory(
+	ctx context.Context, req *types.QARequest,
+) (*types.MemorySpace, types.MemorySettings, bool) {
+	if s.memoryService == nil || s.memorySettings == nil {
+		return nil, types.MemorySettings{}, false
+	}
 	space, err := s.memoryService.EnsureSpace(ctx)
 	if err != nil || space == nil {
-		return ""
+		return nil, types.MemorySettings{}, false
 	}
 
 	opts := types.MemorySettingsResolveOptions{
@@ -212,26 +251,36 @@ func (s *sessionService) buildAgentMemoryBrief(ctx context.Context, req *types.Q
 		opts.AgentPatch = req.CustomAgent.Config.Memory
 	}
 	resolution, err := s.memorySettings.Resolve(ctx, opts)
-	if err != nil || !resolution.Settings.Enabled || !resolution.Settings.RecallEnabled {
-		return ""
+	if err != nil || !resolution.Settings.Enabled {
+		return nil, types.MemorySettings{}, false
 	}
+	return space, resolution.Settings, true
+}
 
-	result := s.memoryRecall.Recall(ctx, types.MemoryRecallRequest{
+// considerAgentMemoryExtraction runs the write path for a finished agent turn.
+//
+// Agent mode has memory tools, but relying on them alone means a memory is only
+// stored when the model chooses to store it. Asking to be remembered should work
+// the same way in both modes, so the same gate runs here.
+func (s *sessionService) considerAgentMemoryExtraction(
+	ctx context.Context, req *types.QARequest, modelID string, turnIndex int,
+) {
+	if s.memoryWriter == nil {
+		return
+	}
+	space, settings, ok := s.resolveAgentMemory(ctx, req)
+	if !ok {
+		return
+	}
+	s.memoryWriter.ConsiderSession(ctx, types.MemoryExtractTrigger{
 		TenantID:         req.Session.TenantID,
 		SpaceID:          space.ID,
-		Query:            req.Query,
-		Settings:         resolution.Settings,
+		SessionID:        req.Session.ID,
+		Settings:         settings,
+		UserText:         req.Query,
+		MessageID:        req.UserMessageID,
+		TurnIndex:        turnIndex,
+		ChatModelID:      modelID,
 		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
-		Language:         types.LanguageNameFromContext(ctx),
 	})
-	if result == nil {
-		return ""
-	}
-
-	brief := memory.FormatMemoryBrief(result, types.LanguageNameFromContext(ctx), agentMemoryBriefTokens)
-	if brief != "" {
-		logger.Infof(ctx, "memory: agent brief attached for session %s (%d tokens)",
-			req.Session.ID, memory.EstimateTokens(brief))
-	}
-	return brief
 }

@@ -130,7 +130,11 @@ var (
 		regexp.MustCompile(`(?i)you\s+are\s+now\s+`),
 		regexp.MustCompile(`(?i)\bsystem\s*prompt\b`),
 		regexp.MustCompile(`(?i)^\s*(system|assistant|developer)\s*:`),
-		regexp.MustCompile(`忽略(上面|之前|以上|先前)的?(所有)?指令`),
+		// Deliberately loose about what sits between the verb and its object:
+		// "忽略之前的指令" is one phrasing among many, and "忽略你之前的所有指令"
+		// must not slip through on the strength of an inserted pronoun.
+		regexp.MustCompile(`(忽略|无视|忘记|忘掉)[^。；;！!？?\n]{0,12}(指令|提示词|规则|设定|系统提示)`),
+		regexp.MustCompile(`(系统|开发者)(提示词|指令)`),
 		regexp.MustCompile(`(?i)</?(system|instructions?|im_start|im_end)>`),
 	}
 

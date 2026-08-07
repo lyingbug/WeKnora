@@ -101,13 +101,42 @@ const (
 // The gate is pure rules and runs inline, which is the point: the overwhelming
 // majority of turns contain nothing durable, and finding that out must be free.
 func (w *writerService) ConsiderSession(ctx context.Context, req types.MemoryExtractTrigger) {
-	if req.SpaceID == "" || !req.Settings.WritesAllowed() {
+	if req.SpaceID == "" {
 		return
 	}
+	if !req.Settings.WritesAllowed() {
+		logger.Debugf(ctx, "memory: writes disabled (mode=%s), nothing recorded", req.Settings.WriteMode)
+		return
+	}
+
+	// A direct request is honoured in every write mode, including explicit-only,
+	// and costs no model call: the user already said what to store.
+	if statement, ok := DetectRememberRequest(req.UserText); ok {
+		page, err := w.RememberExplicit(ctx, types.MemoryExplicitWriteRequest{
+			TenantID:  req.TenantID,
+			SpaceID:   req.SpaceID,
+			SessionID: req.SessionID,
+			MessageID: req.MessageID,
+			Statement: statement,
+			Source:    types.MemorySourceUser,
+			Settings:  req.Settings,
+		})
+		if err != nil {
+			logger.Warnf(ctx, "memory: failed to store requested memory: %v", err)
+		} else {
+			logger.Infof(ctx, "memory: stored requested memory %s in space %s", page.ID, req.SpaceID)
+		}
+		return
+	}
+
 	if !req.Explicit && !req.Settings.AutoExtractEnabled() {
+		logger.Infof(ctx,
+			"memory: skipping extraction for space %s, write mode %s records only direct requests",
+			req.SpaceID, req.Settings.WriteMode)
 		return
 	}
 	if !req.Explicit && !w.gatePasses(req) {
+		logger.Debugf(ctx, "memory: gate declined turn %d for space %s", req.TurnIndex, req.SpaceID)
 		return
 	}
 
@@ -136,6 +165,7 @@ func (w *writerService) ConsiderSession(ctx context.Context, req types.MemoryExt
 		SpaceID:          req.SpaceID,
 		SessionID:        req.SessionID,
 		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
+		ChatModelID:      req.ChatModelID,
 	})
 	if err != nil {
 		return
@@ -231,7 +261,7 @@ func (w *writerService) Extract(ctx context.Context, req types.MemoryExtractPayl
 		return nil
 	}
 
-	candidates, err := w.callExtractor(ctx, settings, transcript)
+	candidates, err := w.callExtractor(ctx, settings, transcript, req.ChatModelID)
 	if err != nil {
 		return err
 	}
@@ -281,11 +311,16 @@ func userTranscript(messages []*types.Message) string {
 }
 
 func (w *writerService) callExtractor(
-	ctx context.Context, settings types.MemorySettings, transcript string,
+	ctx context.Context, settings types.MemorySettings, transcript, fallbackModelID string,
 ) ([]memoryCandidate, error) {
+	// Leaving the extraction model unset means "use the conversation's model",
+	// which keeps the feature working out of the box on a fresh deployment.
 	modelID := settings.ExtractionModelID
 	if modelID == "" {
-		return nil, fmt.Errorf("memory extraction requires an extraction model to be configured")
+		modelID = fallbackModelID
+	}
+	if modelID == "" {
+		return nil, fmt.Errorf("memory extraction has no model: set one, or converse with a chat model")
 	}
 	model, err := w.models.GetChatModel(ctx, modelID)
 	if err != nil {

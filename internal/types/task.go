@@ -522,6 +522,9 @@ type MemoryExtractPayload struct {
 	// against those wikis. An entity name only means something relative to a
 	// particular knowledge base.
 	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty"`
+	// ChatModelID is the model the conversation used, and the fallback when no
+	// dedicated extraction model is configured.
+	ChatModelID string `json:"chat_model_id,omitempty"`
 }
 
 // MemoryConsolidatePayload asks the writer to fold a space's pending
