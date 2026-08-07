@@ -5515,6 +5515,8 @@ export default {
     batchReparseSuccess: 'Отправлено задач пересборки: {count}',
     batchReparseFailed: 'Ошибка пакетной пересборки',
     batchReparseSkippedInFlight: 'Пропущено документов, которые ещё обрабатываются: {count}',
+    selectAllFiltered: 'Выбрать все ({count})',
+    allFilteredSelected: 'Выбраны все ({count})',
     statusCompleted: 'Завершено',
     statusProcessing: 'Обработка',
     statusFinalizing: 'Оптимизация',

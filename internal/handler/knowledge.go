@@ -2683,15 +2683,193 @@ func sliceContains(ss []string, target string) bool {
 	return false
 }
 
+// batchReparseKnowledgeFilter mirrors the document list filter so the browser can
+// ask the server to rebuild "everything that matches the current view" instead of
+// collecting IDs page by page.
+type batchReparseKnowledgeFilter struct {
+	TagIDs      []string `json:"tag_ids,omitempty"`
+	Keyword     string   `json:"keyword,omitempty"`
+	FileType    string   `json:"file_type,omitempty"`
+	ParseStatus string   `json:"parse_status,omitempty"`
+	Source      string   `json:"source,omitempty"`
+	StartTime   string   `json:"start_time,omitempty"`
+	EndTime     string   `json:"end_time,omitempty"`
+	// FolderPath is opt-in by presence, mirroring the list endpoint: an empty
+	// string means the knowledge base root, a missing field means "any folder".
+	FolderPath      *string `json:"folder_path,omitempty"`
+	FolderRecursive bool    `json:"folder_recursive,omitempty"`
+}
+
 type batchReparseKnowledgeRequest struct {
 	KBID          string                           `json:"kb_id" binding:"required"`
-	IDs           []string                         `json:"ids" binding:"required"`
+	IDs           []string                         `json:"ids"`
+	Filter        *batchReparseKnowledgeFilter     `json:"filter,omitempty"`
 	ProcessConfig *types.KnowledgeProcessOverrides `json:"process_config,omitempty"`
 }
 
+const (
+	// maxBatchReparseIDs caps how many knowledge entries one API call may rebuild.
+	maxBatchReparseIDs = 1000
+	// batchReparseChunkSize caps how many knowledge entries a single async task
+	// carries, so one oversized task cannot monopolize the maintenance queue.
+	batchReparseChunkSize = 200
+	// batchReparseResolvePageSize is the page size used when resolving a filter
+	// into concrete knowledge IDs.
+	batchReparseResolvePageSize = 200
+)
+
+// normalizeBatchReparseIDs trims, drops empty entries and de-duplicates while
+// preserving the caller's order.
+func normalizeBatchReparseIDs(raw []string) []string {
+	seen := make(map[string]struct{}, len(raw))
+	ids := make([]string, 0, len(raw))
+	for _, item := range raw {
+		id := strings.TrimSpace(item)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// isKnowledgeReparseInFlight reports whether a knowledge entry is already being
+// processed, in which case re-submitting it would clear content the running
+// pipeline is still writing.
+func isKnowledgeReparseInFlight(status string) bool {
+	switch status {
+	case types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing:
+		return true
+	default:
+		return false
+	}
+}
+
+// isKnowledgeReparseEligible excludes entries that must never be rebuilt in bulk:
+// unpublished drafts and rows currently being deleted.
+func isKnowledgeReparseEligible(k *types.Knowledge) bool {
+	if k == nil {
+		return false
+	}
+	if k.ParseStatus == types.ParseStatusDeleting {
+		return false
+	}
+	if k.Type == types.KnowledgeTypeManual && k.ParseStatus == types.ManualKnowledgeStatusDraft {
+		return false
+	}
+	return !isKnowledgeReparseInFlight(k.ParseStatus)
+}
+
+// splitBatchReparseIDs splits ids into chunks of at most size entries.
+func splitBatchReparseIDs(ids []string, size int) [][]string {
+	if size <= 0 || len(ids) == 0 {
+		return nil
+	}
+	chunks := make([][]string, 0, (len(ids)+size-1)/size)
+	for start := 0; start < len(ids); start += size {
+		end := start + size
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunks = append(chunks, ids[start:end])
+	}
+	return chunks
+}
+
+// buildKnowledgeListFilter converts the request filter into the list filter used
+// by the document list endpoint, so both paths select exactly the same rows.
+func buildKnowledgeListFilter(f *batchReparseKnowledgeFilter) (types.KnowledgeListFilter, error) {
+	filter := types.KnowledgeListFilter{
+		TagIDs:      parseCommaSeparatedTagIDs(strings.Join(f.TagIDs, ",")),
+		Keyword:     strings.TrimSpace(f.Keyword),
+		FileType:    strings.TrimSpace(f.FileType),
+		ParseStatus: strings.TrimSpace(f.ParseStatus),
+		Source:      strings.TrimSpace(f.Source),
+	}
+	if raw := strings.TrimSpace(f.StartTime); raw != "" {
+		t, err := parseFilterTime(raw)
+		if err != nil {
+			return filter, fmt.Errorf("invalid start_time: %w", err)
+		}
+		filter.UpdatedFrom = t
+	}
+	if raw := strings.TrimSpace(f.EndTime); raw != "" {
+		t, err := parseFilterTime(raw)
+		if err != nil {
+			return filter, fmt.Errorf("invalid end_time: %w", err)
+		}
+		filter.UpdatedTo = t
+	}
+	if f.FolderPath != nil {
+		filter.FolderPath = types.NormalizeKnowledgeFolderPath(*f.FolderPath)
+		filter.FolderScope = types.FolderScopeExact
+		if f.FolderRecursive {
+			filter.FolderScope = types.FolderScopeSubtree
+		}
+	}
+	// A recursive filter rooted at the knowledge base covers everything, so it
+	// does not count as narrowing the selection on its own.
+	narrowedByFolder := filter.FolderScope != types.FolderScopeAny &&
+		(filter.FolderPath != "" || filter.FolderScope == types.FolderScopeExact)
+	if len(filter.TagIDs) == 0 && filter.Keyword == "" && filter.FileType == "" &&
+		filter.ParseStatus == "" && filter.Source == "" &&
+		filter.UpdatedFrom.IsZero() && filter.UpdatedTo.IsZero() && !narrowedByFolder {
+		return filter, fmt.Errorf("filter must narrow the selection with at least one condition")
+	}
+	return filter, nil
+}
+
+// resolveBatchReparseIDsByFilter pages through the knowledge list and returns the
+// eligible IDs plus how many matches were skipped because they are still parsing.
+func (h *KnowledgeHandler) resolveBatchReparseIDsByFilter(
+	ctx context.Context, kbID string, filter types.KnowledgeListFilter,
+) (ids []string, skippedInFlight int, matched int, err error) {
+	for page := 1; ; page++ {
+		pagination := types.Pagination{Page: page, PageSize: batchReparseResolvePageSize}
+		result, listErr := h.kgService.ListPagedKnowledgeByKnowledgeBaseID(ctx, kbID, &pagination, filter)
+		if listErr != nil {
+			return nil, 0, 0, listErr
+		}
+		if result == nil || result.Data == nil {
+			return ids, skippedInFlight, matched, nil
+		}
+		rows, ok := result.Data.([]*types.Knowledge)
+		if !ok {
+			return nil, 0, 0, fmt.Errorf("unexpected knowledge list payload type %T", result.Data)
+		}
+		if len(rows) == 0 {
+			return ids, skippedInFlight, matched, nil
+		}
+		for _, k := range rows {
+			matched++
+			if isKnowledgeReparseInFlight(k.ParseStatus) {
+				skippedInFlight++
+				continue
+			}
+			if !isKnowledgeReparseEligible(k) {
+				continue
+			}
+			ids = append(ids, k.ID)
+			if len(ids) > maxBatchReparseIDs {
+				return nil, 0, 0, errBatchReparseTooManyMatches
+			}
+		}
+		if len(rows) < batchReparseResolvePageSize {
+			return ids, skippedInFlight, matched, nil
+		}
+	}
+}
+
+var errBatchReparseTooManyMatches = fmt.Errorf(
+	"too many matching knowledge entries (max %d per batch)", maxBatchReparseIDs)
+
 // BatchReparseKnowledge godoc
 // @Summary      批量重新解析知识
-// @Description  按 ID 列表批量重新解析单个知识库下的多个知识条目
+// @Description  按 ID 列表或筛选条件批量重新解析单个知识库下的多个知识条目；两者二选一，单次最多 1000 条
 // @Tags         知识管理
 // @Accept       json
 // @Produce      json
@@ -2712,27 +2890,18 @@ func (h *KnowledgeHandler) BatchReparseKnowledge(c *gin.Context) {
 		return
 	}
 
-	seen := make(map[string]struct{}, len(req.IDs))
-	ids := make([]string, 0, len(req.IDs))
-	for _, raw := range req.IDs {
-		id := strings.TrimSpace(raw)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
+	ids := normalizeBatchReparseIDs(req.IDs)
+	if len(ids) > 0 && req.Filter != nil {
+		_ = c.Error(errors.NewBadRequestError("ids and filter are mutually exclusive"))
+		return
 	}
-
-	if len(ids) == 0 {
+	if len(ids) == 0 && req.Filter == nil {
 		c.Error(errors.NewBadRequestError("no knowledge IDs provided for batch reparse"))
 		return
 	}
-	const maxBatch = 200
-	if len(ids) > maxBatch {
-		c.Error(errors.NewBadRequestError(fmt.Sprintf("too many ids (max %d per batch)", maxBatch)))
+	if len(ids) > maxBatchReparseIDs {
+		_ = c.Error(errors.NewBadRequestError(
+			fmt.Sprintf("too many ids (max %d per batch)", maxBatchReparseIDs)))
 		return
 	}
 
@@ -2747,41 +2916,96 @@ func (h *KnowledgeHandler) BatchReparseKnowledge(c *gin.Context) {
 	}
 	ctx = context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
-	knowledgeList, err := h.kgService.GetKnowledgeBatch(ctx, effectiveTenantID, ids)
-	if err != nil {
-		logger.Errorf(ctx, "failed to get knowledge batch, kb_id: %s, size: %d, err: %v", kbID, len(ids), err)
-		c.Error(errors.NewInternalServerError("failed to get knowledge batch"))
-		return
-	}
-	if len(knowledgeList) != len(ids) {
-		c.Error(errors.NewBadRequestError("some knowledge entries were not found"))
-		return
-	}
-	for _, k := range knowledgeList {
-		if k.KnowledgeBaseID != kbID {
-			c.Error(errors.NewBadRequestError(
-				fmt.Sprintf("Knowledge %s does not belong to knowledge base %s",
-					secutils.SanitizeForLog(k.ID), secutils.SanitizeForLog(kbID))))
+	skippedInFlight := 0
+	if req.Filter != nil {
+		listFilter, buildErr := buildKnowledgeListFilter(req.Filter)
+		if buildErr != nil {
+			_ = c.Error(errors.NewBadRequestError(buildErr.Error()))
 			return
+		}
+		matched := 0
+		ids, skippedInFlight, matched, err = h.resolveBatchReparseIDsByFilter(ctx, kbID, listFilter)
+		if err != nil {
+			if err == errBatchReparseTooManyMatches {
+				_ = c.Error(errors.NewBadRequestError(err.Error()))
+				return
+			}
+			logger.Errorf(ctx, "failed to resolve batch reparse filter, kb_id: %s, err: %v",
+				secutils.SanitizeForLog(kbID), err)
+			_ = c.Error(errors.NewInternalServerError("failed to resolve batch reparse filter"))
+			return
+		}
+		if matched == 0 {
+			_ = c.Error(errors.NewBadRequestError("no knowledge matches the given filter"))
+			return
+		}
+	} else {
+		knowledgeList, getErr := h.kgService.GetKnowledgeBatch(ctx, effectiveTenantID, ids)
+		if getErr != nil {
+			logger.Errorf(ctx, "failed to get knowledge batch, kb_id: %s, size: %d, err: %v",
+				secutils.SanitizeForLog(kbID), len(ids), getErr)
+			_ = c.Error(errors.NewInternalServerError("failed to get knowledge batch"))
+			return
+		}
+		if len(knowledgeList) != len(ids) {
+			_ = c.Error(errors.NewBadRequestError("some knowledge entries were not found"))
+			return
+		}
+		for _, k := range knowledgeList {
+			if k.KnowledgeBaseID != kbID {
+				_ = c.Error(errors.NewBadRequestError(
+					fmt.Sprintf("Knowledge %s does not belong to knowledge base %s",
+						secutils.SanitizeForLog(k.ID), secutils.SanitizeForLog(kbID))))
+				return
+			}
 		}
 	}
 
-	taskID, err := h.enqueueKnowledgeListReparse(ctx, effectiveTenantID, ids, req.ProcessConfig)
-	if err != nil {
-		logger.Errorf(ctx, "Failed to enqueue batch knowledge reparse task: %v", err)
-		c.Error(errors.NewInternalServerError("Failed to enqueue batch reparse task"))
+	if len(ids) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "No eligible knowledge to reparse",
+			"data": gin.H{
+				"task_id":                 "",
+				"task_ids":                []string{},
+				"reparse_count":           0,
+				"submitted_count":         0,
+				"skipped_in_flight_count": skippedInFlight,
+			},
+		})
 		return
 	}
 
-	logger.Infof(ctx, "Batch knowledge reparse task enqueued: %s, kb_id: %s, count: %d",
-		taskID, secutils.SanitizeForLog(kbID), len(ids))
+	chunks := splitBatchReparseIDs(ids, batchReparseChunkSize)
+	taskIDs := make([]string, 0, len(chunks))
+	submitted := 0
+	for _, chunk := range chunks {
+		taskID, enqueueErr := h.enqueueKnowledgeListReparse(ctx, effectiveTenantID, chunk, req.ProcessConfig)
+		if enqueueErr != nil {
+			logger.Errorf(ctx, "Failed to enqueue batch knowledge reparse task: %v", enqueueErr)
+			if submitted == 0 {
+				_ = c.Error(errors.NewInternalServerError("Failed to enqueue batch reparse task"))
+				return
+			}
+			break
+		}
+		taskIDs = append(taskIDs, taskID)
+		submitted += len(chunk)
+	}
+
+	logger.Infof(ctx, "Batch knowledge reparse tasks enqueued: %v, kb_id: %s, count: %d, skipped_in_flight: %d",
+		taskIDs, secutils.SanitizeForLog(kbID), submitted, skippedInFlight)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Batch reparse task submitted",
 		"data": gin.H{
-			"task_id":       taskID,
-			"reparse_count": len(ids),
+			"task_id":                 taskIDs[0],
+			"task_ids":                taskIDs,
+			"reparse_count":           submitted,
+			"submitted_count":         submitted,
+			"skipped_in_flight_count": skippedInFlight,
+			"enqueue_failed_count":    len(ids) - submitted,
 		},
 	})
 }

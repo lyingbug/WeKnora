@@ -5524,8 +5524,36 @@ definitions:
       success:
         type: boolean
     type: object
+  internal_handler.batchReparseKnowledgeFilter:
+    properties:
+      end_time:
+        type: string
+      file_type:
+        type: string
+      folder_path:
+        description: |-
+          FolderPath is opt-in by presence, mirroring the list endpoint: an empty
+          string means the knowledge base root, a missing field means "any folder".
+        type: string
+      folder_recursive:
+        type: boolean
+      keyword:
+        type: string
+      parse_status:
+        type: string
+      source:
+        type: string
+      start_time:
+        type: string
+      tag_ids:
+        items:
+          type: string
+        type: array
+    type: object
   internal_handler.batchReparseKnowledgeRequest:
     properties:
+      filter:
+        $ref: '#/definitions/internal_handler.batchReparseKnowledgeFilter'
       ids:
         items:
           type: string
@@ -5535,7 +5563,6 @@ definitions:
       process_config:
         $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.KnowledgeProcessOverrides'
     required:
-    - ids
     - kb_id
     type: object
   internal_handler.createInvitationRequest:
@@ -10062,7 +10089,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 按 ID 列表批量重新解析单个知识库下的多个知识条目
+      description: 按 ID 列表或筛选条件批量重新解析单个知识库下的多个知识条目；两者二选一，单次最多 1000 条
       parameters:
       - description: 批量重解析请求
         in: body
