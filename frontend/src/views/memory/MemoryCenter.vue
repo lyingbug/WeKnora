@@ -60,6 +60,17 @@
         </t-alert>
 
         <template v-else>
+          <!-- What gets captured is the first question an empty memory list
+               raises, and the answer lives three clicks away in settings. -->
+          <t-alert v-if="captureHint" theme="info" class="memory-capture-hint">
+            <template #message>
+              {{ captureHint }}
+              <t-link theme="primary" hover="color" @click="openSettings">
+                {{ t('memory.capture.openSettings') }}
+              </t-link>
+            </template>
+          </t-alert>
+
           <t-tabs v-model="activeTab" class="memory-tabs">
             <t-tab-panel value="memories" :label="t('memory.tabs.memories')">
               <MemoryList :key="`list-${refreshKey}`" @edit="openEdit" @changed="refreshStats" />
@@ -97,12 +108,18 @@
  * duplicating them here would give the same value two homes and leave the user
  * guessing which one wins.
  */
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
 
-import { getMemorySpace, forgetMemories, exportMemoryUrl, type MemoryStats } from '@/api/memory'
+import {
+  getMemorySpace,
+  getMemorySettings,
+  forgetMemories,
+  exportMemoryUrl,
+  type MemoryStats,
+} from '@/api/memory'
 import MemoryList from './components/MemoryList.vue'
 import MemoryInbox from './components/MemoryInbox.vue'
 import MemoryGraphPanel from './components/MemoryGraphPanel.vue'
@@ -127,6 +144,26 @@ const emptyStats: MemoryStats = {
 }
 const stats = ref<MemoryStats>({ ...emptyStats })
 
+// The effective write mode, resolved across every settings layer. Read only to
+// explain how memories arrive here; changing it is settings' job.
+const writeMode = ref('')
+
+const captureHint = computed(() => {
+  if (writeMode.value === 'off' || writeMode.value === 'explicit_only') {
+    return t(`memory.capture.${writeMode.value}`)
+  }
+  return ''
+})
+
+async function refreshWriteMode() {
+  try {
+    const res: any = await getMemorySettings()
+    writeMode.value = res?.data?.values?.['memory.write.mode']?.value || ''
+  } catch {
+    // The hint is an explanation, not a feature. Losing it changes nothing.
+  }
+}
+
 async function refreshStats() {
   try {
     const res: any = await getMemorySpace()
@@ -146,6 +183,7 @@ async function refreshStats() {
 function refreshAll() {
   refreshKey.value += 1
   refreshStats()
+  refreshWriteMode()
 }
 
 function openCreate() {
@@ -197,10 +235,17 @@ function confirmForgetAll() {
   })
 }
 
-onMounted(refreshStats)
+onMounted(() => {
+  refreshStats()
+  refreshWriteMode()
+})
 </script>
 
 <style scoped lang="less">
+.memory-capture-hint {
+  margin-bottom: 12px;
+}
+
 /* Mirrors the shell used by AgentList and KnowledgeBaseList: fill the content
    area, no max-width or centering, padding on the header and main rather than
    the container so a scrollbar sits flush with the right edge. */

@@ -5926,6 +5926,11 @@ export default {
     tabs: { memories: 'Memories', inbox: 'To review', graph: 'Graph' },
     stats: { active: 'Active', pending: 'To review', anchors: 'Anchors', archived: 'Archived' },
     actions: { openSettings: 'Memory settings', create: 'New memory', export: 'Export', forgetAll: 'Forget everything' },
+    capture: {
+      openSettings: 'Change how memories are written',
+      off: 'Writing is switched off, so nothing from a conversation is remembered.',
+      explicit_only: 'Only what you ask for is written: say "remember ..." in a conversation and it is stored. Nothing is extracted from chat on its own. Switch to automatic extraction to change that.',
+    },
     disabled: {
       openSettings: 'Open settings',
       message: 'Long-term memory is not enabled for your account. A workspace administrator can turn it on in system settings, and you can switch it off for yourself at any time.',
