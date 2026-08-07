@@ -34,6 +34,11 @@ type MemoryPageRepository interface {
 	// pass 0 and take last-write-wins.
 	Update(ctx context.Context, page *types.MemoryPage, expectVersion int) error
 	UpdateWithRevision(ctx context.Context, page *types.MemoryPage, rev *types.MemoryPageRevision, expectVersion int) error
+	// UpdateLinks writes only the link arrays, leaving version untouched.
+	// Backlink maintenance is bookkeeping, not an edit by the user, so it must
+	// not bump the version: doing so shows a version jump nobody made and hands
+	// an open editor a spurious optimistic-lock conflict.
+	UpdateLinks(ctx context.Context, page *types.MemoryPage) error
 	GetByID(ctx context.Context, spaceID, id string) (*types.MemoryPage, error)
 	GetBySlug(ctx context.Context, spaceID, slug string) (*types.MemoryPage, error)
 	GetBySlugs(ctx context.Context, spaceID string, slugs []string) ([]*types.MemoryPage, error)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service/memory"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -61,6 +62,17 @@ func (h *MemoryHandler) respondMemoryError(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "memory is not enabled for this account"})
 	case errors.Is(err, memory.ErrForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+	case errors.Is(err, repository.ErrMemoryPageNotFound),
+		errors.Is(err, repository.ErrMemoryNoteNotFound),
+		errors.Is(err, repository.ErrMemoryAnchorNotFound),
+		errors.Is(err, repository.ErrMemorySpaceNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	case errors.Is(err, repository.ErrMemoryPageConflict):
+		// The editor holds a version that is no longer current. 409 lets the
+		// UI reload and show the newer text instead of reporting a fault.
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	case errors.Is(err, memory.ErrInvalidRequest):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		logger.ErrorWithFields(c.Request.Context(), err, nil)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory request failed"})

@@ -304,14 +304,14 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewTemporaryDocumentService))
 	must(container.Invoke(startTemporaryDocumentCleanup))
 
-	// Long-term memory. Registered after the task enqueuer because the write
-	// path schedules through it, and after the services it resolves settings
-	// from (tenant, user, agent).
+	// Long-term memory providers. Provide is lazy, so this only declares how
+	// the subsystem is built; nothing is instantiated until something asks for
+	// it. The eager Invoke that starts the decay sweep is deliberately deferred
+	// to the end of this function, once every provider exists — resolving the
+	// writer here would drag in the whole service graph before the data-source
+	// scheduler and friends have been registered.
 	logger.Debugf(ctx, "[Container] Registering long-term memory...")
 	registerMemoryComponents(container, redisAvailable)
-	must(container.Invoke(func(writer interfaces.MemoryWriterService) {
-		startMemoryDecaySweep(context.Background(), writer)
-	}))
 
 	// Chat pipeline components for processing chat requests
 	logger.Debugf(ctx, "[Container] Registering chat pipeline plugins...")
@@ -416,6 +416,13 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// persistence succeeded immediately before trigger enqueue failed). Re-arm
 	// them only after the matching handlers are ready.
 	must(container.Invoke(recoverPendingWikiTasks))
+
+	// The memory retention sweep starts last, for the same reason the wiki
+	// re-arm does: it is the first thing to actually instantiate the memory
+	// service graph, so every provider it reaches has to exist by now.
+	must(container.Invoke(func(writer interfaces.MemoryWriterService) {
+		startMemoryDecaySweep(context.Background(), writer)
+	}))
 
 	logger.Infof(ctx, "[Container] Container initialization completed successfully")
 	return container

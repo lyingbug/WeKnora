@@ -110,6 +110,22 @@ func updateMemoryPageRow(db *gorm.DB, page *types.MemoryPage, expectVersion int)
 	return nil
 }
 
+// UpdateLinks writes the link arrays without touching version.
+//
+// Kept separate from Update on purpose. A page gaining a backlink because some
+// other memory now points at it is not a revision of that page, and treating it
+// as one would both pollute the history and invalidate a version the editor is
+// holding.
+func (r *memoryPageRepository) UpdateLinks(ctx context.Context, page *types.MemoryPage) error {
+	return r.db.WithContext(ctx).
+		Model(&types.MemoryPage{}).
+		Where("space_id = ? AND id = ?", page.SpaceID, page.ID).
+		Updates(map[string]interface{}{
+			"in_links":  page.InLinks,
+			"out_links": page.OutLinks,
+		}).Error
+}
+
 func (r *memoryPageRepository) GetByID(
 	ctx context.Context, spaceID, id string,
 ) (*types.MemoryPage, error) {

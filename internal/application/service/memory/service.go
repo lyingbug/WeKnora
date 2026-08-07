@@ -24,6 +24,8 @@ var (
 	ErrNoPrincipal = errors.New("no principal in context")
 	// ErrForbidden is returned when a setting forbids the requested action.
 	ErrForbidden = errors.New("action not permitted by memory settings")
+	// ErrInvalidRequest is returned for a malformed request the caller can fix.
+	ErrInvalidRequest = errors.New("invalid memory request")
 )
 
 // Service is the memory façade used by handlers, tools and the chat pipeline.
@@ -289,7 +291,7 @@ func (s *Service) writePageInScope(
 		pageType = types.MemoryTypeEpisode
 	}
 	if !types.IsValidMemoryType(pageType) {
-		return nil, fmt.Errorf("unknown memory type %q", pageType)
+		return nil, fmt.Errorf("%w: unknown memory type %q", ErrInvalidRequest, pageType)
 	}
 	if !sc.Settings.TypeAllowed(pageType) {
 		return nil, fmt.Errorf("%w: memories of type %q are disabled", ErrForbidden, pageType)
@@ -309,7 +311,7 @@ func (s *Service) writePageInScope(
 		status = types.MemoryPageStatusActive
 	}
 	if !types.IsValidMemoryPageStatus(status) {
-		return nil, fmt.Errorf("unknown memory status %q", status)
+		return nil, fmt.Errorf("%w: unknown memory status %q", ErrInvalidRequest, status)
 	}
 
 	editSource := req.EditSource
@@ -449,7 +451,7 @@ func (s *Service) syncInboundLinks(ctx context.Context, spaceID, slug string, be
 			if !changed {
 				continue
 			}
-			if err := s.pages.Update(ctx, target, 0); err != nil {
+			if err := s.pages.UpdateLinks(ctx, target); err != nil {
 				logger.Warnf(ctx, "memory: backlink sync write failed for %s: %v", target.Slug, err)
 			}
 		}
@@ -784,7 +786,9 @@ func (s *Service) AddAnchor(
 		return nil, err
 	}
 	if !containsStr(types.UserSettableMemoryRelations(), req.Relation) {
-		return nil, fmt.Errorf("relation %q cannot be set by hand", req.Relation)
+		return nil, fmt.Errorf(
+			"%w: relation %q is derived from usage and cannot be asserted directly",
+			ErrInvalidRequest, req.Relation)
 	}
 	targetKind := req.TargetKind
 	if targetKind == "" {
@@ -883,7 +887,7 @@ func (s *Service) Forget(
 		}
 
 	default:
-		return nil, fmt.Errorf("unknown forget scope %q", req.Scope)
+		return nil, fmt.Errorf("%w: unknown forget scope %q", ErrInvalidRequest, req.Scope)
 	}
 
 	return resp, nil
