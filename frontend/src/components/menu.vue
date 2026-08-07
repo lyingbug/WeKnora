@@ -431,19 +431,22 @@ const getIconActiveState = (itemPath: string) => {
 };
 
 // 分离上下两部分菜单（使用 visibleMenuArr 以便 lite 模式过滤 logout）
+//
+// One list, because two hand-maintained copies of the same membership test drift:
+// a menu entry added to the store but to neither filter renders nowhere at all,
+// reachable only by typing its URL.
+const SIDEBAR_MENU_PATHS = ['creatChat', 'knowledge-bases', 'agents', 'memory', 'organizations'];
+
 const topMenuItems = computed<MenuItem[]>(() => {
     return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) =>
-        item.path === 'knowledge-bases' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat'
+        SIDEBAR_MENU_PATHS.includes(item.path)
     );
 });
 
 const bottomMenuItems = computed<MenuItem[]>(() => {
-    return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) => {
-        if (item.path === 'knowledge-bases' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat') {
-            return false;
-        }
-        return true;
-    });
+    return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) =>
+        !SIDEBAR_MENU_PATHS.includes(item.path)
+    );
 });
 
 // 当前知识库信息
