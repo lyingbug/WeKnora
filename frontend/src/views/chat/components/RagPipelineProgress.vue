@@ -872,69 +872,93 @@ onBeforeUnmount(() => {
   .action-pending .action-name {
     color: var(--td-text-color-secondary);
   }
+}
 
-  .memory-step {
-    .action-header {
-      cursor: pointer;
-    }
-
-    .memory-toggle-icon {
-      margin-left: 4px;
-      font-size: 13px;
-      color: var(--agent-step-icon-color);
-      flex-shrink: 0;
-    }
-  }
-
-  .memory-detail-content {
-    margin-top: 4px;
-    font-size: var(--agent-step-summary-size);
-    line-height: 1.55;
-    color: var(--td-text-color-secondary);
-  }
-
-  .memory-row {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    padding: 2px 0;
-  }
-
-  .memory-kind {
-    flex-shrink: 0;
-    color: var(--td-text-color-placeholder);
-  }
-
-  .memory-text {
-    flex: 1;
-    min-width: 0;
-    word-break: break-word;
-  }
-
-  .memory-forget {
-    flex-shrink: 0;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--td-text-color-placeholder);
-    font-size: 13px;
-    line-height: 1;
+.memory-step {
+  .action-header {
     cursor: pointer;
-
-    &:hover:not(:disabled) {
-      color: var(--td-error-color);
-    }
-
-    &:disabled {
-      cursor: default;
-      opacity: 0.5;
-    }
   }
 
-  .memory-hint {
-    margin: 4px 0 0;
-    color: var(--td-text-color-placeholder);
+  .memory-toggle-icon {
+    margin-left: 4px;
+    font-size: 13px;
+    color: var(--agent-step-icon-color);
+    flex-shrink: 0;
   }
+}
+
+.memory-detail-content {
+  width: 100%;
+  margin-top: 4px;
+  font-size: var(--agent-step-summary-size);
+  line-height: 1.55;
+  color: var(--td-text-color-secondary);
+}
+
+.memory-row {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+// A plain label would run straight into the sentence ("个人信息在做医疗影像
+// …"), so the kind reads as a tag rather than as the first words of the memory.
+.memory-kind {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--td-bg-color-secondarycontainer);
+  color: var(--td-text-color-placeholder);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.memory-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.memory-forget {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--td-text-color-placeholder);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+
+  &:focus-visible {
+    opacity: 1;
+    color: var(--td-error-color);
+  }
+
+  &:hover:not(:disabled) {
+    color: var(--td-error-color);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+}
+
+// Revealing the control on hover keeps the list readable as a list, while
+// still putting delete one click away from the memory it belongs to.
+.memory-row:hover .memory-forget {
+  opacity: 1;
+}
+
+.memory-hint {
+  margin: 6px 0 0;
+  color: var(--td-text-color-placeholder);
 }
 
 @media (max-width: 640px) {
