@@ -151,6 +151,31 @@ func (r *memoryRepository) ListActiveByKinds(
 	return items, nil
 }
 
+// ListActiveResident returns what the resident block is built from.
+//
+// Stable traits qualify by kind. An explicitly requested memory qualifies
+// regardless of kind: the user said "remember this", and making that depend on
+// their later question happening to share words with it is the fastest way to
+// lose their trust in the feature.
+func (r *memoryRepository) ListActiveResident(
+	ctx context.Context, scope interfaces.MemoryScope, limit int,
+) ([]*types.MemoryItem, error) {
+	var items []*types.MemoryItem
+	query := r.scoped(ctx, scope).
+		Where("status = ?", types.MemoryStatusActive).
+		Where("kind IN ? OR origin = ?",
+			[]string{types.MemoryKindProfile, types.MemoryKindPreference},
+			types.MemoryOriginExplicit).
+		Order("importance DESC, valid_from DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *memoryRepository) ListItems(
 	ctx context.Context, scope interfaces.MemoryScope, status string, limit, offset int,
 ) ([]*types.MemoryItem, int64, error) {

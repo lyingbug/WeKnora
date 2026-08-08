@@ -65,6 +65,64 @@ func TestRememberStoresAndRecalls(t *testing.T) {
 	require.Len(t, recall.Items, 1)
 }
 
+// TestExplicitMemoryIsAlwaysAvailable pins the rule that a user who said
+// "remember this" gets it back regardless of how they phrase the next
+// question. Leaving it to lexical matching means the one memory the user
+// deliberately asked for is the one most likely to go missing.
+func TestExplicitMemoryIsAlwaysAvailable(t *testing.T) {
+	svc, _, tenantRepo := newMemoryHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+
+	_, err := svc.Remember(ctx, types.MemoryItem{
+		Kind:    types.MemoryKindFact,
+		Content: "my editor is Neovim and my terminal is WezTerm",
+		Origin:  types.MemoryOriginExplicit,
+	})
+	require.NoError(t, err)
+
+	// Not one word in common with the memory.
+	recall := svc.Recall(ctx, "what tools do I use daily")
+	require.Contains(t, recall.Prompt, "Neovim")
+	require.Len(t, recall.Items, 1)
+}
+
+// TestExtractedFactStillNeedsAQueryMatch is the counterpart: memory the user
+// never asked for must stay out of context unless it is relevant, or the block
+// grows without bound.
+func TestExtractedFactStillNeedsAQueryMatch(t *testing.T) {
+	svc, _, tenantRepo := newMemoryHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+
+	_, err := svc.Remember(ctx, types.MemoryItem{
+		Kind:    types.MemoryKindFact,
+		Topic:   "编辑器",
+		Content: "用的编辑器是 Neovim",
+		Origin:  types.MemoryOriginExtracted,
+	})
+	require.NoError(t, err)
+
+	require.Empty(t, svc.Recall(ctx, "帮我算一下这个月的账").Prompt)
+	require.Contains(t, svc.Recall(ctx, "编辑器怎么配置").Prompt, "Neovim")
+}
+
+// TestRecalledItemIsNotListedTwice guards the seam between the resident block
+// and query matching: an explicit fact is in both candidate sets.
+func TestRecalledItemIsNotListedTwice(t *testing.T) {
+	svc, _, tenantRepo := newMemoryHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+
+	_, err := svc.Remember(ctx, types.MemoryItem{
+		Kind:    types.MemoryKindFact,
+		Content: "生产数据库是 PostgreSQL 17",
+		Origin:  types.MemoryOriginExplicit,
+	})
+	require.NoError(t, err)
+
+	recall := svc.Recall(ctx, "数据库连接池配多大")
+	require.Len(t, recall.Items, 1, "the same memory must not be reported twice")
+	require.Equal(t, 1, strings.Count(recall.Prompt, "生产数据库是 PostgreSQL 17"))
+}
+
 func TestRecallMatchesSituationalItemsByQuery(t *testing.T) {
 	svc, _, tenantRepo := newMemoryHarness(t)
 	ctx := enabledCtx(t, tenantRepo, 1, "alice")
@@ -130,6 +188,81 @@ func TestRepeatedIdenticalStatementDoesNotChurn(t *testing.T) {
 	var count int64
 	require.NoError(t, db.Model(&types.MemoryItem{}).Count(&count).Error)
 	require.Equal(t, int64(1), count)
+}
+
+// TestRestatedFactDoesNotDuplicate covers the shape seen in real use: the user
+// says "remember X" and the background distillation later produces the same
+// fact with slightly different wording. They carry different topic keys, so
+// without a containment check the user's memory list shows the same thing
+// twice.
+func TestRestatedFactDoesNotDuplicate(t *testing.T) {
+	svc, _, tenantRepo := newMemoryHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+
+	explicit, err := svc.Remember(ctx, types.MemoryItem{
+		Kind:    types.MemoryKindFact,
+		Content: "我们的生产数据库是 PostgreSQL 17，部署在法兰克福",
+		Origin:  types.MemoryOriginExplicit,
+	})
+	require.NoError(t, err)
+
+	// The distillation restates it more tersely and under its own topic.
+	extracted, err := svc.Remember(ctx, types.MemoryItem{
+		Kind:    types.MemoryKindFact,
+		Topic:   "生产数据库",
+		Content: "生产数据库是 PostgreSQL 17，部署在法兰克福",
+		Origin:  types.MemoryOriginExtracted,
+	})
+	require.NoError(t, err)
+	require.Equal(t, explicit.ID, extracted.ID,
+		"a restatement contained in an existing memory must not create a second row")
+
+	_, total, err := svc.ListItems(ctx, types.MemoryStatusActive, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+}
+
+// TestMoreSpecificRestatementSupersedes is the other direction: when the new
+// statement contains the old one it carries strictly more information, so it
+// replaces it instead of sitting beside it.
+func TestMoreSpecificRestatementSupersedes(t *testing.T) {
+	svc, _, tenantRepo := newMemoryHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+
+	short, err := svc.Remember(ctx, types.MemoryItem{
+		Kind: types.MemoryKindFact, Topic: "生产数据库", Content: "生产数据库是 PostgreSQL 17",
+	})
+	require.NoError(t, err)
+	long, err := svc.Remember(ctx, types.MemoryItem{
+		Kind: types.MemoryKindFact, Content: "生产数据库是 PostgreSQL 17，部署在法兰克福",
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, short.ID, long.ID)
+
+	items, total, err := svc.ListItems(ctx, types.MemoryStatusActive, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, "生产数据库是 PostgreSQL 17，部署在法兰克福", items[0].Content)
+}
+
+// TestDifferentFactsSharingWordsAreKept guards the containment rule from being
+// too eager: two genuinely different statements must both survive.
+func TestDifferentFactsSharingWordsAreKept(t *testing.T) {
+	svc, _, tenantRepo := newMemoryHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+
+	_, err := svc.Remember(ctx, types.MemoryItem{
+		Kind: types.MemoryKindFact, Topic: "生产数据库", Content: "生产数据库是 PostgreSQL 17",
+	})
+	require.NoError(t, err)
+	_, err = svc.Remember(ctx, types.MemoryItem{
+		Kind: types.MemoryKindFact, Topic: "测试数据库", Content: "测试数据库是 PostgreSQL 15",
+	})
+	require.NoError(t, err)
+
+	_, total, err := svc.ListItems(ctx, types.MemoryStatusActive, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
 }
 
 func TestMemoriesAreIsolatedAcrossSubjectsAndWorkspaces(t *testing.T) {

@@ -42,6 +42,9 @@ type MemoryRepository interface {
 	GetItem(ctx context.Context, scope MemoryScope, id string) (*types.MemoryItem, error)
 	// ListActiveByKinds returns active items of the given kinds, newest first.
 	ListActiveByKinds(ctx context.Context, scope MemoryScope, kinds []string, limit int) ([]*types.MemoryItem, error)
+	// ListActiveResident returns the items that belong in the always-injected
+	// block: stable traits, plus anything the user explicitly asked to keep.
+	ListActiveResident(ctx context.Context, scope MemoryScope, limit int) ([]*types.MemoryItem, error)
 	// ListItems returns items for the memory manager, filtered by status.
 	ListItems(ctx context.Context, scope MemoryScope, status string, limit, offset int) ([]*types.MemoryItem, int64, error)
 	// FindActiveByKey returns the active item occupying a topic key, if any.

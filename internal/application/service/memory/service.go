@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -106,8 +107,7 @@ func (s *Service) Recall(ctx context.Context, query string) interfaces.MemoryRec
 		return interfaces.MemoryRecall{}
 	}
 
-	residentItems, err := s.repo.ListActiveByKinds(ctx, scope,
-		[]string{types.MemoryKindProfile, types.MemoryKindPreference}, 60)
+	residentItems, err := s.repo.ListActiveResident(ctx, scope, 60)
 	if err != nil {
 		logger.Warnf(ctx, "memory: load resident items failed: %v", err)
 		residentItems = nil
@@ -126,7 +126,19 @@ func (s *Service) Recall(ctx context.Context, query string) interfaces.MemoryRec
 		logger.Warnf(ctx, "memory: load situational items failed: %v", err)
 		situational = nil
 	}
-	matched := selectRecallItems(query, situational, types.MemoryRecallMaxItems, types.MemoryRecallRuneBudget)
+	// Resident items are already in the block; matching them again would print
+	// them twice.
+	resident := make(map[string]struct{}, len(residentItems))
+	for _, item := range residentItems {
+		resident[item.ID] = struct{}{}
+	}
+	candidates := situational[:0:0]
+	for _, item := range situational {
+		if _, ok := resident[item.ID]; !ok {
+			candidates = append(candidates, item)
+		}
+	}
+	matched := selectRecallItems(query, candidates, types.MemoryRecallMaxItems, types.MemoryRecallRuneBudget)
 
 	prompt := types.WrapMemoryForPrompt(block, types.RenderMemoryRecall(matched))
 	if prompt == "" {
@@ -217,6 +229,22 @@ func (s *Service) write(
 		// original timestamps instead of churning the row on every turn.
 		return existing, nil
 	}
+	if existing == nil {
+		// The same fact often arrives twice: once because the user said
+		// "remember ..." and again from the background distillation, phrased
+		// slightly differently ("我们的生产库是 X" vs "生产库是 X"). They get
+		// different topic keys, so key matching alone lets both through and
+		// the user sees their memory duplicated.
+		duplicate, longer, err := s.findContainedDuplicate(ctx, scope, item.Kind, content)
+		if err != nil {
+			return nil, err
+		}
+		if duplicate != nil && !longer {
+			return duplicate, nil
+		}
+		// The new statement subsumes the old one, so let it supersede.
+		existing = duplicate
+	}
 
 	stored := &types.MemoryItem{
 		ID:              uuid.New().String(),
@@ -252,6 +280,56 @@ func (s *Service) write(
 	return stored, nil
 }
 
+// findContainedDuplicate looks for an active memory of the same kind whose
+// statement contains, or is contained by, the incoming one.
+//
+// Containment is deliberately the whole rule. It is cheap, explainable to a
+// user reading their own memory list, and it cannot merge two statements that
+// merely share a topic — only ones where the shorter adds nothing the longer
+// does not already say. The returned bool reports whether the new statement is
+// the longer of the two.
+func (s *Service) findContainedDuplicate(
+	ctx context.Context, scope interfaces.MemoryScope, kind, content string,
+) (*types.MemoryItem, bool, error) {
+	candidates, err := s.repo.ListActiveByKinds(ctx, scope, []string{kind}, 200)
+	if err != nil {
+		return nil, false, fmt.Errorf("scan for duplicate memory: %w", err)
+	}
+	normalized := normalizeForContainment(content)
+	if normalized == "" {
+		return nil, false, nil
+	}
+	for _, candidate := range candidates {
+		if candidate == nil {
+			continue
+		}
+		existing := normalizeForContainment(candidate.Content)
+		if existing == "" {
+			continue
+		}
+		if strings.Contains(existing, normalized) {
+			return candidate, false, nil
+		}
+		if strings.Contains(normalized, existing) {
+			return candidate, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// normalizeForContainment strips whitespace and case so containment is not
+// defeated by spacing around Latin words inside a Chinese sentence.
+func normalizeForContainment(content string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToLower(types.SanitizeMemoryContent(content)) {
+		if unicode.IsSpace(r) {
+			continue
+		}
+		builder.WriteRune(r)
+	}
+	return builder.String()
+}
+
 // enforceCapacity archives the lowest ranked items once the subject exceeds
 // its cap. This is the only automatic forgetting in the system.
 func (s *Service) enforceCapacity(ctx context.Context, scope interfaces.MemoryScope, cfg *types.MemoryConfig) {
@@ -275,8 +353,7 @@ func (s *Service) enforceCapacity(ctx context.Context, scope interfaces.MemorySc
 // rebuildBlock re-renders the resident block so the read path stays a single
 // primary-key lookup. Called after every mutation.
 func (s *Service) rebuildBlock(ctx context.Context, scope interfaces.MemoryScope) {
-	items, err := s.repo.ListActiveByKinds(ctx, scope,
-		[]string{types.MemoryKindProfile, types.MemoryKindPreference}, 60)
+	items, err := s.repo.ListActiveResident(ctx, scope, 60)
 	if err != nil {
 		logger.Warnf(ctx, "memory: rebuild block load failed: %v", err)
 		return
