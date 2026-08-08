@@ -1,52 +1,47 @@
 <template>
-  <div class="memory-settings">
-    <div class="memory-settings__head">
-      <t-switch v-model="showAdvanced" size="small" />
-      <span>{{ t('memory.settings.showAdvanced') }}</span>
-      <span class="memory-settings__spacer" />
-      <t-button size="small" theme="primary" :loading="saving" :disabled="!dirty" @click="save">
-        {{ t('memory.settings.save') }}
-      </t-button>
+  <t-loading :loading="loading" size="small" class="memory-settings-panel">
+    <div v-for="(group, index) in visibleGroups" :key="group.name" class="settings-block"
+      :class="{ 'settings-block--first': index === 0 }">
+      <h3 v-if="showGroupTitles" class="settings-block__title">
+        {{ t(`memory.settings.groups.${group.name}.title`) }}
+      </h3>
+      <p v-if="showGroupTitles" class="settings-block__desc">
+        {{ t(`memory.settings.groups.${group.name}.description`) }}
+      </p>
+
+      <div class="settings-group">
+        <SettingRow v-for="descriptor in group.descriptors" :key="descriptor.key" :descriptor="descriptor"
+          :value="draft[descriptor.key]" :resolved="view?.values?.[descriptor.key]"
+          :editable="isEditable(descriptor.key)" :level="level" @update="onUpdate" />
+      </div>
     </div>
 
-    <t-loading :loading="loading" :show-overlay="false">
-      <section v-for="group in visibleGroups" :key="group.name" class="settings-group">
-        <header class="settings-group__head">
-          <h3>{{ t(`memory.settings.groups.${group.name}.title`) }}</h3>
-          <p>{{ t(`memory.settings.groups.${group.name}.description`) }}</p>
-        </header>
-
-        <div class="settings-group__rows">
-          <SettingRow
-            v-for="descriptor in group.descriptors"
-            :key="descriptor.key"
-            :descriptor="descriptor"
-            :value="draft[descriptor.key]"
-            :resolved="view?.values?.[descriptor.key]"
-            :editable="isEditable(descriptor.key)"
-            :level="level"
-            @update="onUpdate"
-          />
-        </div>
-      </section>
-    </t-loading>
-  </div>
+    <div v-if="advancedAvailable" class="settings-more">
+      <t-link theme="primary" hover="color" @click="showAdvanced = !showAdvanced">
+        {{ showAdvanced ? t('memory.settings.hideAdvanced') : t('memory.settings.showAdvanced') }}
+      </t-link>
+    </div>
+  </t-loading>
 </template>
 
 <script setup lang="ts">
 /**
- * The memory settings panel.
+ * The memory settings form.
  *
- * Every control here is generated from the descriptor catalogue the API
- * returns: its type, bounds, allowed values and which layers may set it all
- * come from the server, so a new setting appears in the UI without a frontend
- * change and can never drift from what the backend actually enforces.
+ * Every control is generated from the descriptor catalogue the API returns: its
+ * type, bounds, allowed values and which layers may set it all come from the
+ * server, so a new setting appears here without a frontend change and can never
+ * claim to enforce something the backend does not.
  *
- * The panel shows two things most settings screens do not, because without them
- * a layered configuration is impossible to reason about: where each effective
+ * Two things this shows that most settings screens do not, because a layered
+ * configuration is otherwise impossible to reason about: where each effective
  * value came from, and whether a wider layer has pinned it. A control the user
- * cannot change is shown read-only with the reason, rather than accepting a
- * click that does nothing.
+ * cannot change is read-only with the reason, rather than accepting a click that
+ * does nothing.
+ *
+ * Changes save as they are made, which is how the rest of this dialog behaves.
+ * A separate save step reads as safer and is not: it adds a state where what is
+ * on screen and what is in effect disagree, with no indication which is which.
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -62,48 +57,64 @@ import {
   type MemorySettingsView,
 } from '@/api/memory'
 
-const props = withDefaults(defineProps<{ level?: 'user' | 'tenant' }>(), { level: 'user' })
-const emit = defineEmits<{ (e: 'saved'): void }>()
+const props = withDefaults(
+  defineProps<{
+    level?: 'user' | 'tenant'
+    /** Keys to show before "more settings" is expanded. */
+    primaryKeys?: string[]
+    /** Group headings are noise when the primary set is a single short list. */
+    showGroupTitles?: boolean
+  }>(),
+  { level: 'user', showGroupTitles: true },
+)
+const emit = defineEmits<{ (e: 'changed'): void }>()
 
 const { t } = useI18n()
 
 const view = ref<MemorySettingsView | null>(null)
 const draft = ref<Record<string, any>>({})
-const changed = ref<Record<string, any>>({})
 const loading = ref(false)
-const saving = ref(false)
 const showAdvanced = ref(false)
 
-// The basics are the handful of questions most people actually have: is this
-// on, what may it record, does it ask me first, and does it show its work.
-// Everything else is real but rarely touched, and burying it keeps the first
-// screen answerable at a glance.
-const basicKeys = new Set([
+// The questions most people actually have: is this on, what may it record, does
+// it ask me first, and is it used in conversation. Everything else is real but
+// rarely touched, and keeping it behind a link makes the first screen
+// answerable at a glance.
+const defaultPrimaryKeys = [
   'memory.enabled',
   'memory.write.mode',
   'memory.write.require_review',
   'memory.write.allowed_types',
   'memory.recall.enabled',
-  'memory.recall.show_used_memories',
-])
+]
+
+const primary = computed(() => new Set(props.primaryKeys ?? defaultPrimaryKeys))
 
 const groupOrder = ['general', 'write', 'recall', 'boost', 'anchor', 'lifecycle', 'privacy', 'insights']
 
-const dirty = computed(() => Object.keys(changed.value).length > 0)
+/** Descriptors this layer is allowed to have an opinion about.
+ *
+ * Platform invariants belong to no layer and are shown only in the workspace
+ * policy view, where "this is fixed for everyone" is the subject. On a personal
+ * screen they would be rows nobody can act on. */
+const applicable = computed(() =>
+  (view.value?.descriptors || []).filter((descriptor) => {
+    if (descriptor.levels?.includes(props.level)) return true
+    return descriptor.hard_locked && props.level === 'tenant'
+  }),
+)
+
+const advancedAvailable = computed(() =>
+  applicable.value.some((descriptor) => !primary.value.has(descriptor.key)),
+)
 
 const visibleGroups = computed(() => {
-  const descriptors = view.value?.descriptors || []
   const groups = new Map<string, MemorySettingDescriptor[]>()
-
-  for (const descriptor of descriptors) {
-    // A key this layer can never set is noise here; it belongs on the screen
-    // of whoever owns it.
-    if (!descriptor.hard_locked && !descriptor.levels?.includes(props.level)) continue
-    if (!showAdvanced.value && !basicKeys.has(descriptor.key)) continue
+  for (const descriptor of applicable.value) {
+    if (!showAdvanced.value && !primary.value.has(descriptor.key)) continue
     if (!groups.has(descriptor.group)) groups.set(descriptor.group, [])
     groups.get(descriptor.group)!.push(descriptor)
   }
-
   return groupOrder
     .filter((name) => groups.has(name))
     .map((name) => ({ name, descriptors: groups.get(name)! }))
@@ -113,24 +124,23 @@ function isEditable(key: string): boolean {
   return Boolean(view.value?.editable?.[key])
 }
 
-function onUpdate(key: string, value: any) {
-  draft.value = { ...draft.value, [key]: value }
-  changed.value = { ...changed.value, [key]: value }
+function applyView(next: MemorySettingsView | null | undefined) {
+  if (!next) return
+  view.value = next
+  const values: Record<string, any> = {}
+  for (const [key, entry] of Object.entries(next.values || {})) {
+    values[key] = entry.value
+  }
+  draft.value = values
 }
 
 async function load() {
   loading.value = true
   try {
     const res: any = props.level === 'tenant' ? await getTenantMemorySettings() : await getMemorySettings()
-    const data: MemorySettingsView = res?.data
-    view.value = data
-    const next: Record<string, any> = {}
-    for (const [key, entry] of Object.entries(data?.values || {})) {
-      next[key] = entry.value
-    }
-    draft.value = next
-    changed.value = {}
+    applyView(res?.data)
   } catch (error: any) {
+    // A 404 is the ordinary "memory is switched off for me" state, not a fault.
     if (error?.response?.status !== 404) {
       MessagePlugin.error(t('memory.errors.loadFailed'))
     }
@@ -139,37 +149,30 @@ async function load() {
   }
 }
 
-async function save() {
-  saving.value = true
+async function onUpdate(key: string, value: any) {
+  // Show the new value immediately; the server's reply is authoritative and
+  // replaces it, which is what surfaces a clamp.
+  draft.value = { ...draft.value, [key]: value }
   try {
     const res: any =
       props.level === 'tenant'
-        ? await updateTenantMemorySettings(changed.value)
-        : await updateMemorySettings(changed.value)
+        ? await updateTenantMemorySettings({ [key]: value })
+        : await updateMemorySettings({ [key]: value })
 
     const notes: string[] = res?.data?.notes || []
+    applyView(res?.data?.view)
     if (notes.length) {
       // The server may clamp a value or refuse a key. Saying so is the
       // difference between a setting that quietly disagrees with the form and
       // one the user understands.
       MessagePlugin.warning({ content: notes.join('\n'), duration: 6000 })
-    } else {
-      MessagePlugin.success(t('memory.settings.saved'))
     }
-    view.value = res?.data?.view || view.value
-    changed.value = {}
-    if (view.value) {
-      const next: Record<string, any> = {}
-      for (const [key, entry] of Object.entries(view.value.values || {})) {
-        next[key] = entry.value
-      }
-      draft.value = next
-    }
-    emit('saved')
+    emit('changed')
   } catch {
     MessagePlugin.error(t('memory.errors.saveFailed'))
-  } finally {
-    saving.value = false
+    // Put the stored value back rather than leaving the form asserting
+    // something that was never saved.
+    await load()
   }
 }
 
@@ -178,48 +181,40 @@ defineExpose({ reload: load })
 </script>
 
 <style scoped lang="less">
-.memory-settings {
-  padding: 16px 4px 8px;
+.memory-settings-panel {
+  display: block;
+  width: 100%;
+}
 
-  &__head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: var(--td-text-color-secondary, #666);
-    margin-bottom: 16px;
+.settings-block {
+  margin-top: 28px;
+
+  &--first {
+    margin-top: 0;
   }
 
-  &__spacer {
-    flex: 1;
+  &__title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    margin: 0 0 4px 0;
+  }
+
+  &__desc {
+    font-size: 13px;
+    color: var(--td-text-color-secondary);
+    margin: 0;
+    line-height: 1.5;
   }
 }
 
 .settings-group {
-  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+}
 
-  &__head {
-    margin-bottom: 10px;
-
-    h3 {
-      margin: 0;
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--td-text-color-primary, #000);
-    }
-
-    p {
-      margin: 4px 0 0;
-      font-size: 12px;
-      line-height: 1.6;
-      color: var(--td-text-color-secondary, #888);
-    }
-  }
-
-  &__rows {
-    border: 1px solid var(--td-component-stroke, #e7e7e7);
-    border-radius: 10px;
-    overflow: hidden;
-  }
+.settings-more {
+  margin-top: 16px;
+  font-size: 13px;
 }
 </style>

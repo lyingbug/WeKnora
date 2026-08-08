@@ -85,7 +85,7 @@
                         <div class="menu_item-box">
                             <div class="menu_icon">
                                 <img class="icon"
-                                    :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'agent' ? agentIcon : item.icon == 'memory' ? memoryIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : prefixIcon)"
+                                    :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'agent' ? agentIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : prefixIcon)"
                                     alt="">
                             </div>
                             <template v-if="!uiStore.sidebarCollapsed">
@@ -435,7 +435,7 @@ const getIconActiveState = (itemPath: string) => {
 // One list, because two hand-maintained copies of the same membership test drift:
 // a menu entry added to the store but to neither filter renders nowhere at all,
 // reachable only by typing its URL.
-const SIDEBAR_MENU_PATHS = ['creatChat', 'knowledge-bases', 'agents', 'memory', 'organizations'];
+const SIDEBAR_MENU_PATHS = ['creatChat', 'knowledge-bases', 'agents', 'organizations'];
 
 const topMenuItems = computed<MenuItem[]>(() => {
     return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) =>
@@ -1034,7 +1034,6 @@ let prefixIcon = ref('prefixIcon.svg');
 let logoutIcon = ref('logout.svg');
 let settingIcon = ref('setting.svg');
 let agentIcon = ref('agent.svg');
-let memoryIcon = ref('memory.svg');
 let organizationIcon = ref('organization.svg');
 let pathPrefix = ref(route.name)
 const getIcon = (path: string) => {
@@ -1043,7 +1042,6 @@ const getIcon = (path: string) => {
     const creatChatActiveState = getIconActiveState('creatChat');
     const settingsActiveState = getIconActiveState('settings');
     const agentsActiveState = route.name === 'agentList';
-    const memoryActiveState = route.name === 'memoryCenter';
     const organizationsActiveState = route.name === 'organizationList';
 
     // 知识库图标：只在知识库页面显示绿色
@@ -1053,7 +1051,6 @@ const getIcon = (path: string) => {
     agentIcon.value = agentsActiveState ? 'agent-green.svg' : 'agent.svg';
 
     // 记忆图标：只在记忆中心显示绿色
-    memoryIcon.value = memoryActiveState ? 'memory-green.svg' : 'memory.svg';
 
     // 组织图标：只在组织页面显示绿色
     organizationIcon.value = organizationsActiveState ? 'organization-green.svg' : 'organization.svg';

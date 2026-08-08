@@ -2557,7 +2557,6 @@ export default {
       loading: '加载中...',
       empty: '暂无可配置的系统设置',
       saving: '保存中',
-      saved: '已保存',
       saveAnnouncement: '{label} 已保存',
       badgeRequiresRestart: '需重启',
       badgeSecret: '敏感',
@@ -3585,7 +3584,6 @@ export default {
     },
     buttons: {
       create: '创建知识库',
-      save: '保存配置',
       saveAndClose: '保存并关闭',
     },
     postCreateHint: {
@@ -5893,7 +5891,6 @@ export default {
     }
   },
   menu: {
-    memory: '记忆',
     knowledgeBase: '知识库',
     agents: '智能体',
     organizations: '共享空间',
@@ -5929,6 +5926,7 @@ export default {
       graph: '图谱',
     },
     stats: {
+      summary: '生效 {active} 条 · 知识库锚点 {anchors} 个',
       active: '生效记忆',
       pending: '待确认',
       anchors: '知识库锚点',
@@ -5940,7 +5938,22 @@ export default {
       export: '导出',
       forgetAll: '全部忘记',
     },
+    policy: {
+      navLabel: '长期记忆策略',
+      title: '长期记忆策略',
+      description: '为整个工作空间设定长期记忆的上限：这里允许到什么程度，成员最多就能做到什么程度。',
+      hintLabel: '这里设置的是上限',
+      hintText: '成员可以在自己的「长期记忆」里选择更严格的做法，但不能超过这里允许的范围。被这里锁定的项，在成员那边会显示为只读并说明原因。',
+    },
+    data: {
+      title: '数据',
+      exportLabel: '导出我的记忆',
+      exportDesc: '导出为 JSON，包含全部记忆页与来源信息。',
+      forgetLabel: '忘记全部',
+      forgetDesc: '永久删除你的全部记忆与候选，不可恢复。',
+    },
     capture: {
+      label: '当前写入方式',
       openSettings: '调整写入方式',
       off: '当前写入方式为「完全不记」，对话中的任何内容都不会被记住。',
       explicit_only: '当前写入方式为「只记我要求的」：在对话里说「记住……」才会存下来，系统不会自行从聊天里抽取。想让它自动整理，改成自动抽取即可。',
@@ -5965,6 +5978,7 @@ export default {
       revert: '回滚',
     },
     list: {
+      title: '我的记忆',
       searchPlaceholder: '搜索记忆',
       allTypes: '全部类型',
       statusActive: '生效中',
@@ -6057,11 +6071,8 @@ export default {
       writeEnabledDesc: '关掉后与这个智能体的对话不会产生任何记忆。记住什么、允许记哪几类，由用户在个人设置里决定。',
     },
     settings: {
-      personalTitle: '长期记忆',
-      workspaceTitle: '长期记忆策略',
       showAdvanced: '显示全部设置',
-      save: '保存',
-      saved: '设置已保存',
+      hideAdvanced: '收起其他设置',
       lockedByPlatform: '该项由平台锁定，任何层级都不可修改。',
       lockedBy: '已被{layer}锁定，在这里修改不会生效。',
       notSettableHere: '该项不在此层级配置。',

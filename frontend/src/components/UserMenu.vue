@@ -78,6 +78,10 @@
           <t-icon name="user" class="menu-icon" />
           <span>{{ $t('general.personalSettings') }}</span>
         </div>
+        <div class="menu-item" @click="handleQuickNav('memory-personal')">
+          <t-icon name="lightbulb" class="menu-icon" />
+          <span>{{ $t('memory.title') }}</span>
+        </div>
         <div v-if="!authStore.isLiteMode" class="menu-item" @click="handleQuickNav('tenant')">
           <t-icon name="user-circle" class="menu-icon" />
           <span>{{ $t('settings.workspaceSettings') }}</span>

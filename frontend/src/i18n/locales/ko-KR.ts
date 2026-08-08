@@ -2557,7 +2557,6 @@ export default {
       loading: '로딩 중...',
       empty: '설정 가능한 시스템 항목이 없습니다',
       saving: '저장 중',
-      saved: '저장됨',
       saveAnnouncement: '{label} 저장됨',
       badgeRequiresRestart: '재시작 필요',
       badgeSecret: '민감',
@@ -3585,7 +3584,6 @@ export default {
     },
     buttons: {
       create: '지식베이스 생성',
-      save: '설정 저장',
       saveAndClose: '저장 후 닫기',
     },
     postCreateHint: {
@@ -5893,7 +5891,6 @@ export default {
     }
   },
   menu: {
-    memory: '메모리',
     knowledgeBase: '지식베이스',
     agents: '에이전트',
     organizations: '공유 공간',
@@ -5924,9 +5921,24 @@ export default {
     title: 'My memory',
     subtitle: 'What WeKnora remembers about you: your role, your preferences, what you are working on, the conclusions you reached and the questions you left open. Everything here can be read, edited and deleted.',
     tabs: { memories: 'Memories', inbox: 'To review', graph: 'Graph' },
-    stats: { active: 'Active', pending: 'To review', anchors: 'Anchors', archived: 'Archived' },
+    stats: {summary: '{active} active · {anchors} knowledge-base anchors',  active: 'Active', pending: 'To review', anchors: 'Anchors', archived: 'Archived' },
     actions: { openSettings: 'Memory settings', create: 'New memory', export: 'Export', forgetAll: 'Forget everything' },
+    policy: {
+      navLabel: 'Memory policy',
+      title: 'Long-term memory policy',
+      description: 'Sets the ceiling for the whole workspace: what is permitted here is the most any member can do.',
+      hintLabel: 'This sets a ceiling',
+      hintText: 'Members may choose something stricter for themselves under their own memory settings, but never more permissive than this. Anything pinned here shows as read-only on their screen, with the reason.',
+    },
+    data: {
+      title: 'Data',
+      exportLabel: 'Export my memories',
+      exportDesc: 'Downloads JSON containing every memory page and its provenance.',
+      forgetLabel: 'Forget everything',
+      forgetDesc: 'Permanently deletes all of your memories and pending candidates. This cannot be undone.',
+    },
     capture: {
+      label: 'Current capture mode',
       openSettings: 'Change how memories are written',
       off: 'Writing is switched off, so nothing from a conversation is remembered.',
       explicit_only: 'Only what you ask for is written: say "remember ..." in a conversation and it is stored. Nothing is extracted from chat on its own. Switch to automatic extraction to change that.',
@@ -5946,6 +5958,7 @@ export default {
     },
     editSource: { pipeline: 'Automatic', agent: 'Agent', user: 'You', revert: 'Reverted' },
     list: {
+      title: 'My memories',
       searchPlaceholder: 'Search memories',
       allTypes: 'All types',
       statusActive: 'Active',
@@ -6038,11 +6051,8 @@ export default {
       writeEnabledDesc: 'Off means conversations with this agent record nothing. What may be recorded, and of which kinds, stays the user\'s decision in their own settings.',
     },
     settings: {
-      personalTitle: 'Long-term memory',
-      workspaceTitle: 'Memory policy',
       showAdvanced: 'Show all settings',
-      save: 'Save',
-      saved: 'Settings saved',
+      hideAdvanced: 'Hide other settings',
       lockedByPlatform: 'Locked by the platform; no layer can change it.',
       lockedBy: 'Locked by {layer}; changing it here would have no effect.',
       notSettableHere: 'Not configured at this level.',

@@ -114,7 +114,6 @@ onMounted(load)
 
 <style scoped lang="less">
 .memory-graph {
-  padding: 16px 4px 8px;
 
   &__toolbar {
     display: flex;

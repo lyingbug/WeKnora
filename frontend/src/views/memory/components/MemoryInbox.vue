@@ -1,8 +1,8 @@
 <template>
   <div class="memory-inbox">
-    <t-alert theme="info" class="memory-inbox__intro">
-      {{ t('memory.inbox.intro') }}
-    </t-alert>
+    <div class="memory-inbox__intro" role="note">
+      <p class="memory-inbox__intro-text">{{ t('memory.inbox.intro') }}</p>
+    </div>
 
     <t-loading :loading="loading" :show-overlay="false">
       <div v-if="!notes.length && !loading" class="memory-inbox__empty">
@@ -125,23 +125,32 @@ onMounted(load)
 
 <style scoped lang="less">
 .memory-inbox {
-  padding: 16px 4px 8px;
-
   &__intro {
     margin-bottom: 16px;
+    padding: 10px 12px;
+    background: var(--td-bg-color-secondarycontainer);
+    border: 1px solid var(--td-component-stroke);
+    border-radius: 6px;
+  }
+
+  &__intro-text {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--td-text-color-secondary);
   }
 
   &__empty {
     padding: 48px 0;
     text-align: center;
-    color: var(--td-text-color-placeholder, #bbb);
+    color: var(--td-text-color-placeholder);
     font-size: 13px;
   }
 
   &__items {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
 }
 
@@ -150,8 +159,15 @@ onMounted(load)
   gap: 14px;
   align-items: flex-start;
   padding: 14px 16px;
-  border: 1px solid var(--td-component-stroke, #e7e7e7);
+  border: 1px solid var(--td-component-stroke);
   border-radius: 10px;
+  background: var(--td-bg-color-container);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+
+  &:hover {
+    border-color: var(--td-brand-color-3, var(--td-brand-color));
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+  }
 
   &__body {
     flex: 1;

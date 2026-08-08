@@ -1,17 +1,17 @@
 <template>
-  <div class="setting-row" :class="{ 'is-locked': !editable }">
-    <div class="setting-row__label">
-      <div class="setting-row__name">
+  <div class="setting-row">
+    <div class="setting-info">
+      <label>
         {{ label }}
         <t-tooltip v-if="lockReason" :content="lockReason">
-          <t-icon name="lock-on" class="setting-row__lock" />
+          <t-icon name="lock-on" class="setting-info__lock" />
         </t-tooltip>
-      </div>
-      <p class="setting-row__help">{{ help }}</p>
-      <p v-if="sourceHint" class="setting-row__source">{{ sourceHint }}</p>
+      </label>
+      <p v-if="help" class="desc">{{ help }}</p>
+      <p v-if="sourceHint" class="desc source">{{ sourceHint }}</p>
     </div>
 
-    <div class="setting-row__control">
+    <div class="setting-control">
       <t-switch
         v-if="descriptor.kind === 'bool'"
         :value="Boolean(value)"
@@ -23,7 +23,7 @@
         v-else-if="descriptor.kind === 'enum'"
         :value="value"
         :disabled="!editable"
-        class="setting-row__select"
+        class="setting-control__select"
         @change="(v: any) => $emit('update', descriptor.key, v)"
       >
         <t-option
@@ -38,7 +38,7 @@
         v-else-if="descriptor.kind === 'string_list' && (descriptor.allowed || []).length"
         :value="Array.isArray(value) ? value : []"
         :disabled="!editable"
-        class="setting-row__select"
+        class="setting-control__select"
         multiple
         :min-collapsed-num="3"
         @change="(v: any) => $emit('update', descriptor.key, v)"
@@ -59,7 +59,7 @@
         :max="descriptor.max"
         :step="descriptor.kind === 'float' ? 0.05 : 1"
         :decimal-places="descriptor.kind === 'float' ? 2 : 0"
-        class="setting-row__number"
+        class="setting-control__number"
         theme="column"
         @change="(v: any) => $emit('update', descriptor.key, Number(v))"
       />
@@ -68,14 +68,14 @@
         v-else-if="descriptor.kind === 'string'"
         :value="String(value ?? '')"
         :disabled="!editable"
-        class="setting-row__input"
+        class="setting-control__input"
         @change="(v: any) => $emit('update', descriptor.key, v)"
       />
 
       <!-- Free-form lists and maps (deny patterns, relation weights, per-type
            half-lives) are rare, structural, and dangerous to mistype, so they
            are shown read-only here rather than given a half-usable editor. -->
-      <span v-else class="setting-row__readonly">{{ readonlyValue }}</span>
+      <span v-else class="setting-control__readonly">{{ readonlyValue }}</span>
     </div>
   </div>
 </template>
@@ -160,62 +160,65 @@ const readonlyValue = computed(() => {
 </script>
 
 <style scoped lang="less">
+/* Mirrors the row shape used across the settings dialog (see
+   ChatHistorySettings.vue) so a generated row is indistinguishable from a
+   hand-written one. */
 .setting-row {
   display: flex;
   align-items: flex-start;
-  gap: 24px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--td-component-stroke, #f0f0f0);
+  justify-content: space-between;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--td-component-stroke);
 
   &:last-child {
     border-bottom: none;
   }
+}
 
-  &.is-locked {
-    background: var(--td-bg-color-secondarycontainer, #fafafa);
-  }
+.setting-info {
+  flex: 1;
+  max-width: 65%;
+  padding-right: 24px;
 
-  &__label {
-    flex: 1;
-    min-width: 0;
-  }
-
-  &__name {
+  label {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 500;
-    color: var(--td-text-color-primary, #000);
+    color: var(--td-text-color-primary);
+    margin-bottom: 4px;
   }
 
   &__lock {
-    color: var(--td-text-color-placeholder, #aaa);
+    color: var(--td-text-color-placeholder);
   }
 
-  &__help {
-    margin: 4px 0 0;
-    font-size: 12px;
-    line-height: 1.6;
-    color: var(--td-text-color-secondary, #888);
+  .desc {
+    font-size: 13px;
+    color: var(--td-text-color-secondary);
+    margin: 0;
+    line-height: 1.5;
   }
 
-  &__source {
-    margin: 4px 0 0;
-    font-size: 11px;
-    color: var(--td-text-color-placeholder, #aaa);
+  /* Where the value came from is secondary to what the setting does, so it
+     sits below the description in the quieter placeholder tone. */
+  .source {
+    margin-top: 4px;
+    color: var(--td-text-color-placeholder);
   }
+}
 
-  &__control {
-    flex-shrink: 0;
-    min-width: 200px;
-    display: flex;
-    justify-content: flex-end;
-  }
+.setting-control {
+  flex-shrink: 0;
+  min-width: 280px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
 
   &__select,
   &__input {
-    width: 220px;
+    width: 100%;
   }
 
   &__number {
@@ -223,9 +226,8 @@ const readonlyValue = computed(() => {
   }
 
   &__readonly {
-    font-size: 12px;
-    color: var(--td-text-color-placeholder, #999);
-    max-width: 240px;
+    font-size: 13px;
+    color: var(--td-text-color-placeholder);
     text-align: right;
     word-break: break-word;
   }

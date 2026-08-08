@@ -71,7 +71,8 @@
             <div class="settings-content">
               <div class="content-wrapper" :class="{
                 'content-wrapper--wide': currentSection === 'members',
-                'content-wrapper--full': SYSTEM_ADMIN_SECTIONS.has(currentSection) || isIntegrationSection(currentSection),
+                'content-wrapper--full': SYSTEM_ADMIN_SECTIONS.has(currentSection) || isIntegrationSection(currentSection)
+                  || currentSection === 'memory-personal',
               }">
                 <!-- 角色不允许访问当前 section（deep-link 进来 / 跨空间切换后角色降级）—— 优先于具体 section 渲染。
                      正常导航走 navItems filter 不会到这里，但 watch(navItems) 的 fallback 会在角色降级
@@ -114,14 +115,14 @@
                     <ChatHistorySettings />
                   </div>
 
-                  <!-- 长期记忆 · 个人设置 -->
+                  <!-- 长期记忆 · 我的记忆与设置 -->
                   <div v-if="currentSection === 'memory-personal'" class="section">
-                    <MemorySettingsPanel level="user" />
+                    <MemorySettings />
                   </div>
 
                   <!-- 长期记忆 · 工作空间策略 -->
                   <div v-if="currentSection === 'memory'" class="section">
-                    <MemorySettingsPanel level="tenant" />
+                    <MemoryPolicySettings />
                   </div>
 
                   <!-- 向量数据库引擎 -->
@@ -212,7 +213,8 @@ import OllamaSettings from './OllamaSettings.vue'
 import McpSettings from './McpSettings.vue'
 import WebSearchSettings from './WebSearchSettings.vue'
 import ChatHistorySettings from './ChatHistorySettings.vue'
-import MemorySettingsPanel from '../memory/components/MemorySettingsPanel.vue'
+import MemorySettings from './MemorySettings.vue'
+import MemoryPolicySettings from './MemoryPolicySettings.vue'
 import VectorStoreSettings from './VectorStoreSettings.vue'
 import ParserEngineSettings from './ParserEngineSettings.vue'
 import StorageEngineSettings from './StorageBackendSettings.vue'
@@ -337,8 +339,8 @@ const navItems = computed(() => {
     { key: 'models', icon: 'control-platform', label: t('settings.modelManagement') },
     { key: 'websearch', icon: 'search', label: t('settings.webSearchConfig') },
     { key: 'chathistory', icon: 'chat', label: t('chatHistorySettings.title') },
-    { key: 'memory-personal', icon: 'lightbulb', label: t('memory.settings.personalTitle') },
-    { key: 'memory', icon: 'lightbulb', label: t('memory.settings.workspaceTitle') },
+    { key: 'memory-personal', icon: 'lightbulb', label: t('memory.title') },
+    { key: 'memory', icon: 'lightbulb', label: t('memory.policy.navLabel') },
     { key: 'vectorstore', icon: 'data-base', label: t('settings.vectorStoreEngine') },
     { key: 'parser', icon: 'file-search', label: t('settings.parserEngine') },
     { key: 'storage', icon: 'cloud', label: t('settings.storageEngine') },

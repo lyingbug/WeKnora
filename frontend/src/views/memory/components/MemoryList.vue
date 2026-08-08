@@ -224,7 +224,6 @@ onMounted(load)
 
 <style scoped lang="less">
 .memory-list {
-  padding: 16px 4px 8px;
 
   &__filters {
     display: flex;
@@ -252,7 +251,7 @@ onMounted(load)
   &__items {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
   }
 
   &__pagination {
@@ -265,13 +264,14 @@ onMounted(load)
   align-items: flex-start;
   gap: 12px;
   padding: 14px 16px;
-  border: 1px solid var(--td-component-stroke, #e7e7e7);
+  border: 1px solid var(--td-component-stroke);
   border-radius: 10px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  background: var(--td-bg-color-container);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
 
   &:hover {
-    border-color: var(--td-brand-color, #0052d9);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    border-color: var(--td-brand-color-3, var(--td-brand-color));
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
   }
 
   &.is-archived {
