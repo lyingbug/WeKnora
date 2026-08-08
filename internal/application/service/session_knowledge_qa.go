@@ -161,6 +161,10 @@ func (s *sessionService) KnowledgeQA(
 	needsRAG := hasKB || req.WebSearchEnabled
 	hasHistory := chatManage.MaxRounds > 0
 
+	// Resolve the caller's memory before assembling the pipeline: the recall
+	// stage only exists in the plan when there is a space to recall from.
+	memoryRecallEnabled := s.prepareMemory(ctx, chatManage, req)
+
 	var pipeline []types.EventType
 	if !needsRAG {
 		// Pure chat — no retrieval needed.
@@ -179,6 +183,7 @@ func (s *sessionService) KnowledgeQA(
 
 		pipeline = types.NewPipelineBuilder().
 			AddIf(hasHistory, types.LOAD_HISTORY).
+			AddIf(memoryRecallEnabled, types.MEMORY_RECALL).
 			Add(types.CHAT_COMPLETION_STREAM).
 			Build()
 	} else {
@@ -186,6 +191,7 @@ func (s *sessionService) KnowledgeQA(
 		pipeline = types.NewPipelineBuilder().
 			AddIf(hasHistory, types.LOAD_HISTORY).
 			Add(types.QUERY_UNDERSTAND).
+			AddIf(memoryRecallEnabled, types.MEMORY_RECALL).
 			Add(types.CHUNK_SEARCH_PARALLEL).
 			Add(types.CHUNK_RERANK).
 			AddIf(req.WebSearchEnabled, types.WEB_FETCH).
@@ -215,6 +221,12 @@ func (s *sessionService) KnowledgeQA(
 		})
 		return err
 	}
+
+	// The turn produced an answer, so record what it revealed: which
+	// knowledge-base pages were actually used, and whether anything the user
+	// said is worth remembering. Both are best-effort and neither blocks.
+	s.recordMemoryAnchors(ctx, chatManage, req.AssistantMessageID)
+	s.considerMemoryExtraction(ctx, chatManage, len(chatManage.History)+1)
 
 	// Note: Answer events are now emitted directly by chat_completion_stream plugin
 	// Completion event will be emitted when the last answer event has Done=true

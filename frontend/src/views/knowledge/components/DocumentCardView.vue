@@ -4,6 +4,19 @@ import { useI18n } from 'vue-i18n';
 import { formatFileSize } from '@/utils/files';
 import { useTagChipsOverflow } from '@/composables/useTagChipsOverflow';
 import DocumentActionMenu from './DocumentActionMenu.vue';
+import MemoryStateDot from '@/components/memory/MemoryStateDot.vue';
+
+/** Per-item illumination, keyed by document id. Empty when the reader has
+ *  switched it off, or has no memory space. */
+export interface MemoryOverlayEntry {
+  state: string
+  heat: number
+  anchor_count: number
+  memory_count: number
+  relations: string[]
+  last_seen_at?: string
+}
+
 import FolderPickerMenu, { type FolderOption } from './FolderPickerMenu.vue';
 import KnowledgeProcessingTimeline from '@/components/knowledge-processing-timeline.vue';
 
@@ -54,6 +67,8 @@ const props = defineProps<{
    * the grid spans several folders, i.e. while filtering.
    */
   showFolderPath?: boolean;
+  /** Illumination state per document id; absent ids are simply not lit. */
+  memoryOverlay?: Record<string, MemoryOverlayEntry>;
   // Move sub-flow state
   moveMenuMode: 'normal' | 'targets' | 'confirm';
   moveTargetKbs: any[];
@@ -62,6 +77,11 @@ const props = defineProps<{
   moveMode: 'reuse_vectors' | 'reparse';
   moveSubmitting: boolean;
 }>();
+
+/** Illumination for one document, or undefined when it is not lit. */
+function litState(id: string): MemoryOverlayEntry | undefined {
+  return props.memoryOverlay?.[id]
+}
 
 const emit = defineEmits<{
   (e: 'open', item: KnowledgeCard): void;
@@ -334,6 +354,9 @@ const handleAction = (action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse'
               @change="(checked: boolean, ctx?: { e?: Event }) => emit('toggle-checkbox', item.id, checked, ctx)"
             />
           </div>
+          <MemoryStateDot v-if="litState(item.id)" :state="litState(item.id)!.state"
+            :anchor-count="litState(item.id)!.anchor_count"
+            :last-seen-at="litState(item.id)!.last_seen_at" class="card-memory-dot" />
           <span class="card-content-title" :title="item.file_name">{{ item.file_name }}</span>
           <t-popup
             v-if="canEdit"
@@ -857,6 +880,13 @@ const handleAction = (action: 'edit' | 'view-trace' | 'reparse' | 'cancel-parse'
   .failure { color: var(--td-error-color); }
 
   .card-content-nav {
+
+    .card-memory-dot {
+
+      margin-right: 6px;
+
+    }
+
     flex-shrink: 0;
     display: flex;
     align-items: flex-start;

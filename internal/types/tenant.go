@@ -118,6 +118,9 @@ type Tenant struct {
 	RetrievalConfig *RetrievalConfig `yaml:"retrieval_config" json:"retrieval_config" gorm:"type:jsonb"`
 	// API principal config: controls how X-API-Key requests map to terminal principals.
 	APIPrincipalConfig *APIPrincipalConfig `yaml:"api_principal_config" json:"-" gorm:"type:jsonb"`
+	// Memory config: workspace-level long-term memory settings, stored as a
+	// sparse patch so "unset" stays distinguishable from "set to the default".
+	MemoryConfig *MemorySettingsPatch `yaml:"memory_config" json:"memory_config,omitempty" gorm:"type:jsonb"`
 	// Creation time
 	CreatedAt time.Time `yaml:"created_at"          json:"created_at"`
 	// Last updated time

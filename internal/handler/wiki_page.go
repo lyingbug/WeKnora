@@ -24,6 +24,9 @@ type WikiPageHandler struct {
 	kbService    interfaces.KnowledgeBaseService
 	lintService  *service.WikiLintService
 	auditService interfaces.AuditLogService
+	// memoryService supplies the per-caller illumination overlay. Optional:
+	// the handler works unchanged when memory is not wired in.
+	memoryService interfaces.MemoryService
 }
 
 // NewWikiPageHandler creates a new wiki page handler
@@ -32,12 +35,14 @@ func NewWikiPageHandler(
 	kbService interfaces.KnowledgeBaseService,
 	lintService *service.WikiLintService,
 	auditService interfaces.AuditLogService,
+	memoryService interfaces.MemoryService,
 ) *WikiPageHandler {
 	return &WikiPageHandler{
-		wikiService:  wikiService,
-		kbService:    kbService,
-		lintService:  lintService,
-		auditService: auditService,
+		wikiService:   wikiService,
+		kbService:     kbService,
+		lintService:   lintService,
+		auditService:  auditService,
+		memoryService: memoryService,
 	}
 }
 
@@ -868,7 +873,35 @@ func (h *WikiPageHandler) GetGraph(c *gin.Context) {
 		return
 	}
 
+	h.applyMemoryOverlay(c, kbID, graph)
 	c.JSON(http.StatusOK, graph)
+}
+
+// applyMemoryOverlay decorates graph nodes with the caller's engagement.
+//
+// Opt-in via ?overlay=memory, and additive only: without the parameter the
+// response is byte-for-byte what it was before this feature existed, which is
+// what lets the illumination layer ship without touching any existing client.
+//
+// Failures are swallowed. The graph is the primary content here; the overlay is
+// a decoration, and a decoration must not be able to break the page.
+func (h *WikiPageHandler) applyMemoryOverlay(c *gin.Context, kbID string, graph *types.WikiGraphData) {
+	if h.memoryService == nil || graph == nil {
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.Query("overlay")), "memory") {
+		return
+	}
+	overlay, err := h.memoryService.Overlay(c.Request.Context(), kbID, types.MemoryAnchorTargetWikiPage)
+	if err != nil || len(overlay) == 0 {
+		return
+	}
+	for i := range graph.Nodes {
+		if node, ok := overlay[graph.Nodes[i].Slug]; ok {
+			decorated := node
+			graph.Nodes[i].Memory = &decorated
+		}
+	}
 }
 
 // GetStats godoc

@@ -1,0 +1,299 @@
+package service
+
+import (
+	"context"
+	"strings"
+
+	"github.com/Tencent/WeKnora/internal/application/service/memory"
+	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/types"
+)
+
+// agentMemoryBriefTokens caps the background line in an agent system prompt.
+// Kept well below the RAG injection budget: an agent turn already carries tool
+// schemas and a long instruction template, and it can fetch detail on demand.
+const agentMemoryBriefTokens = 200
+
+// Long-term memory hooks on the chat path.
+//
+// There are exactly three, and each is deliberately small:
+//
+//   - prepareMemory, before the pipeline runs, resolves whose memory this turn
+//     belongs to and under which settings.
+//   - recordMemoryAnchors, after the answer, notes which knowledge-base pages
+//     were actually cited so the illumination map fills in over time.
+//   - considerMemoryExtraction, also after the answer, decides whether anything
+//     said this turn is worth remembering.
+//
+// All three are best-effort. Memory enriches a conversation; it must never be
+// able to break one.
+
+// prepareMemory resolves the caller's memory space and settings for this turn.
+// Returns true when memory is active and the recall stage should run.
+func (s *sessionService) prepareMemory(
+	ctx context.Context, chatManage *types.ChatManage, req *types.QARequest,
+) bool {
+	if s.memoryService == nil || s.memorySettings == nil {
+		return false
+	}
+
+	space, err := s.memoryService.EnsureSpace(ctx)
+	if err != nil {
+		logger.Warnf(ctx, "memory: could not resolve space for session %s: %v", req.Session.ID, err)
+		return false
+	}
+	if space == nil {
+		return false
+	}
+
+	opts := types.MemorySettingsResolveOptions{
+		TenantID:   req.Session.TenantID,
+		SpaceID:    space.ID,
+		SpacePatch: space.Config,
+	}
+	if userID, ok := types.UserIDFromContext(ctx); ok {
+		opts.UserID = userID
+	}
+	// The agent is already loaded here, so its overrides are passed straight
+	// through rather than costing a second lookup on the chat path.
+	if req.CustomAgent != nil {
+		opts.AgentID = req.CustomAgent.ID
+		opts.AgentPatch = req.CustomAgent.Config.Memory
+	}
+
+	resolution, err := s.memorySettings.Resolve(ctx, opts)
+	if err != nil {
+		logger.Warnf(ctx, "memory: could not resolve settings: %v", err)
+		return false
+	}
+	settings := resolution.Settings
+	if !settings.Enabled {
+		return false
+	}
+
+	chatManage.MemorySpaceID = space.ID
+	chatManage.MemorySettings = settings
+	chatManage.MemoryAgentID = opts.AgentID
+	return settings.RecallEnabled
+}
+
+// recordMemoryAnchors notes the knowledge-base pages that were cited.
+//
+// This is the cheapest signal in the subsystem and the one that carries the
+// most: no model, one upsert per cited page, and over time it draws the map of
+// which parts of the knowledge base this person has actually walked through.
+func (s *sessionService) recordMemoryAnchors(
+	ctx context.Context, chatManage *types.ChatManage, messageID string,
+) {
+	if s.memoryRecall == nil || chatManage.MemorySpaceID == "" {
+		return
+	}
+	if !chatManage.MemorySettings.AnchorRuntimeEnabled {
+		return
+	}
+
+	targets := memoryAnchorTargets(chatManage.MergeResult)
+	if len(targets) == 0 {
+		return
+	}
+	s.memoryRecall.RecordRetrievalAnchors(ctx, types.MemoryAnchorRecordRequest{
+		TenantID:  chatManage.TenantID,
+		SpaceID:   chatManage.MemorySpaceID,
+		SessionID: chatManage.SessionID,
+		MessageID: messageID,
+		Query:     chatManage.Query,
+		Settings:  chatManage.MemorySettings,
+		Targets:   targets,
+	})
+}
+
+// memoryAnchorTargets projects the cited results onto anchor targets.
+//
+// Wiki pages anchor by slug because that is what the illumination overlay keys
+// on; ordinary document chunks anchor by knowledge id, which is the closest
+// stable handle on "the thing the user read".
+func memoryAnchorTargets(results []*types.SearchResult) []types.MemoryAnchorTarget {
+	seen := make(map[string]struct{}, len(results))
+	targets := make([]types.MemoryAnchorTarget, 0, len(results))
+
+	for _, result := range results {
+		if result == nil || result.KnowledgeBaseID == "" {
+			continue
+		}
+		target := types.MemoryAnchorTarget{KnowledgeBaseID: result.KnowledgeBaseID}
+		if result.ChunkType == types.ChunkTypeWikiPage {
+			slug := wikiSlugFromResult(result)
+			if slug == "" {
+				continue
+			}
+			target.TargetKind = types.MemoryAnchorTargetWikiPage
+			target.TargetRef = slug
+		} else {
+			if result.KnowledgeID == "" {
+				continue
+			}
+			target.TargetKind = types.MemoryAnchorTargetKnowledge
+			target.TargetRef = result.KnowledgeID
+		}
+
+		key := target.KnowledgeBaseID + "|" + target.TargetKind + "|" + target.TargetRef
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		targets = append(targets, target)
+	}
+	return targets
+}
+
+// wikiSlugFromResult recovers the wiki slug a retrieval result came from.
+func wikiSlugFromResult(result *types.SearchResult) string {
+	if slug := strings.TrimSpace(result.Metadata["wiki_slug"]); slug != "" {
+		return slug
+	}
+	// Wiki chunks are stored under a synthetic id; the knowledge id is the
+	// stable fallback identifier when no slug travelled with the result.
+	if strings.TrimSpace(result.KnowledgeID) != "" {
+		return result.KnowledgeID
+	}
+	return ""
+}
+
+// considerMemoryExtraction hands the finished turn to the write-path gate.
+func (s *sessionService) considerMemoryExtraction(
+	ctx context.Context, chatManage *types.ChatManage, turnIndex int,
+) {
+	if s.memoryWriter == nil || chatManage.MemorySpaceID == "" {
+		return
+	}
+	s.memoryWriter.ConsiderSession(ctx, types.MemoryExtractTrigger{
+		TenantID:  chatManage.TenantID,
+		SpaceID:   chatManage.MemorySpaceID,
+		SessionID: chatManage.SessionID,
+		Settings:  chatManage.MemorySettings,
+		UserText:  chatManage.Query,
+		MessageID: chatManage.UserMessageID,
+		TurnIndex: turnIndex,
+		// Extraction falls back to the conversation's model when no dedicated
+		// one is configured, so the turn's model travels with the trigger.
+		ChatModelID: chatManage.ChatModelID,
+		// The agent took part in resolving these settings, so it has to take
+		// part again when the background task re-resolves them.
+		AgentID: chatManage.MemoryAgentID,
+		// Only knowable here: the mapping from principal to session scope
+		// differs per channel, and the task has no principal.
+		SessionOwnerID: types.SessionOwnerIDFromContext(ctx),
+		// The turn's retrieval scope travels with the trigger so consolidation
+		// can resolve entity names the extractor proposed against the right
+		// wikis. Without it the candidates are collected and never used.
+		KnowledgeBaseIDs: chatManage.KnowledgeBaseIDs,
+	})
+}
+
+// buildAgentMemoryBrief renders the background line an agent receives.
+//
+// Separate from the RAG recall path because the shape of the need differs: the
+// RAG prompt wants the memories relevant to this question, while an agent wants
+// to know who it is talking to and can fetch the rest with memory_search. So the
+// brief carries only the resident memories and open questions, under a much
+// tighter budget.
+//
+// Returns "" on any problem. A missing brief costs a slightly less personal
+// answer; a failure here must not cost the answer itself.
+func (s *sessionService) buildAgentMemoryBrief(ctx context.Context, req *types.QARequest) string {
+	if s.memoryRecall == nil {
+		return ""
+	}
+	space, settings, ok := s.resolveAgentMemory(ctx, req)
+	if !ok || !settings.RecallEnabled {
+		return ""
+	}
+
+	result := s.memoryRecall.Recall(ctx, types.MemoryRecallRequest{
+		TenantID:         req.Session.TenantID,
+		SpaceID:          space.ID,
+		Query:            req.Query,
+		Settings:         settings,
+		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
+		Language:         types.LanguageNameFromContext(ctx),
+	})
+	if result == nil {
+		return ""
+	}
+
+	brief := memory.FormatMemoryBrief(result, types.LanguageNameFromContext(ctx), agentMemoryBriefTokens)
+	if brief != "" {
+		logger.Infof(ctx, "memory: agent brief attached for session %s (%d tokens)",
+			req.Session.ID, memory.EstimateTokens(brief))
+	}
+	return brief
+}
+
+// resolveAgentMemory resolves whose memory an agent turn belongs to, and the
+// settings that apply once the agent's own overrides are folded in.
+//
+// Reports false when memory is off or unavailable, in which case the agent runs
+// exactly as it did before the feature existed.
+func (s *sessionService) resolveAgentMemory(
+	ctx context.Context, req *types.QARequest,
+) (*types.MemorySpace, types.MemorySettings, bool) {
+	if s.memoryService == nil || s.memorySettings == nil {
+		return nil, types.MemorySettings{}, false
+	}
+	space, err := s.memoryService.EnsureSpace(ctx)
+	if err != nil || space == nil {
+		return nil, types.MemorySettings{}, false
+	}
+
+	opts := types.MemorySettingsResolveOptions{
+		TenantID:   req.Session.TenantID,
+		SpaceID:    space.ID,
+		SpacePatch: space.Config,
+	}
+	if userID, ok := types.UserIDFromContext(ctx); ok {
+		opts.UserID = userID
+	}
+	if req.CustomAgent != nil {
+		opts.AgentID = req.CustomAgent.ID
+		opts.AgentPatch = req.CustomAgent.Config.Memory
+	}
+	resolution, err := s.memorySettings.Resolve(ctx, opts)
+	if err != nil || !resolution.Settings.Enabled {
+		return nil, types.MemorySettings{}, false
+	}
+	return space, resolution.Settings, true
+}
+
+// considerAgentMemoryExtraction runs the write path for a finished agent turn.
+//
+// Agent mode has memory tools, but relying on them alone means a memory is only
+// stored when the model chooses to store it. Asking to be remembered should work
+// the same way in both modes, so the same gate runs here.
+func (s *sessionService) considerAgentMemoryExtraction(
+	ctx context.Context, req *types.QARequest, modelID string, turnIndex int,
+) {
+	if s.memoryWriter == nil {
+		return
+	}
+	space, settings, ok := s.resolveAgentMemory(ctx, req)
+	if !ok {
+		return
+	}
+	agentID := ""
+	if req.CustomAgent != nil {
+		agentID = req.CustomAgent.ID
+	}
+	s.memoryWriter.ConsiderSession(ctx, types.MemoryExtractTrigger{
+		TenantID:         req.Session.TenantID,
+		SpaceID:          space.ID,
+		SessionID:        req.Session.ID,
+		Settings:         settings,
+		UserText:         req.Query,
+		MessageID:        req.UserMessageID,
+		TurnIndex:        turnIndex,
+		ChatModelID:      modelID,
+		AgentID:          agentID,
+		SessionOwnerID:   types.SessionOwnerIDFromContext(ctx),
+		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
+	})
+}

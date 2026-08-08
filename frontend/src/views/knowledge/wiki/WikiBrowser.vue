@@ -76,6 +76,39 @@
             </div>
           </div>
           <div class="legend-divider"></div>
+          <div class="legend-items legend-memory">
+            <div class="legend-item clickable" :class="{ disabled: !illuminateEnabled }" @click="toggleIlluminate">
+              <t-icon name="lightbulb" />
+              {{ $t('memory.illuminate.toggle') }}
+            </div>
+            <template v-if="illuminateEnabled">
+              <div class="legend-item" :title="$t('memory.illuminate.familiarHint')">
+                <span class="legend-dot legend-dot--familiar"></span>
+                {{ $t('memory.illuminate.familiar') }}
+              </div>
+              <div class="legend-item" :title="$t('memory.illuminate.masteredHint')">
+                <span class="legend-dot legend-dot--mastered"></span>
+                {{ $t('memory.illuminate.mastered') }}
+              </div>
+              <div class="legend-item" :title="$t('memory.illuminate.flaggedHint')">
+                <span class="legend-dot legend-dot--flagged"></span>
+                {{ $t('memory.illuminate.flagged') }}
+              </div>
+              <div v-if="memoryCoverage" class="legend-coverage" :title="$t('memory.illuminate.coverageHint')">
+                <div class="legend-coverage__bar">
+                  <div class="legend-coverage__fill" :style="{ width: memoryCoverage.percent + '%' }"></div>
+                </div>
+                <span class="legend-coverage__text">
+                  {{ $t('memory.illuminate.coverage', {
+                    lit: memoryCoverage.lit_pages,
+                    total: memoryCoverage.total_pages,
+                    percent: memoryCoverage.percent,
+                  }) }}
+                </span>
+              </div>
+            </template>
+          </div>
+          <div class="legend-divider"></div>
           <div class="legend-actions">
             <div class="legend-action" @click="fitGraphToView" title="Fit to View">
               <span class="legend-action-icon"><t-icon name="focus" /></span>
@@ -832,6 +865,7 @@ import {
   type WikiIndexGroup,
   type WikiIndexEntryDTO,
 } from '@/api/wiki'
+import { getMemoryCoverage, type MemoryCoverage } from '@/api/memory'
 
 const router = useRouter()
 const route = useRoute()
@@ -3164,6 +3198,7 @@ async function loadGraph() {
       mode: 'overview',
       limit: GRAPH_OVERVIEW_LIMIT,
       types: graphFilterTypesToArray(),
+      overlay: illuminateEnabled.value ? 'memory' : undefined,
     })
     graphData.value = (res as any).data || res as any
     // Seed the search dropdown's empty-state with this overview snapshot
@@ -3217,6 +3252,9 @@ async function loadEgoGraph(slug: string, depth = GRAPH_EGO_DEFAULT_DEPTH) {
       depth,
       limit: GRAPH_EGO_LIMIT,
       types: graphFilterTypesToArray(),
+      // Same overlay as the overview load: without it, drilling into a node
+      // dropped every node back to "unlit".
+      overlay: illuminateEnabled.value ? 'memory' : undefined,
     })
     graphData.value = (res as any).data || res as any
     graphMode.value = 'ego'
@@ -3286,6 +3324,7 @@ async function loadBloomNeighbors(anchorSlug: string, depth = GRAPH_EGO_DEFAULT_
       depth,
       limit: GRAPH_EGO_LIMIT,
       types: graphFilterTypesToArray(),
+      overlay: illuminateEnabled.value ? 'memory' : undefined,
     })
     const incoming = (res as any).data || res as any
     if (!incoming || !Array.isArray(incoming.nodes)) return
@@ -3471,6 +3510,7 @@ async function growFrontier() {
             depth: GRAPH_EGO_DEFAULT_DEPTH,
             limit: GRAPH_EGO_LIMIT,
             types: graphFilterTypesToArray(),
+            overlay: illuminateEnabled.value ? 'memory' : undefined,
           })
           const data = (res as any).data || res as any
           if (data?.nodes) responses.push(data)
@@ -3699,6 +3739,50 @@ interface GNode {
   x: number; y: number; vx: number; vy: number
   slug: string; title: string; type: string
   linkCount: number; pinned: boolean
+  // Per-caller engagement, present only while illumination is on.
+  memory?: { heat: number; state: string; anchor_count: number; memory_count: number }
+}
+
+
+// ---------------------------------------------------------------------------
+// Memory illumination
+//
+// The same wiki graph, shaded by how much of it the current person has
+// actually engaged with. Unlit pages fade back; pages they have worked with
+// come forward; pages they disputed are outlined in the warning colour so they
+// stand out regardless of how long ago it was.
+// ---------------------------------------------------------------------------
+const illuminateEnabled = ref(false)
+const memoryCoverage = ref<MemoryCoverage | null>(null)
+
+const memoryStateAppearance: Record<string, { opacity: number; stroke: string; strokeWidth: number }> = {
+  unlit: { opacity: 0.12, stroke: '#ffffff', strokeWidth: 1 },
+  touched: { opacity: 0.4, stroke: '#ffffff', strokeWidth: 1.5 },
+  familiar: { opacity: 0.75, stroke: '#ffffff', strokeWidth: 2 },
+  mastered: { opacity: 1, stroke: '#07C05F', strokeWidth: 3 },
+  flagged: { opacity: 0.9, stroke: '#e37318', strokeWidth: 3 },
+}
+
+function memoryNodeAppearance(node: GNode) {
+  const state = node.memory?.state || 'unlit'
+  return memoryStateAppearance[state] || memoryStateAppearance.unlit
+}
+
+async function toggleIlluminate() {
+  illuminateEnabled.value = !illuminateEnabled.value
+  if (illuminateEnabled.value) {
+    try {
+      const res: any = await getMemoryCoverage(props.knowledgeBaseId)
+      memoryCoverage.value = res?.data || null
+    } catch {
+      // Coverage is a nicety; the graph shading is the substance, so a failure
+      // here just hides the progress bar rather than blocking the toggle.
+      memoryCoverage.value = null
+    }
+  } else {
+    memoryCoverage.value = null
+  }
+  await loadGraph()
 }
 
 // Persistent graph state so it survives re-renders
@@ -3850,6 +3934,7 @@ function renderGraph(opts: RenderGraphOpts = {}) {
       x, y, vx, vy,
       slug: n.slug, title: n.title, type: n.page_type,
       linkCount: n.link_count || 0, pinned,
+      memory: (n as any).memory,
     }
     nodeMap.set(n.slug, node)
     return node
@@ -4005,9 +4090,15 @@ function renderGraph(opts: RenderGraphOpts = {}) {
 
     const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
     circle.setAttribute('r', String(r))
+    const illumination = illuminateEnabled.value ? memoryNodeAppearance(n) : null
     circle.setAttribute('fill', nodeColorMap[n.type] || '#8c8c8c')
     circle.setAttribute('stroke', '#fff')
     circle.setAttribute('stroke-width', '2')
+    if (illumination) {
+      circle.setAttribute('fill-opacity', String(illumination.opacity))
+      circle.setAttribute('stroke', illumination.stroke)
+      circle.setAttribute('stroke-width', String(illumination.strokeWidth))
+    }
     // circle.setAttribute('filter', 'url(#node-shadow)')
     circle.style.transition = 'r 0.2s, stroke-width 0.2s, opacity 0.2s'
     g.appendChild(circle)
@@ -6237,6 +6328,49 @@ onUnmounted(() => {
   border-radius: 50%;
   display: inline-block;
   flex-shrink: 0;
+}
+
+.legend-dot--familiar {
+  background: #0052d9;
+  opacity: 0.75;
+}
+
+.legend-dot--mastered {
+  background: #0052d9;
+  box-shadow: 0 0 0 2px #07C05F;
+}
+
+.legend-dot--flagged {
+  background: #0052d9;
+  box-shadow: 0 0 0 2px #e37318;
+}
+
+.legend-coverage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: help;
+}
+
+.legend-coverage__bar {
+  width: 72px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--td-bg-color-component, #e7e7e7);
+  overflow: hidden;
+}
+
+.legend-coverage__fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #0052d9, #07C05F);
+  transition: width 0.3s ease;
+}
+
+.legend-coverage__text {
+  font-size: 11px;
+  color: var(--td-text-color-secondary, #888);
+  white-space: nowrap;
 }
 
 .legend-divider {

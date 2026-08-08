@@ -103,6 +103,7 @@ type agentService struct {
 	tenantService         interfaces.TenantService
 	storageResolver       interfaces.StorageBackendResolver
 	toolApprovalGate      approval.MCPApproval
+	memoryService         interfaces.MemoryService
 }
 
 // NewAgentService creates a new agent service
@@ -124,6 +125,7 @@ func NewAgentService(
 	tenantService interfaces.TenantService,
 	storageResolver interfaces.StorageBackendResolver,
 	toolApprovalGate approval.MCPApproval,
+	memoryService interfaces.MemoryService,
 ) interfaces.AgentService {
 	return &agentService{
 		cfg:                   cfg,
@@ -143,6 +145,7 @@ func NewAgentService(
 		tenantService:         tenantService,
 		storageResolver:       storageResolver,
 		toolApprovalGate:      toolApprovalGate,
+		memoryService:         memoryService,
 	}
 }
 
@@ -640,6 +643,27 @@ func (s *agentService) registerTools(
 			toolToRegister = tools.NewDataSchemaTool(s.knowledgeService, s.chunkService.GetRepository()).
 				WithSearchTargets(config.SearchTargets)
 			logger.Infof(ctx, "Registered data_schema tool")
+
+		// Long-term memory tools. Always available when memory is wired in:
+		// they act on the caller's own space, so unlike the wiki tools there is
+		// no knowledge-base scope that could make them inapplicable. The
+		// service still refuses when memory is disabled for this caller.
+		case tools.ToolMemorySearch:
+			if s.memoryService != nil {
+				toolToRegister = tools.NewMemorySearchTool(s.memoryService)
+			}
+		case tools.ToolMemoryReadPage:
+			if s.memoryService != nil {
+				toolToRegister = tools.NewMemoryReadPageTool(s.memoryService)
+			}
+		case tools.ToolMemoryRemember:
+			if s.memoryService != nil {
+				toolToRegister = tools.NewMemoryRememberTool(s.memoryService)
+			}
+		case tools.ToolMemoryForget:
+			if s.memoryService != nil {
+				toolToRegister = tools.NewMemoryForgetTool(s.memoryService)
+			}
 
 		// Wiki tools — only registered when wiki KBs are detected
 		case tools.ToolWikiReadPage:

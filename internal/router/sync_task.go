@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	memorysvc "github.com/Tencent/WeKnora/internal/application/service/memory"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -129,6 +130,7 @@ type SyncTaskParams struct {
 	KnowledgePostProcess interfaces.TaskHandler `name:"knowledgePostProcess"`
 	KnowledgeAutoTag     interfaces.TaskHandler `name:"knowledgeAutoTag"`
 	WikiIngest           interfaces.TaskHandler `name:"wikiIngest"`
+	MemoryTasks          *memorysvc.TaskHandler
 	TemporaryDocument    interfaces.TemporaryDocumentService
 }
 
@@ -155,5 +157,10 @@ func RegisterSyncHandlers(params SyncTaskParams) {
 	params.Executor.RegisterHandler(types.TypeDataSourceSync, params.DataSourceService.ProcessSync)
 	params.Executor.RegisterHandler(types.TypeWikiIngest, params.WikiIngest.Handle)
 	params.Executor.RegisterHandler(types.TypeWikiFinalize, params.WikiIngest.Handle)
+	// Mirrors the asynq registration in task.go. Registering on only one side
+	// is the classic way a background feature ends up silently dead on Lite.
+	params.Executor.RegisterHandler(types.TypeMemoryExtract, params.MemoryTasks.Handle)
+	params.Executor.RegisterHandler(types.TypeMemoryConsolidate, params.MemoryTasks.Handle)
+	params.Executor.RegisterHandler(types.TypeMemoryDecay, params.MemoryTasks.Handle)
 	logger.Infof(context.Background(), "[SyncTask] All task handlers registered (Lite mode, no Redis)")
 }

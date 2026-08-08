@@ -885,6 +885,43 @@
                         <t-switch v-model="formData.config.enable_rewrite" />
                       </div>
                     </div>
+
+                    <!-- 长期记忆：这里只放这个 Agent 该不该用记忆、以及用多少。
+                         记住什么、允许记哪几类，是本人的事，在个人设置里；
+                         整个空间的策略是管理员的事，在系统设置里。 -->
+                    <div class="setting-row">
+                      <div class="setting-info">
+                        <label>{{ $t('memory.agentSettings.readEnabled') }}</label>
+                        <p class="desc">{{ $t('memory.agentSettings.readEnabledDesc') }}</p>
+                      </div>
+                      <div class="setting-control">
+                        <t-switch :value="memoryRecallEnabled"
+                          @change="(v: boolean) => setMemorySetting('memory.recall.enabled', v)" />
+                      </div>
+                    </div>
+
+                    <div v-if="memoryRecallEnabled" class="setting-row">
+                      <div class="setting-info">
+                        <label>{{ $t('memory.agentSettings.injectionBudget') }}</label>
+                        <p class="desc">{{ $t('memory.agentSettings.injectionBudgetDesc') }}</p>
+                      </div>
+                      <div class="setting-control">
+                        <t-input-number :value="memoryInjectionBudget" :min="50" :max="1200" :step="50"
+                          theme="column"
+                          @change="(v: any) => setMemorySetting('memory.recall.injection_token_budget', Number(v))" />
+                      </div>
+                    </div>
+
+                    <div class="setting-row">
+                      <div class="setting-info">
+                        <label>{{ $t('memory.agentSettings.writeEnabled') }}</label>
+                        <p class="desc">{{ $t('memory.agentSettings.writeEnabledDesc') }}</p>
+                      </div>
+                      <div class="setting-control">
+                        <t-switch :value="memoryWriteEnabled"
+                          @change="(v: boolean) => setMemorySetting('memory.write.mode', v ? null : 'off')" />
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -2301,6 +2338,8 @@ const defaultFormData = {
     max_completion_tokens: 2048,
     thinking: false, // 默认禁用思考模式
     citation_enabled: true, // 默认输出知识库/网页来源引用
+    // 长期记忆的 agent 层覆盖，稀疏 patch：不设就继承工作空间策略
+    memory: {} as Record<string, any>,
     // Agent模式设置
     max_iterations: 10,
     llm_call_timeout: 120,  // 120 seconds
@@ -2433,6 +2472,31 @@ const agentMode = computed({
 });
 
 const isAgentMode = computed(() => agentMode.value === 'smart-reasoning');
+
+// 长期记忆的 agent 层设置。存的是稀疏 patch，所以「未设置」和「设成默认值」是两
+// 回事：没设就继承工作空间策略，设了才覆盖。开关取值时用 !== false，这样一个从未
+// 碰过记忆设置的 agent 显示为"跟随策略"而不是"已关闭"。
+const agentMemoryPatch = computed<Record<string, any>>(() => {
+  if (!formData.value.config.memory) formData.value.config.memory = {};
+  return formData.value.config.memory;
+});
+
+const memoryRecallEnabled = computed(() => agentMemoryPatch.value['memory.recall.enabled'] !== false);
+const memoryWriteEnabled = computed(() => agentMemoryPatch.value['memory.write.mode'] !== 'off');
+const memoryInjectionBudget = computed(
+  () => Number(agentMemoryPatch.value['memory.recall.injection_token_budget'] ?? 600),
+);
+
+// null 表示"删掉这条覆盖，回到继承"，与后端 SanitizeMemoryPatch 的约定一致。
+function setMemorySetting(key: string, value: any) {
+  const patch = { ...agentMemoryPatch.value };
+  if (value === null) {
+    delete patch[key];
+  } else {
+    patch[key] = value;
+  }
+  formData.value.config.memory = patch;
+}
 
 const currentIntentTemplate = computed(() =>
   intentPromptTemplates.value.find((template) => template.id === selectedIntent.value),

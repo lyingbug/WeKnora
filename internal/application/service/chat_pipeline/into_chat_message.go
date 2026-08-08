@@ -6,6 +6,7 @@ import (
 	"html"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/application/service/memory"
 	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -109,6 +110,7 @@ func (p *PluginIntoChatMessage) OnEvent(ctx context.Context,
 		} else {
 			chatManage.UserContent = userContent
 		}
+		chatManage.UserContent = prependMemoryBlock(chatManage, chatManage.UserContent)
 
 		pipelineInfo(ctx, "IntoChatMessage", "no_search_with_template", map[string]interface{}{
 			"session_id":       chatManage.SessionID,
@@ -185,7 +187,7 @@ func (p *PluginIntoChatMessage) OnEvent(ctx context.Context,
 	}
 
 	// Set formatted content back to chat management
-	chatManage.UserContent = userContent
+	chatManage.UserContent = prependMemoryBlock(chatManage, userContent)
 	pipelineInfo(ctx, "IntoChatMessage", "output", map[string]interface{}{
 		"session_id":                 chatManage.SessionID,
 		"user_content_len":           len(chatManage.UserContent),
@@ -311,4 +313,27 @@ func getEnrichedPassageForChat(ctx context.Context, result *types.SearchResult) 
 // enrichContentWithImageInfo delegates to the shared searchutil implementation.
 func enrichContentWithImageInfo(_ context.Context, content string, imageInfoJSON string) string {
 	return searchutil.EnrichContentWithImageInfoForChat(content, imageInfoJSON)
+}
+
+// prependMemoryBlock puts the caller's long-term memory in front of the turn.
+//
+// Placement and framing both matter. The block goes at the top so the model
+// reads who it is talking to before it reads the question, and it is labelled
+// as background data rather than instructions so a memory that happens to be
+// phrased imperatively is understood as something the user once said, not as a
+// command. The preferences that genuinely steer generation travel as structured
+// fields, not as prose in here.
+func prependMemoryBlock(chatManage *types.ChatManage, userContent string) string {
+	if chatManage.MemoryBlockRendered {
+		return userContent
+	}
+	if chatManage.MemoryContext == nil || chatManage.MemoryContext.IsEmpty() {
+		return userContent
+	}
+	block := memory.FormatMemoryBlock(chatManage.MemoryContext, chatManage.Language)
+	if block == "" {
+		return userContent
+	}
+	chatManage.MemoryBlockRendered = true
+	return block + "\n\n" + userContent
 }
