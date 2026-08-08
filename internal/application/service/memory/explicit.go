@@ -3,6 +3,7 @@ package memory
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // rememberMarkers are the phrases that turn a message into a direct request to
@@ -15,7 +16,7 @@ var rememberMarkers = []string{
 	"记住", "记一下", "记下来", "记录一下", "记note",
 	"别忘了", "别忘记", "不要忘了", "不要忘记", "以后记得",
 	"please remember", "remember that", "remember this", "remember:", "remember ",
-	"note that", "keep in mind that", "keep in mind", "don't forget that",
+	"keep in mind that", "keep in mind", "don't forget that",
 	"don't forget", "do not forget",
 }
 
@@ -42,14 +43,25 @@ func DetectRememberRequest(text string) (string, bool) {
 
 	idx, markerLen := -1, 0
 	for _, marker := range rememberMarkers {
-		at := strings.Index(lower, marker)
-		if at < 0 {
-			continue
-		}
-		// The earliest marker wins, and among markers starting at the same
-		// offset the longest one does, so "帮我记住" is not read as "记住".
-		if idx < 0 || at < idx || (at == idx && len(marker) > markerLen) {
-			idx, markerLen = at, len(marker)
+		// Every occurrence has to be considered, not just the first: the marker
+		// may appear mid-sentence as an ordinary verb before appearing as an
+		// imperative later.
+		for offset := 0; ; {
+			at := strings.Index(lower[offset:], marker)
+			if at < 0 {
+				break
+			}
+			at += offset
+			offset = at + 1
+			if !startsClause(lower, at) {
+				continue
+			}
+			// The earliest marker wins, and among markers at the same offset the
+			// longest one does, so "帮我记住" is not read as "记住".
+			if idx < 0 || at < idx || (at == idx && len(marker) > markerLen) {
+				idx, markerLen = at, len(marker)
+			}
+			break
 		}
 	}
 	if idx < 0 {
@@ -78,6 +90,41 @@ func DetectRememberRequest(text string) (string, bool) {
 	}
 	return statement, true
 }
+
+// startsClause reports whether the marker at idx sits where an imperative can:
+// at the beginning of the message, after a clause boundary, or after a word of
+// politeness leading the request.
+//
+// Position is what separates a request from a mention. "记住我用 Go" is an
+// instruction; "我不记得上次是谁改的" and "I can never remember which flag" merely
+// contain the verb, and matching anywhere stored the tail of those sentences as
+// though it were a fact about the user.
+func startsClause(lower string, idx int) bool {
+	prefix := strings.TrimRight(lower[:idx], " \t")
+	if prefix == "" {
+		return true
+	}
+	// Decoded as a rune, because the Chinese clause marks are multi-byte and
+	// stepping back one byte lands inside one.
+	last, size := utf8.DecodeLastRuneInString(prefix)
+	if strings.ContainsRune(clauseBoundaries, last) {
+		return true
+	}
+	_ = size
+	for _, word := range politenessPrefixes {
+		if strings.HasSuffix(prefix, word) {
+			return startsClause(lower, len(prefix)-len(word))
+		}
+	}
+	return false
+}
+
+// clauseBoundaries are the characters a clause can end on.
+const clauseBoundaries = ",.;:!?\n，。；：！？、"
+
+// politenessPrefixes may lead an imperative without changing that it is one.
+// Compared against a right-trimmed prefix, so no trailing spaces here.
+var politenessPrefixes = []string{"please", "kindly", "请", "麻烦", "帮我"}
 
 // isStorableStatement rejects fragments too small to mean anything on their own.
 func isStorableStatement(statement string) bool {

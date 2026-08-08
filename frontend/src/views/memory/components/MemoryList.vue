@@ -239,7 +239,14 @@ function confirmDelete(page: MemoryPage) {
 // Watching the filters is both simpler and safer than per-control @change
 // handlers: TDesign fires those around the v-model write, so a handler could
 // read the previous value and filter by it.
-watch([query, typeFilter, statusFilter], reload)
+// Typing in the search box fired a request per keystroke. The filters are
+// discrete choices and can reload at once; the query waits for a pause.
+let searchTimer: number | null = null
+watch([typeFilter, statusFilter], reload)
+watch(query, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(reload, 300)
+})
 
 onMounted(load)
 </script>

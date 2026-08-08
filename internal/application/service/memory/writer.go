@@ -124,7 +124,11 @@ func (w *writerService) ConsiderSession(ctx context.Context, req types.MemoryExt
 		} else {
 			logger.Infof(ctx, "memory: stored requested memory %s in space %s", page.ID, req.SpaceID)
 		}
-		return
+		// Deliberately not returning: "remember that I use Go — also I moved to
+		// the platform team" is one turn with a direct request and more durable
+		// context behind it. Storing only the imperative clause and dropping the
+		// rest would be a surprise. The automatic modes still have to be on for
+		// anything further to happen.
 	}
 
 	if !req.Explicit && !req.Settings.AutoExtractEnabled() {

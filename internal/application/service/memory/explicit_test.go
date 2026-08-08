@@ -67,3 +67,19 @@ func TestDetectRememberRequestPrefersTheLongestMarker(t *testing.T) {
 		t.Fatalf("statement = %q, want %q", got, "我住在深圳")
 	}
 }
+
+// The English markers are bare substrings, so a sentence that merely contains
+// the word survives the interrogative filter and gets stored as a fact.
+func TestDetectRememberRequestIgnoresIncidentalMentions(t *testing.T) {
+	cases := []string{
+		"I don't remember my password being changed",
+		"I can never remember which flag enables it",
+		"我不记得上次是谁改的",
+		"Please note that down for later if you can",
+	}
+	for _, text := range cases {
+		if got, ok := DetectRememberRequest(text); ok {
+			t.Errorf("DetectRememberRequest(%q) captured %q, want it declined", text, got)
+		}
+	}
+}

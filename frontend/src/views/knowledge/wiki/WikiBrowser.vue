@@ -3252,6 +3252,9 @@ async function loadEgoGraph(slug: string, depth = GRAPH_EGO_DEFAULT_DEPTH) {
       depth,
       limit: GRAPH_EGO_LIMIT,
       types: graphFilterTypesToArray(),
+      // Same overlay as the overview load: without it, drilling into a node
+      // dropped every node back to "unlit".
+      overlay: illuminateEnabled.value ? 'memory' : undefined,
     })
     graphData.value = (res as any).data || res as any
     graphMode.value = 'ego'
@@ -3321,6 +3324,7 @@ async function loadBloomNeighbors(anchorSlug: string, depth = GRAPH_EGO_DEFAULT_
       depth,
       limit: GRAPH_EGO_LIMIT,
       types: graphFilterTypesToArray(),
+      overlay: illuminateEnabled.value ? 'memory' : undefined,
     })
     const incoming = (res as any).data || res as any
     if (!incoming || !Array.isArray(incoming.nodes)) return
@@ -3506,6 +3510,7 @@ async function growFrontier() {
             depth: GRAPH_EGO_DEFAULT_DEPTH,
             limit: GRAPH_EGO_LIMIT,
             types: graphFilterTypesToArray(),
+            overlay: illuminateEnabled.value ? 'memory' : undefined,
           })
           const data = (res as any).data || res as any
           if (data?.nodes) responses.push(data)

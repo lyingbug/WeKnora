@@ -84,7 +84,15 @@ func (p *PluginMemoryBoost) OnEvent(
 }
 
 func anchorMatchesResult(refs map[string]struct{}, result *types.SearchResult) bool {
-	candidates := []string{result.KnowledgeID, result.ID}
+	// A wiki anchor stores the page slug, so the slug has to be one of the
+	// candidates. Without it the boost could never match wiki content, which is
+	// the content anchors were designed around: every wiki anchor is written as
+	// a slug (see memoryAnchorTargets) and every candidate here was an id.
+	candidates := []string{
+		result.KnowledgeID,
+		result.ID,
+		strings.TrimSpace(result.Metadata["wiki_slug"]),
+	}
 	if result.KnowledgeTitle != "" {
 		candidates = append(candidates, result.KnowledgeTitle)
 	}
