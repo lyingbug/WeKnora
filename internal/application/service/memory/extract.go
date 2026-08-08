@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,22 +17,31 @@ import (
 )
 
 const (
-	// extractDebounce is how long a finished turn waits before distillation
-	// runs. A user usually sends several messages in a row, and waiting lets
-	// one model call cover all of them instead of one call per turn.
-	extractDebounce = 90 * time.Second
-	// extractMinInterval is the floor between two distillation runs for the
-	// same subject, so a long conversation cannot turn into a model call per
-	// message no matter how the debounce windows overlap.
-	extractMinInterval = 5 * time.Minute
-	// extractMaxMessages bounds how much conversation one run reads.
-	extractMaxMessages = 24
+	// extractMaxMessagesPerRun bounds how much conversation one run reads. When
+	// a subject has more unprocessed turns than this, the run advances the
+	// watermark over what it read and immediately queues a follow-up, so the
+	// cap limits the size of a run rather than what eventually gets processed.
+	extractMaxMessagesPerRun = 40
 	// extractMaxItemsPerRun bounds how many memories one run may produce, so a
 	// single rambling conversation cannot flood the store.
 	extractMaxItemsPerRun = 8
+	// extractInFlightGrace is added to the configured delay to decide when an
+	// in-flight claim is stale. Without it, a worker that died between claiming
+	// and running would wedge the subject permanently.
+	extractInFlightGrace = 10 * time.Minute
+	// extractFollowUpDelay is the wait before a run that hit its message cap,
+	// or that saw new turns arrive while it worked, queues its successor.
+	extractFollowUpDelay = 15 * time.Second
 )
 
-// ScheduleExtraction debounces and enqueues background distillation.
+// ScheduleExtraction records that a turn needs distilling and, when nobody
+// else has already done so, queues the run.
+//
+// The important property is that a turn is never dropped. Earlier this method
+// compared the current time against the last run and returned early inside the
+// interval, which silently discarded every turn in that window. Now the turn is
+// always recorded against the subject; the timers only decide *when* a run
+// happens, never *whether* a message is considered.
 //
 // Everything the handler needs travels in the payload. Both asynq and the Lite
 // executor hand the handler a bare context, so any scope the request knew and
@@ -52,9 +62,8 @@ func (s *Service) ScheduleExtraction(ctx context.Context, sessionID, messageID, 
 		return
 	}
 
-	// The subject row is what carries the debounce timestamp, so it has to
-	// exist before the first task is queued. Without it a user with no
-	// memories yet would enqueue an extraction on every single turn.
+	// The subject row carries the queue and the watermark, so it has to exist
+	// before the first turn is recorded.
 	subject, err := s.repo.EnsureSubject(ctx, scope)
 	if err != nil {
 		logger.Warnf(ctx, "memory: ensure subject for extraction failed: %v", err)
@@ -63,17 +72,41 @@ func (s *Service) ScheduleExtraction(ctx context.Context, sessionID, messageID, 
 	if !subject.Enabled {
 		return
 	}
-	if subject.LastExtractedAt != nil && time.Since(*subject.LastExtractedAt) < extractMinInterval {
+
+	delay := cfg.ExtractDelay()
+	previous, shouldEnqueue, err := s.repo.EnqueuePendingSession(
+		ctx, scope, sessionID, delay+extractInFlightGrace,
+	)
+	if err != nil {
+		logger.Warnf(ctx, "memory: record pending session failed: %v", err)
 		return
 	}
-	// Claim the interval at enqueue time rather than at completion. The task
-	// runs after a debounce delay, so waiting until it finishes would leave the
-	// whole window open for duplicates.
-	if err := s.repo.MarkExtracted(ctx, scope); err != nil {
-		logger.Warnf(ctx, "memory: claim extraction interval failed: %v", err)
+	if !shouldEnqueue {
+		// A run is already coming and will drain the queue this turn just
+		// joined, so there is nothing left to do.
 		return
 	}
 
+	// The minimum interval only defers: if the previous run was recent, the
+	// task is queued further out rather than the turn being discarded.
+	if previous != nil && previous.LastExtractedAt != nil {
+		if remaining := cfg.ExtractMinInterval() - time.Since(*previous.LastExtractedAt); remaining > delay {
+			delay = remaining
+		}
+	}
+
+	s.enqueueExtraction(ctx, scope, sessionID, messageID, chatModelID, delay)
+}
+
+// enqueueExtraction pushes one distillation task. The in-flight slot is
+// released when the enqueue itself fails, otherwise a lost task would block
+// the subject until the claim expired.
+func (s *Service) enqueueExtraction(
+	ctx context.Context,
+	scope interfaces.MemoryScope,
+	sessionID, messageID, chatModelID string,
+	delay time.Duration,
+) {
 	payload := types.MemoryExtractPayload{
 		TenantID:    scope.TenantID,
 		SubjectID:   scope.SubjectID,
@@ -86,16 +119,24 @@ func (s *Service) ScheduleExtraction(ctx context.Context, sessionID, messageID, 
 	body, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warnf(ctx, "memory: marshal extraction payload failed: %v", err)
+		s.releaseSlot(ctx, scope)
 		return
 	}
 
 	task := asynq.NewTask(types.TypeMemoryExtract, body)
 	if _, err := s.enqueuer.Enqueue(task,
 		asynq.Queue(types.QueueMemory),
-		asynq.ProcessIn(extractDebounce),
+		asynq.ProcessIn(delay),
 		asynq.MaxRetry(2),
 	); err != nil {
 		logger.Warnf(ctx, "memory: enqueue extraction failed: %v", err)
+		s.releaseSlot(ctx, scope)
+	}
+}
+
+func (s *Service) releaseSlot(ctx context.Context, scope interfaces.MemoryScope) {
+	if err := s.repo.ReleaseExtractionSlot(ctx, scope); err != nil {
+		logger.Warnf(ctx, "memory: release extraction slot failed: %v", err)
 	}
 }
 
@@ -140,21 +181,40 @@ func (s *Service) Handle(ctx context.Context, task *asynq.Task) error {
 
 	cfg := s.workspaceConfig(ctx, payload.TenantID)
 	if !cfg.AutoExtractEnabled() {
+		s.releaseSlot(ctx, scope)
 		return nil
 	}
-	subject, err := s.repo.GetSubject(ctx, scope)
+	// A task can outlive the row it was queued for (workspace reset, restore
+	// from backup), and the queue/watermark bookkeeping below needs a row to
+	// write to, so recreate it rather than failing the task forever.
+	subject, err := s.repo.EnsureSubject(ctx, scope)
 	if err != nil {
 		return fmt.Errorf("load memory subject: %w", err)
 	}
-	if subject != nil && !subject.Enabled {
+	if !subject.Enabled {
+		s.releaseSlot(ctx, scope)
 		return nil
 	}
 
-	transcript, err := s.buildTranscript(ctx, payload)
+	// Take the queue before reading anything. Turns arriving from here on land
+	// in a fresh queue and get their own follow-up run rather than being
+	// erased by this one.
+	pending, cursor, err := s.repo.ClaimPendingSessions(ctx, scope)
+	if err != nil {
+		return fmt.Errorf("claim pending sessions: %w", err)
+	}
+	if payload.SessionID != "" && !containsString(pending, payload.SessionID) {
+		pending = append(pending, payload.SessionID)
+	}
+
+	transcript, newCursor, truncated, err := s.buildTranscript(ctx, pending, cursor)
 	if err != nil {
 		return err
 	}
 	if transcript == "" {
+		// Nothing new to read. Advance nothing, but release the slot so the
+		// next turn can schedule a run immediately.
+		s.releaseSlot(ctx, scope)
 		return nil
 	}
 
@@ -165,49 +225,143 @@ func (s *Service) Handle(ctx context.Context, task *asynq.Task) error {
 
 	decisions, err := s.callExtractionModel(ctx, cfg, payload, transcript, existing)
 	if err != nil {
+		// Leave the watermark where it is: the messages this run failed on
+		// must be read again, not skipped. Releasing the slot lets the next
+		// turn schedule a fresh attempt.
+		s.releaseSlot(ctx, scope)
 		return err
 	}
 	s.applyDecisions(ctx, scope, cfg, payload, decisions)
+
+	if err := s.repo.FinishExtraction(ctx, scope, newCursor); err != nil {
+		logger.Warnf(ctx, "memory: advance extraction cursor failed: %v", err)
+	}
+
+	// Either this run hit its message cap, or new turns arrived while it was
+	// working. Both mean there is more to read, and both are how the "every
+	// message is eventually considered" guarantee survives a busy user.
+	s.scheduleFollowUpIfNeeded(ctx, scope, cfg, payload, truncated)
 	return nil
 }
 
-// buildTranscript collects what the user said in the session.
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+// scheduleFollowUpIfNeeded queues the next run when work remains.
+func (s *Service) scheduleFollowUpIfNeeded(
+	ctx context.Context,
+	scope interfaces.MemoryScope,
+	cfg *types.MemoryConfig,
+	payload types.MemoryExtractPayload,
+	truncated bool,
+) {
+	if s.enqueuer == nil {
+		return
+	}
+	subject, err := s.repo.GetSubject(ctx, scope)
+	if err != nil {
+		logger.Warnf(ctx, "memory: reload subject for follow-up failed: %v", err)
+		return
+	}
+	if subject == nil {
+		return
+	}
+	if !truncated && len(subject.PendingSessions) == 0 {
+		return
+	}
+	sessionID := payload.SessionID
+	if len(subject.PendingSessions) > 0 {
+		sessionID = subject.PendingSessions[0]
+	}
+	// Claim the slot again for the successor; FinishExtraction just cleared it.
+	if _, shouldEnqueue, err := s.repo.EnqueuePendingSession(
+		ctx, scope, sessionID, cfg.ExtractDelay()+extractInFlightGrace,
+	); err != nil || !shouldEnqueue {
+		if err != nil {
+			logger.Warnf(ctx, "memory: claim follow-up slot failed: %v", err)
+		}
+		return
+	}
+	logger.Infof(ctx, "memory: queueing follow-up distillation for subject %s", scope.SubjectID)
+	s.enqueueExtraction(ctx, scope, sessionID, payload.MessageID, payload.ChatModelID, extractFollowUpDelay)
+}
+
+// buildTranscript collects what the user said, across every session with turns
+// past the watermark, oldest first.
+//
+// Walking forward from a watermark rather than reading "the most recent N
+// messages" is what makes coverage a property of the data: a burst of turns, a
+// second concurrent session, or a slow worker can delay a message but cannot
+// make it invisible.
 //
 // Only role=user messages are read. The assistant's own words are the model
 // talking to itself, and feeding them back into extraction is how a prompt
 // injection in a retrieved document would end up permanently stored as a fact
 // about the user.
-func (s *Service) buildTranscript(ctx context.Context, payload types.MemoryExtractPayload) (string, error) {
-	messages, err := s.messageRepo.GetRecentMessagesBySession(ctx, payload.SessionID, extractMaxMessages*2)
-	if err != nil {
-		return "", fmt.Errorf("load session messages: %w", err)
+func (s *Service) buildTranscript(
+	ctx context.Context, sessions []string, cursor time.Time,
+) (transcript string, newCursor time.Time, truncated bool, err error) {
+	type entry struct {
+		at      time.Time
+		content string
 	}
-	lines := make([]string, 0, extractMaxMessages)
-	for _, message := range messages {
-		if message == nil || message.Role != "user" {
+	var entries []entry
+
+	for _, sessionID := range sessions {
+		if strings.TrimSpace(sessionID) == "" {
 			continue
 		}
-		content := strings.TrimSpace(message.Content)
-		if content == "" {
-			continue
+		messages, err := s.messageRepo.ListMessagesBySessionAfterTime(
+			ctx, sessionID, cursor, extractMaxMessagesPerRun+1,
+		)
+		if err != nil {
+			return "", time.Time{}, false, fmt.Errorf("load session messages: %w", err)
 		}
-		if runes := []rune(content); len(runes) > 1000 {
-			content = string(runes[:1000])
+		if len(messages) > extractMaxMessagesPerRun {
+			truncated = true
+			messages = messages[:extractMaxMessagesPerRun]
 		}
-		lines = append(lines, content)
-		if len(lines) >= extractMaxMessages {
-			break
+		for _, message := range messages {
+			if message == nil {
+				continue
+			}
+			if message.CreatedAt.After(newCursor) {
+				// The watermark covers assistant rows too: they are not read,
+				// but leaving them behind it would make the cursor jump back
+				// and forth around each turn.
+				newCursor = message.CreatedAt
+			}
+			if message.Role != "user" {
+				continue
+			}
+			content := strings.TrimSpace(message.Content)
+			if content == "" {
+				continue
+			}
+			if runes := []rune(content); len(runes) > 1000 {
+				content = string(runes[:1000])
+			}
+			entries = append(entries, entry{at: message.CreatedAt, content: content})
 		}
 	}
-	if len(lines) == 0 {
-		return "", nil
+	if len(entries) == 0 {
+		return "", newCursor, truncated, nil
 	}
-	// GetRecentMessagesBySession returns newest first; the model reads better
-	// in chronological order.
-	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
-		lines[i], lines[j] = lines[j], lines[i]
+
+	// Interleave sessions chronologically: what the user said is one timeline
+	// even when it is spread across conversations.
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].at.Before(entries[j].at) })
+	lines := make([]string, 0, len(entries))
+	for _, item := range entries {
+		lines = append(lines, item.content)
 	}
-	return strings.Join(lines, "\n"), nil
+	return strings.Join(lines, "\n"), newCursor, truncated, nil
 }
 
 const extractionSystemPrompt = `You maintain a small set of long-term notes about one user,

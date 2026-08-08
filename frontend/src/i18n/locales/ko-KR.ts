@@ -4612,6 +4612,10 @@ export default {
     writeModeAutoHint: '여기에 더해 대화가 끝난 뒤 백그라운드에서 모델을 한 번 호출해 구성원이 한 말에서 오래 남길 내용을 정리합니다.',
     extractModelLabel: '정리 모델',
     extractModelDescription: '비워 두면 해당 대화에서 사용한 모델을 씁니다.',
+    extractDelayLabel: '정리 지연',
+    extractDelayDescription: '대화가 끝난 뒤 정리를 시작하기까지의 대기 시간입니다. 잠시 기다리면 사용자가 연달아 보낸 여러 메시지를 모델 호출 한 번으로 처리할 수 있습니다.',
+    extractMinIntervalLabel: '정리 간 최소 간격',
+    extractMinIntervalDescription: '같은 사람에 대한 두 번의 정리 사이 최소 간격으로, 비용을 제한합니다. 간격 안에 생긴 메시지는 버려지지 않고 다음 정리로 넘어갑니다.',
     maxItemsLabel: '구성원당 기억 상한',
     maxItemsDescription: '초과하면 중요도와 사용 시점이 낮은 항목부터 보관 처리되며 "내 기억"에서 계속 확인할 수 있습니다.',
     toasts: {

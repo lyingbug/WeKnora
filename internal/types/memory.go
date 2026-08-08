@@ -142,8 +142,77 @@ type MemorySubject struct {
 	BlockUpdatedAt  *time.Time `json:"block_updated_at"  gorm:"column:block_updated_at"`
 	ItemCount       int        `json:"item_count"        gorm:"column:item_count;not null;default:0"`
 	LastExtractedAt *time.Time `json:"last_extracted_at" gorm:"column:last_extracted_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	// ExtractCursor is the watermark: everything this subject said up to and
+	// including this instant has already been considered for distillation.
+	// Distillation walks forward from here, which is what makes "no message is
+	// skipped" a property of the data rather than of timing.
+	ExtractCursor *time.Time `json:"extract_cursor" gorm:"column:extract_cursor"`
+	// PendingSessions are the sessions with turns past the cursor. A turn that
+	// arrives while a task is already in flight is recorded here instead of
+	// being dropped, so it is picked up by the run that is already coming.
+	PendingSessions MemoryPendingSessions `json:"pending_sessions" gorm:"column:pending_sessions;type:jsonb"`
+	// ExtractScheduledAt marks a distillation task as in flight, so concurrent
+	// turns enqueue one task rather than one per turn.
+	ExtractScheduledAt *time.Time `json:"extract_scheduled_at" gorm:"column:extract_scheduled_at"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
+// MemoryPendingSessions is the persisted queue of sessions awaiting
+// distillation for one subject.
+type MemoryPendingSessions []string
+
+// MaxMemoryPendingSessions bounds the queue. A subject chatting in more
+// sessions than this between two runs loses the oldest entry rather than
+// growing the row without limit; the cursor still covers those sessions the
+// next time they produce a turn.
+const MaxMemoryPendingSessions = 32
+
+func (p MemoryPendingSessions) Value() (driver.Value, error) {
+	if p == nil {
+		return json.Marshal([]string{})
+	}
+	return json.Marshal(p)
+}
+
+func (p *MemoryPendingSessions) Scan(value interface{}) error {
+	if value == nil {
+		*p = nil
+		return nil
+	}
+	var b []byte
+	switch v := value.(type) {
+	case []byte:
+		b = v
+	case string:
+		b = []byte(v)
+	default:
+		*p = nil
+		return nil
+	}
+	if len(b) == 0 {
+		*p = nil
+		return nil
+	}
+	return json.Unmarshal(b, p)
+}
+
+// Append adds a session id, keeping the queue de-duplicated and bounded.
+func (p MemoryPendingSessions) Append(sessionID string) MemoryPendingSessions {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return p
+	}
+	for _, existing := range p {
+		if existing == sessionID {
+			return p
+		}
+	}
+	updated := append(p, sessionID)
+	if len(updated) > MaxMemoryPendingSessions {
+		updated = updated[len(updated)-MaxMemoryPendingSessions:]
+	}
+	return updated
 }
 
 func (MemorySubject) TableName() string { return "memory_subjects" }
@@ -198,6 +267,15 @@ type MemoryConfig struct {
 	ExtractModelID string `json:"extract_model_id"`
 	// MaxItems caps active items per subject. 0 means DefaultMemoryMaxItems.
 	MaxItems int `json:"max_items"`
+	// ExtractDelaySeconds is how long a finished turn waits before
+	// distillation runs. Waiting lets one model call cover the several
+	// messages a user usually sends in a row. 0 means the default.
+	ExtractDelaySeconds int `json:"extract_delay_seconds"`
+	// ExtractMinIntervalSeconds is the floor between two distillation runs for
+	// the same person, and exists purely to bound cost. It never drops a turn:
+	// a turn arriving inside the interval is queued and picked up by the next
+	// run. 0 means the default.
+	ExtractMinIntervalSeconds int `json:"extract_min_interval_seconds"`
 }
 
 func (c MemoryConfig) Value() (driver.Value, error) { return json.Marshal(c) }
@@ -236,6 +314,54 @@ func (c *MemoryConfig) Normalize() {
 	if c.MaxItems > 2000 {
 		c.MaxItems = 2000
 	}
+	c.ExtractDelaySeconds = clampSeconds(
+		c.ExtractDelaySeconds, DefaultMemoryExtractDelaySeconds,
+		MinMemoryExtractDelaySeconds, MaxMemoryExtractDelaySeconds,
+	)
+	c.ExtractMinIntervalSeconds = clampSeconds(
+		c.ExtractMinIntervalSeconds, DefaultMemoryExtractMinIntervalSeconds,
+		0, MaxMemoryExtractMinIntervalSeconds,
+	)
+}
+
+// Bounds for the distillation timers. The lower bound on the delay is not a
+// safety rail but a cost one: a delay near zero turns a burst of messages into
+// one model call per message.
+const (
+	DefaultMemoryExtractDelaySeconds       = 90
+	MinMemoryExtractDelaySeconds           = 5
+	MaxMemoryExtractDelaySeconds           = 3600
+	DefaultMemoryExtractMinIntervalSeconds = 300
+	MaxMemoryExtractMinIntervalSeconds     = 86400
+)
+
+func clampSeconds(value, fallback, minimum, maximum int) int {
+	if value <= 0 {
+		value = fallback
+	}
+	if value < minimum {
+		value = minimum
+	}
+	if value > maximum {
+		value = maximum
+	}
+	return value
+}
+
+// ExtractDelay is the debounce window for a possibly nil config.
+func (c *MemoryConfig) ExtractDelay() time.Duration {
+	if c == nil || c.ExtractDelaySeconds <= 0 {
+		return time.Duration(DefaultMemoryExtractDelaySeconds) * time.Second
+	}
+	return time.Duration(c.ExtractDelaySeconds) * time.Second
+}
+
+// ExtractMinInterval is the floor between two runs for a possibly nil config.
+func (c *MemoryConfig) ExtractMinInterval() time.Duration {
+	if c == nil || c.ExtractMinIntervalSeconds <= 0 {
+		return time.Duration(DefaultMemoryExtractMinIntervalSeconds) * time.Second
+	}
+	return time.Duration(c.ExtractMinIntervalSeconds) * time.Second
 }
 
 // EffectiveMaxItems returns the active-item cap for a possibly nil config.

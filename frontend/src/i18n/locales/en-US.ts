@@ -1404,6 +1404,10 @@ export default {
     writeModeAutoHint: 'Additionally makes one background model call after a conversation to distill what is worth keeping from what the member said.',
     extractModelLabel: 'Distillation model',
     extractModelDescription: 'Leave blank to use the model the conversation itself used.',
+    extractDelayLabel: 'Distillation delay',
+    extractDelayDescription: 'How long a finished turn waits before distillation runs. Waiting lets one model call cover the several messages a user usually sends in a row.',
+    extractMinIntervalLabel: 'Minimum interval between runs',
+    extractMinIntervalDescription: 'The floor between two distillation runs for one person, used to bound cost. Messages produced inside the interval are not dropped — they are carried over to the next run.',
     maxItemsLabel: 'Memories per member',
     maxItemsDescription: 'Beyond this, the lowest ranked memories are archived by importance and recency. Archived memories stay visible under "My memory".',
     toasts: {

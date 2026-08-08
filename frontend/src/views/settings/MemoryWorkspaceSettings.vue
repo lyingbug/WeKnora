@@ -66,6 +66,42 @@
         </div>
       </div>
 
+      <div v-if="config.enabled && config.write_mode === 'auto'" class="setting-row">
+        <div class="setting-info">
+          <label>{{ t('memoryWorkspaceSettings.extractDelayLabel') }}</label>
+          <p class="desc">{{ t('memoryWorkspaceSettings.extractDelayDescription') }}</p>
+        </div>
+        <div class="setting-control">
+          <t-input-number
+            v-model="config.extract_delay_seconds"
+            :min="5"
+            :max="3600"
+            :step="15"
+            suffix="s"
+            :disabled="!canEdit"
+            @change="debouncedSave"
+          />
+        </div>
+      </div>
+
+      <div v-if="config.enabled && config.write_mode === 'auto'" class="setting-row">
+        <div class="setting-info">
+          <label>{{ t('memoryWorkspaceSettings.extractMinIntervalLabel') }}</label>
+          <p class="desc">{{ t('memoryWorkspaceSettings.extractMinIntervalDescription') }}</p>
+        </div>
+        <div class="setting-control">
+          <t-input-number
+            v-model="config.extract_min_interval_seconds"
+            :min="0"
+            :max="86400"
+            :step="60"
+            suffix="s"
+            :disabled="!canEdit"
+            @change="debouncedSave"
+          />
+        </div>
+      </div>
+
       <div v-if="config.enabled" class="setting-row">
         <div class="setting-info">
           <label>{{ t('memoryWorkspaceSettings.maxItemsLabel') }}</label>
@@ -102,6 +138,8 @@ const config = reactive<MemoryConfig>({
   write_mode: 'explicit_only',
   extract_model_id: '',
   max_items: 200,
+  extract_delay_seconds: 90,
+  extract_min_interval_seconds: 300,
 })
 const isInitializing = ref(true)
 
@@ -115,6 +153,8 @@ const loadConfig = async () => {
       config.write_mode = response.data.write_mode === 'auto' ? 'auto' : 'explicit_only'
       config.extract_model_id = response.data.extract_model_id || ''
       config.max_items = response.data.max_items || 200
+      config.extract_delay_seconds = response.data.extract_delay_seconds || 90
+      config.extract_min_interval_seconds = response.data.extract_min_interval_seconds || 300
     }
   } catch (error: any) {
     console.error('Failed to load memory config:', error)

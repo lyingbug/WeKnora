@@ -1771,6 +1771,18 @@ func (h *TenantHandler) updateTenantMemoryConfigInternal(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("max_items must be between 0 and 2000"))
 		return
 	}
+	if cfg.ExtractDelaySeconds < 0 || cfg.ExtractDelaySeconds > types.MaxMemoryExtractDelaySeconds {
+		c.Error(errors.NewBadRequestError(fmt.Sprintf(
+			"extract_delay_seconds must be between 0 and %d", types.MaxMemoryExtractDelaySeconds)))
+		return
+	}
+	if cfg.ExtractMinIntervalSeconds < 0 ||
+		cfg.ExtractMinIntervalSeconds > types.MaxMemoryExtractMinIntervalSeconds {
+		c.Error(errors.NewBadRequestError(fmt.Sprintf(
+			"extract_min_interval_seconds must be between 0 and %d",
+			types.MaxMemoryExtractMinIntervalSeconds)))
+		return
+	}
 	cfg.Normalize()
 
 	tenant, _ := types.TenantInfoFromContext(ctx)

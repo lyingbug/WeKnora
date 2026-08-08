@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"context"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/hibiken/asynq"
@@ -32,9 +33,23 @@ type MemoryRepository interface {
 	UpdateSubjectEnabled(ctx context.Context, scope MemoryScope, enabled bool) error
 	// UpdateSubjectBlock stores the rendered resident block and item count.
 	UpdateSubjectBlock(ctx context.Context, scope MemoryScope, block string, itemCount int) error
-	// MarkExtracted records that distillation ran, so the next turn's debounce
-	// window can be computed without scanning items.
-	MarkExtracted(ctx context.Context, scope MemoryScope) error
+	// EnqueuePendingSession records that a session has turns past the cursor
+	// and claims the in-flight slot when no run is already scheduled. It
+	// returns the subject as it was before the update plus whether this call
+	// is the one responsible for enqueuing the task, so a burst of turns
+	// produces exactly one task and never a dropped turn.
+	EnqueuePendingSession(
+		ctx context.Context, scope MemoryScope, sessionID string, inFlightTimeout time.Duration,
+	) (*types.MemorySubject, bool, error)
+	// ClaimPendingSessions takes the pending queue for processing, returning
+	// the sessions to drain and the cursor to walk forward from.
+	ClaimPendingSessions(ctx context.Context, scope MemoryScope) ([]string, time.Time, error)
+	// FinishExtraction advances the watermark and releases the in-flight slot.
+	// A zero cursor leaves the watermark untouched.
+	FinishExtraction(ctx context.Context, scope MemoryScope, cursor time.Time) error
+	// ReleaseExtractionSlot clears the in-flight marker without advancing the
+	// watermark, used when a run ends early.
+	ReleaseExtractionSlot(ctx context.Context, scope MemoryScope) error
 
 	// CreateItem inserts one memory item.
 	CreateItem(ctx context.Context, item *types.MemoryItem) error

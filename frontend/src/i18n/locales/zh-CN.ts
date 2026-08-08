@@ -4612,6 +4612,10 @@ export default {
     writeModeAutoHint: '在此基础上，会话结束后在后台调用一次模型，从成员自己说过的话里提炼值得长期保留的内容。',
     extractModelLabel: '提炼模型',
     extractModelDescription: '留空则使用该次会话所用的模型。',
+    extractDelayLabel: '挖掘延迟',
+    extractDelayDescription: '一轮对话结束后等待多久再挖掘。等一等可以让一次模型调用覆盖用户连着发的几条消息。',
+    extractMinIntervalLabel: '两次挖掘的最小间隔',
+    extractMinIntervalDescription: '同一个人两次挖掘之间至少间隔多久，用来控制成本。间隔内产生的消息不会被丢弃，会顺延到下一次挖掘一并处理。',
     maxItemsLabel: '每人记忆上限',
     maxItemsDescription: '超出后按重要度与使用时间归档最低的若干条，归档的记忆仍可在「我的记忆」里查看。',
     toasts: {

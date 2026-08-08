@@ -42,6 +42,10 @@ export interface MemoryConfig {
   write_mode: 'explicit_only' | 'auto'
   extract_model_id: string
   max_items: number
+  /** Debounce before distillation runs, in seconds. */
+  extract_delay_seconds: number
+  /** Floor between two distillation runs for one person, in seconds. */
+  extract_min_interval_seconds: number
 }
 
 // ---------------------------------------------------------------------------

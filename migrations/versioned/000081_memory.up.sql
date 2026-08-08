@@ -22,6 +22,16 @@ CREATE TABLE IF NOT EXISTS memory_subjects (
     block_updated_at TIMESTAMP WITH TIME ZONE,
     item_count INTEGER NOT NULL DEFAULT 0,
     last_extracted_at TIMESTAMP WITH TIME ZONE,
+    -- Watermark: everything this subject said up to here has been considered
+    -- for distillation. Runs walk forward from it, so a message cannot be
+    -- skipped by a timer or by a burst of turns.
+    extract_cursor TIMESTAMP WITH TIME ZONE,
+    -- Sessions with turns past the cursor, recorded when a turn arrives while
+    -- a run is already in flight.
+    pending_sessions JSONB,
+    -- Set while a distillation task is queued or running, so concurrent turns
+    -- enqueue one task rather than one per turn.
+    extract_scheduled_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

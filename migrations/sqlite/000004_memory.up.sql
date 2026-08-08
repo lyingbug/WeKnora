@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS memory_subjects (
     block_updated_at DATETIME,
     item_count INTEGER NOT NULL DEFAULT 0,
     last_extracted_at DATETIME,
+    extract_cursor DATETIME,
+    pending_sessions TEXT,
+    extract_scheduled_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
