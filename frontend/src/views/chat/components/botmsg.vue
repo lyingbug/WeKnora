@@ -14,6 +14,7 @@
                     <span class="tag_name">{{ item.name }}</span>
                 </span>
             </div>
+            <memoryInfo v-if="session.used_memories?.length" :session="session"></memoryInfo>
             <div v-if="session.isRagMode" class="rag-answer-stack">
                 <RagPipelineProgress :session="session" :embedded-mode="embeddedMode" />
                 <AgentStreamDisplay v-if="session.isAgentMode" :session="session" :session-id="sessionId"
@@ -75,6 +76,7 @@
 import { onMounted, onBeforeUnmount, watch, computed, ref, reactive, nextTick, onUpdated } from 'vue';
 import 'katex/dist/katex.min.css';
 import docInfo from './docInfo.vue';
+import memoryInfo from './memoryInfo.vue';
 import deepThink from './deepThink.vue';
 import AgentStreamDisplay from './AgentStreamDisplay.vue';
 import RagPipelineProgress from './RagPipelineProgress.vue';
