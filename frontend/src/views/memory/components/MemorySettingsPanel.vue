@@ -140,7 +140,7 @@ function applyView(next: MemorySettingsView | null | undefined) {
 async function load() {
   loading.value = true
   try {
-    const res: any = props.level === 'tenant' ? await getTenantMemorySettings() : await getMemorySettings()
+    const res = props.level === 'tenant' ? await getTenantMemorySettings() : await getMemorySettings()
     applyView(res?.data)
   } catch (error: any) {
     // A 404 is the ordinary "memory is switched off for me" state, not a fault.
@@ -157,7 +157,7 @@ async function onUpdate(key: string, value: any) {
   // replaces it, which is what surfaces a clamp.
   draft.value = { ...draft.value, [key]: value }
   try {
-    const res: any =
+    const res =
       props.level === 'tenant'
         ? await updateTenantMemorySettings({ [key]: value })
         : await updateMemorySettings({ [key]: value })

@@ -222,16 +222,6 @@ func (s *Service) SpaceView(ctx context.Context) (*types.MemorySpaceView, error)
 	}, nil
 }
 
-// UpdateSpaceConfig patches the space-level settings layer.
-func (s *Service) UpdateSpaceConfig(
-	ctx context.Context, patch types.MemorySettingsPatch,
-) ([]string, error) {
-	sc, err := s.resolveScope(ctx, true)
-	if err != nil {
-		return nil, err
-	}
-	return s.settings.UpdateSpace(ctx, sc.TenantID, sc.Space.ID, patch)
-}
 
 // ---------------------------------------------------------------------------
 // Pages

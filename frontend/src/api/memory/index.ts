@@ -14,7 +14,6 @@ function encodeSlugPath(slug: string): string {
   return slug.split("/").map(encodeURIComponent).join("/");
 }
 
-
 // The shared `get` helper takes an axios config, not a params object, so query
 // parameters have to travel as `{ params }`. Passing them positionally looks
 // right and silently sends no query string at all, which is a failure mode that
@@ -213,31 +212,6 @@ export interface MemoryGraphData {
   };
 }
 
-export interface MemoryAnchor {
-  id: string;
-  space_id: string;
-  memory_page_id: string;
-  knowledge_base_id: string;
-  target_kind: string;
-  target_ref: string;
-  relation: string;
-  strength: number;
-  hit_count: number;
-  first_seen_at: string;
-  last_seen_at: string;
-  memory_page_slug?: string;
-  memory_page_title?: string;
-}
-
-export interface MemoryOverlayNode {
-  heat: number;
-  state: "unlit" | "touched" | "familiar" | "mastered" | "flagged";
-  anchor_count: number;
-  memory_count: number;
-  relations: string[];
-  last_seen_at?: string;
-}
-
 export interface MemoryCoverageBucket {
   folder: string;
   total_pages: number;
@@ -252,23 +226,6 @@ export interface MemoryCoverage {
   percent: number;
   state_counts: Record<string, number>;
   folders: MemoryCoverageBucket[];
-}
-
-export interface MemoryInsight {
-  kind: string;
-  target_ref: string;
-  title?: string;
-  content_length?: number;
-  interactions: number;
-  distinct_people: number;
-  detail?: string;
-}
-
-export interface MemoryInsightsResponse {
-  knowledge_base_id: string;
-  k_anonymity: number;
-  suppressed: number;
-  insights: MemoryInsight[];
 }
 
 export interface MemoryPageRevision {
@@ -286,23 +243,27 @@ export interface MemoryPageRevision {
 // Space and settings
 // ---------------------------------------------------------------------------
 
-export function getMemorySpace() {
+export function getMemorySpace(): Promise<{ data: MemorySpaceView }> {
   return get("/api/v1/memory/space");
 }
 
-export function getMemorySettings() {
+export function getMemorySettings(): Promise<{ data: MemorySettingsView }> {
   return get("/api/v1/memory/settings");
 }
 
-export function updateMemorySettings(settings: Record<string, any>) {
+export function updateMemorySettings(
+  settings: Record<string, any>,
+): Promise<{ data: MemorySettingsUpdateResponse }> {
   return put("/api/v1/memory/settings", { settings });
 }
 
-export function getTenantMemorySettings() {
+export function getTenantMemorySettings(): Promise<{ data: MemorySettingsView }> {
   return get("/api/v1/memory/tenant-settings");
 }
 
-export function updateTenantMemorySettings(settings: Record<string, any>) {
+export function updateTenantMemorySettings(
+  settings: Record<string, any>,
+): Promise<{ data: MemorySettingsUpdateResponse }> {
   return put("/api/v1/memory/tenant-settings", { settings });
 }
 
@@ -318,7 +279,7 @@ export function listMemoryPages(params: {
   page_size?: number;
   sort_by?: string;
   sort_order?: string;
-}) {
+}): Promise<{ data: MemoryPageListResponse }> {
   return get("/api/v1/memory/pages", query(params));
 }
 
@@ -338,10 +299,6 @@ export function deleteMemoryPage(slug: string) {
   return del(`/api/v1/memory/pages/${encodeSlugPath(slug)}`);
 }
 
-export function searchMemoryPages(q: string, limit = 20) {
-  return get("/api/v1/memory/search", query({ q, limit }));
-}
-
 export function listMemoryRevisions(slug: string) {
   return get(`/api/v1/memory/revisions/${encodeSlugPath(slug)}`);
 }
@@ -359,7 +316,7 @@ export function listMemoryNotes(params: {
   type?: string;
   page?: number;
   page_size?: number;
-}) {
+}): Promise<{ data: MemoryNoteListResponse }> {
   return get("/api/v1/memory/notes", query(params));
 }
 
@@ -383,28 +340,6 @@ export function getMemoryGraph(params: {
   limit?: number;
 }) {
   return get("/api/v1/memory/graph", query(params));
-}
-
-export function getMemoryStats() {
-  return get("/api/v1/memory/stats");
-}
-
-export function listMemoryAnchors(kbId?: string) {
-  return get("/api/v1/memory/anchors", query({ kb_id: kbId }));
-}
-
-export function addMemoryAnchor(body: {
-  knowledge_base_id: string;
-  target_ref: string;
-  relation: string;
-  target_kind?: string;
-  memory_page_slug?: string;
-}) {
-  return post("/api/v1/memory/anchors", body);
-}
-
-export function deleteMemoryAnchor(id: string) {
-  return del(`/api/v1/memory/anchors/${encodeURIComponent(id)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +367,3 @@ export function getMemoryCoverage(kbId: string) {
   return get(`/api/v1/knowledgebase/${encodeURIComponent(kbId)}/memory/coverage`);
 }
 
-export function getMemoryInsights(kbId: string) {
-  return get(`/api/v1/knowledgebase/${encodeURIComponent(kbId)}/memory/insights`);
-}

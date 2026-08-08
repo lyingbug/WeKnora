@@ -130,7 +130,7 @@ const hint = computed(() => {
 
 async function refreshStats() {
   try {
-    const res: any = await getMemorySpace()
+    const res = await getMemorySpace()
     stats.value = res?.data?.stats || { ...emptyStats }
     disabled.value = false
   } catch (error: any) {
@@ -144,7 +144,7 @@ async function refreshStats() {
 
 async function refreshWriteMode() {
   try {
-    const res: any = await getMemorySettings()
+    const res = await getMemorySettings()
     writeMode.value = res?.data?.values?.['memory.write.mode']?.value || ''
   } catch {
     // The hint is an explanation, not a feature. Losing it changes nothing.

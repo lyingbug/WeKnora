@@ -37,6 +37,10 @@ const (
 	MemoryLayerTenant     = "tenant"
 	MemoryLayerAgent      = "agent"
 	MemoryLayerUser       = "user"
+	// MemoryLayerSpace is reserved for shared memory spaces, which are a later
+	// phase. The resolver folds it in and the sanitiser would accept it, but no
+	// descriptor currently permits it and nothing writes a space patch, so it is
+	// inert. Do not read it as a working layer.
 	MemoryLayerSpace      = "space"
 	// memoryLayerDefault is the synthetic source reported when no layer set a
 	// value and the built-in default applies.
@@ -252,7 +256,7 @@ var memorySettingDescriptors = []MemorySettingDescriptor{
 	{
 		Key: SettingMemoryEnabled, Group: MemoryGroupGeneral, Kind: memoryKindBool,
 		Default: false, Merge: mergeAnd,
-		Levels: []string{MemoryLayerDeployment, MemoryLayerTenant, MemoryLayerUser, MemoryLayerSpace},
+		Levels: []string{MemoryLayerDeployment, MemoryLayerTenant, MemoryLayerUser},
 	},
 	{
 		Key: SettingMemoryChannels, Group: MemoryGroupGeneral, Kind: memoryKindStringList,
@@ -276,7 +280,7 @@ var memorySettingDescriptors = []MemorySettingDescriptor{
 	{
 		Key: SettingMemoryWriteMode, Group: MemoryGroupWrite, Kind: memoryKindEnum,
 		Default: MemoryWriteModeExplicit, Merge: mergeStrictestEnum,
-		Levels:  []string{MemoryLayerTenant, MemoryLayerAgent, MemoryLayerUser, MemoryLayerSpace},
+		Levels:  []string{MemoryLayerTenant, MemoryLayerAgent, MemoryLayerUser},
 		Allowed: memoryWriteModeOrder,
 	},
 	{
@@ -325,7 +329,7 @@ var memorySettingDescriptors = []MemorySettingDescriptor{
 	{
 		Key: SettingMemoryRecallEnabled, Group: MemoryGroupRecall, Kind: memoryKindBool,
 		Default: true, Merge: mergeAnd,
-		Levels: []string{MemoryLayerTenant, MemoryLayerAgent, MemoryLayerUser, MemoryLayerSpace},
+		Levels: []string{MemoryLayerTenant, MemoryLayerAgent, MemoryLayerUser},
 	},
 	{
 		Key: SettingMemoryRecallRelevance, Group: MemoryGroupRecall, Kind: memoryKindBool,

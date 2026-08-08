@@ -124,7 +124,6 @@ type MemoryService interface {
 	EnsureSpace(ctx context.Context) (*types.MemorySpace, error)
 	GetSpace(ctx context.Context) (*types.MemorySpace, error)
 	SpaceView(ctx context.Context) (*types.MemorySpaceView, error)
-	UpdateSpaceConfig(ctx context.Context, patch types.MemorySettingsPatch) ([]string, error)
 
 	ListPages(ctx context.Context, req *types.MemoryPageListRequest) (*types.MemoryPageListResponse, error)
 	GetPage(ctx context.Context, slug string) (*types.MemoryPage, error)

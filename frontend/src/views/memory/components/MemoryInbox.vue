@@ -80,7 +80,7 @@ function formatDate(value: string): string {
 async function load() {
   loading.value = true
   try {
-    const res: any = await listMemoryNotes({ status: 'pending', page_size: 50 })
+    const res = await listMemoryNotes({ status: 'pending', page_size: 50 })
     notes.value = res?.data?.notes || []
     for (const note of notes.value) {
       drafts[note.id] = note.statement

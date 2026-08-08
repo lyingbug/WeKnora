@@ -168,7 +168,7 @@ function formatDate(value: string): string {
 async function load() {
   loading.value = true
   try {
-    const res: any = await listMemoryPages({
+    const res = await listMemoryPages({
       query: query.value || undefined,
       type: typeFilter.value.length ? typeFilter.value.join(',') : undefined,
       status: statusFilter.value,
