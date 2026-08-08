@@ -14,7 +14,6 @@
                     <span class="tag_name">{{ item.name }}</span>
                 </span>
             </div>
-            <memoryInfo v-if="session.used_memories?.length" :session="session"></memoryInfo>
             <div v-if="session.isRagMode" class="rag-answer-stack">
                 <RagPipelineProgress :session="session" :embedded-mode="embeddedMode" />
                 <AgentStreamDisplay v-if="session.isAgentMode" :session="session" :session-id="sessionId"
@@ -22,6 +21,11 @@
                     @render-complete-change="emit('render-complete-change', $event)" />
             </div>
             <template v-else>
+                <!-- Plain chat has no pipeline of its own, but a turn that used
+                     long-term memory still has something to report, and it
+                     belongs in the same timeline as everything else. -->
+                <RagPipelineProgress v-if="session.used_memories?.length" :session="session"
+                    :embedded-mode="embeddedMode" />
                 <docInfo v-if="session.knowledge_references?.length" :session="session"></docInfo>
                 <AgentStreamDisplay :session="session" :session-id="sessionId" :user-query="userQuery"
                     v-if="session.isAgentMode" :follow-up-loading="followUpLoading"
@@ -76,7 +80,6 @@
 import { onMounted, onBeforeUnmount, watch, computed, ref, reactive, nextTick, onUpdated } from 'vue';
 import 'katex/dist/katex.min.css';
 import docInfo from './docInfo.vue';
-import memoryInfo from './memoryInfo.vue';
 import deepThink from './deepThink.vue';
 import AgentStreamDisplay from './AgentStreamDisplay.vue';
 import RagPipelineProgress from './RagPipelineProgress.vue';

@@ -21,6 +21,39 @@
     </div>
 
     <div v-else-if="!showCollapsedRoot" class="tree-children">
+      <div v-if="hasMemory" class="tree-child memory-step" :class="{ 'tree-child-last': memoryIsLast }">
+        <div class="tree-branch" />
+        <div class="tree-child-content">
+          <div class="tool-event">
+            <div class="action-card">
+              <div class="action-header" @click="toggleMemory">
+                <div class="action-title">
+                  <t-icon class="action-title-icon" name="bookmark" />
+                  <span class="action-name">{{ t('chat.memoryUsedCount', { count: memoryItems.length }) }}</span>
+                  <t-icon class="memory-toggle-icon" :name="memoryExpanded ? 'chevron-down' : 'chevron-right'" />
+                </div>
+              </div>
+              <div v-if="memoryExpanded" class="memory-detail-content">
+                <div v-for="memory in memoryItems" :key="memory.id" class="memory-row">
+                  <span class="memory-kind">{{ memoryKindLabel(memory.kind) }}</span>
+                  <span class="memory-text">{{ memory.content }}</span>
+                  <button
+                    type="button"
+                    class="memory-forget"
+                    :disabled="forgettingId === memory.id"
+                    :title="t('chat.memoryForget')"
+                    @click.stop="forgetMemory(memory)"
+                  >
+                    <t-icon name="delete" />
+                  </button>
+                </div>
+                <p class="memory-hint">{{ t('chat.memoryHint') }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div v-for="(step, index) in steps" :key="step.id" class="tree-child" :class="{
         'tree-child-last':
           !showDoneRow
@@ -141,6 +174,39 @@
       </div>
 
       <div v-if="showExpandedTimeline" class="tree-children tree-children-expanded">
+        <div v-if="hasMemory" class="tree-child memory-step" :class="{ 'tree-child-last': memoryIsLast }">
+          <div class="tree-branch" />
+          <div class="tree-child-content">
+            <div class="tool-event">
+              <div class="action-card">
+                <div class="action-header" @click="toggleMemory">
+                  <div class="action-title">
+                    <t-icon class="action-title-icon" name="bookmark" />
+                    <span class="action-name">{{ t('chat.memoryUsedCount', { count: memoryItems.length }) }}</span>
+                    <t-icon class="memory-toggle-icon" :name="memoryExpanded ? 'chevron-down' : 'chevron-right'" />
+                  </div>
+                </div>
+                <div v-if="memoryExpanded" class="memory-detail-content">
+                  <div v-for="memory in memoryItems" :key="memory.id" class="memory-row">
+                    <span class="memory-kind">{{ memoryKindLabel(memory.kind) }}</span>
+                    <span class="memory-text">{{ memory.content }}</span>
+                    <button
+                      type="button"
+                      class="memory-forget"
+                      :disabled="forgettingId === memory.id"
+                      :title="t('chat.memoryForget')"
+                      @click.stop="forgetMemory(memory)"
+                    >
+                      <t-icon name="delete" />
+                    </button>
+                  </div>
+                  <p class="memory-hint">{{ t('chat.memoryHint') }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div v-for="(step, index) in steps" :key="step.id" class="tree-child"
           :class="{ 'tree-child-last': index === steps.length - 1 && !showDoneRow && !showThinkingStep }">
           <div class="tree-branch" />
@@ -213,7 +279,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
+import { deleteMemoryItem } from '@/api/memory'
 import { getAgentToolIconName } from '@/utils/agent-tool-icons'
 import {
   getKnowledgeSearchSummaryHtml,
@@ -236,6 +304,7 @@ const props = defineProps<{
     agentEventStream?: Array<Record<string, unknown>>
     content?: string
     knowledge_references?: Array<{ chunk_type?: string; knowledge_id?: string; knowledge_title?: string }>
+    used_memories?: Array<{ id: string; kind: string; content: string }>
     is_completed?: boolean
   }
   embeddedMode?: boolean
@@ -250,6 +319,52 @@ const waitView = ref<RagWaitView>({ kind: 'none', stalled: false })
 const waitController = createRagWaitController((view) => {
   waitView.value = view
 })
+
+// Long-term memory is shown as a timeline step rather than as a card of its
+// own: it is one more thing the turn did before answering, and giving it a
+// separate visual language would make it read as unrelated to the pipeline.
+const memoryExpanded = ref(false)
+const forgettingId = ref('')
+const forgottenIds = ref<string[]>([])
+
+const memoryItems = computed(() => {
+  const used = props.session?.used_memories
+  if (!Array.isArray(used)) return []
+  return used.filter((memory) => memory?.id && !forgottenIds.value.includes(memory.id))
+})
+
+const hasMemory = computed(() => memoryItems.value.length > 0)
+
+const memoryKindLabel = (kind: string) => {
+  switch (kind) {
+    case 'profile':
+    case 'preference':
+    case 'fact':
+    case 'task':
+      return t(`memorySettings.kinds.${kind}`)
+    default:
+      return t('memorySettings.kinds.fact')
+  }
+}
+
+const toggleMemory = () => {
+  memoryExpanded.value = !memoryExpanded.value
+}
+
+// Forgetting from the answer is the shortest path from noticing a wrong memory
+// to it being gone, which is where users actually notice one.
+const forgetMemory = async (memory: { id: string }) => {
+  forgettingId.value = memory.id
+  try {
+    await deleteMemoryItem(memory.id)
+    forgottenIds.value = [...forgottenIds.value, memory.id]
+    MessagePlugin.success(t('chat.memoryForgotten'))
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('chat.memoryForgetFailed'))
+  } finally {
+    forgettingId.value = ''
+  }
+}
 
 const thinkingContent = computed(() => {
   const stream = props.session?.agentEventStream
@@ -380,6 +495,10 @@ const showExpandedTimeline = computed(() => {
 const showDoneRow = computed(() => {
   const turnDone = hasAnswer.value || Boolean(props.session?.is_completed)
   if (!turnDone) return false
+  // A timeline rendered only because memory was used has nothing to report as
+  // finished; adding a "done" row there would put a step into plain chat that
+  // never had one.
+  if (steps.value.length === 0 && !hasThinking.value) return false
   if (steps.value.length > 0 && !allStepsDone.value) return false
   return true
 })
@@ -388,7 +507,9 @@ const showPrePipelineWait = computed(() => {
   if (hasAnswer.value || props.session?.is_completed || steps.value.length > 0 || hasThinking.value) {
     return false
   }
-  return true
+  // Memory is recalled before the first token, so once it is on screen the
+  // turn is visibly under way and the placeholder would be redundant.
+  return !hasMemory.value
 })
 
 // Only show the thinking row once the backend actually streams thinking events.
@@ -411,8 +532,17 @@ const isThinkingStreaming = computed(
     !props.session?.is_completed,
 )
 
+// Memory alone is enough to render the timeline: a plain-chat answer that used
+// memory still needs somewhere to say so, and reusing the tree keeps that one
+// row looking like every other thing the turn did.
 const visible = computed(
-  () => steps.value.length > 0 || showPrePipelineWait.value || showThinkingStep.value,
+  () => steps.value.length > 0 || showPrePipelineWait.value || showThinkingStep.value || hasMemory.value,
+)
+
+// The memory row leads the timeline, so it is only the last node when nothing
+// else rendered.
+const memoryIsLast = computed(
+  () => steps.value.length === 0 && !showWaitStep.value && !showThinkingStep.value && !showDoneRow.value,
 )
 
 const liveStatusText = computed(() => {
@@ -741,6 +871,69 @@ onBeforeUnmount(() => {
 
   .action-pending .action-name {
     color: var(--td-text-color-secondary);
+  }
+
+  .memory-step {
+    .action-header {
+      cursor: pointer;
+    }
+
+    .memory-toggle-icon {
+      margin-left: 4px;
+      font-size: 13px;
+      color: var(--agent-step-icon-color);
+      flex-shrink: 0;
+    }
+  }
+
+  .memory-detail-content {
+    margin-top: 4px;
+    font-size: var(--agent-step-summary-size);
+    line-height: 1.55;
+    color: var(--td-text-color-secondary);
+  }
+
+  .memory-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 2px 0;
+  }
+
+  .memory-kind {
+    flex-shrink: 0;
+    color: var(--td-text-color-placeholder);
+  }
+
+  .memory-text {
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+  }
+
+  .memory-forget {
+    flex-shrink: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--td-text-color-placeholder);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      color: var(--td-error-color);
+    }
+
+    &:disabled {
+      cursor: default;
+      opacity: 0.5;
+    }
+  }
+
+  .memory-hint {
+    margin: 4px 0 0;
+    color: var(--td-text-color-placeholder);
   }
 }
 
