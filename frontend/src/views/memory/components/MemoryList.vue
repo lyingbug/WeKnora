@@ -62,11 +62,9 @@
           <!-- One menu rather than a row of small targets, which is how every
                other card in this product exposes its actions (see AgentList and
                the shared styles in assets/dropdown-menu.less). -->
-          <t-popup :visible="openMenuId === page.id" trigger="click" overlay-class-name="card-more-popup"
-            destroy-on-close placement="bottom-right"
-            @update:visible="(v: boolean) => { if (!v && openMenuId === page.id) openMenuId = null }">
-            <div class="memory-item__more" :class="{ 'is-open': openMenuId === page.id }"
-              @click.stop="openMenuId = openMenuId === page.id ? null : page.id">
+          <t-popup trigger="click" overlay-class-name="card-more-popup" destroy-on-close
+            placement="bottom-right" @visible-change="(v: boolean) => (openMenuId = v ? page.id : null)">
+            <div class="memory-item__more" :class="{ 'is-open': openMenuId === page.id }" @click.stop>
               <t-icon name="more" />
             </div>
             <template #content>

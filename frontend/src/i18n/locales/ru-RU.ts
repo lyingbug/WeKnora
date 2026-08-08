@@ -6053,6 +6053,7 @@ export default {
     settings: {
       showAdvanced: 'Show all settings',
       hideAdvanced: 'Hide other settings',
+      saved: 'Saved',
       lockedByPlatform: 'Locked by the platform; no layer can change it.',
       lockedBy: 'Locked by {layer}; changing it here would have no effect.',
       notSettableHere: 'Not configured at this level.',

@@ -152,15 +152,32 @@ async function load() {
   }
 }
 
-async function onUpdate(key: string, value: any) {
+// Saves are debounced and confirmed with a toast, which is how the rest of this
+// dialog behaves (see ChatHistorySettings.vue). Debouncing matters for the
+// multi-select rows, where picking three types would otherwise be three writes.
+let saveTimer: number | null = null
+let queued: Record<string, any> = {}
+
+function onUpdate(key: string, value: any) {
   // Show the new value immediately; the server's reply is authoritative and
   // replaces it, which is what surfaces a clamp.
   draft.value = { ...draft.value, [key]: value }
+  queued = { ...queued, [key]: value }
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = window.setTimeout(() => {
+    void flush()
+  }, 500)
+}
+
+async function flush() {
+  const patch = queued
+  queued = {}
+  if (!Object.keys(patch).length) return
   try {
     const res =
       props.level === 'tenant'
-        ? await updateTenantMemorySettings({ [key]: value })
-        : await updateMemorySettings({ [key]: value })
+        ? await updateTenantMemorySettings(patch)
+        : await updateMemorySettings(patch)
 
     const notes: string[] = res?.data?.notes || []
     applyView(res?.data?.view)
@@ -169,6 +186,8 @@ async function onUpdate(key: string, value: any) {
       // difference between a setting that quietly disagrees with the form and
       // one the user understands.
       MessagePlugin.warning({ content: notes.join('\n'), duration: 6000 })
+    } else {
+      MessagePlugin.success(t('memory.settings.saved'))
     }
     emit('changed')
   } catch {

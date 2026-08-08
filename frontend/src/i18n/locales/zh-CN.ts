@@ -6073,6 +6073,7 @@ export default {
     settings: {
       showAdvanced: '显示全部设置',
       hideAdvanced: '收起其他设置',
+      saved: '设置已保存',
       lockedByPlatform: '该项由平台锁定，任何层级都不可修改。',
       lockedBy: '已被{layer}锁定，在这里修改不会生效。',
       notSettableHere: '该项不在此层级配置。',
