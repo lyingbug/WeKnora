@@ -222,7 +222,6 @@ func (s *Service) SpaceView(ctx context.Context) (*types.MemorySpaceView, error)
 	}, nil
 }
 
-
 // ---------------------------------------------------------------------------
 // Pages
 // ---------------------------------------------------------------------------
@@ -273,6 +272,33 @@ func (s *Service) WritePage(
 	return s.writePageInScope(ctx, sc, req)
 }
 
+// screenMemoryText applies the write-path content rules to a page request.
+//
+// A memory is a durable fact about the user that gets injected into future
+// prompts, so an instruction and a credential are both refused outright, and
+// direct identifiers are handled according to the workspace's PII policy.
+func screenMemoryText(settings types.MemorySettings, req *types.MemoryPageWriteRequest) error {
+	for _, text := range []string{req.Content, req.Summary} {
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		if LooksLikeInstruction(text) {
+			return fmt.Errorf("%w: a memory records a fact about you, not an instruction", ErrForbidden)
+		}
+		if MatchesBlockedPattern(text, settings.BlockedPatterns) {
+			return fmt.Errorf("%w: this looks like a credential and was not stored", ErrForbidden)
+		}
+		if settings.PIIRedaction == types.MemoryPIIBlock && ContainsPII(text) {
+			return fmt.Errorf("%w: this contains personal identifiers and was not stored", ErrForbidden)
+		}
+	}
+	if settings.PIIRedaction == types.MemoryPIIRedact {
+		req.Content = RedactPII(req.Content)
+		req.Summary = RedactPII(req.Summary)
+	}
+	return nil
+}
+
 func (s *Service) writePageInScope(
 	ctx context.Context, sc *scope, req *types.MemoryPageWriteRequest,
 ) (*types.MemoryPage, error) {
@@ -285,6 +311,17 @@ func (s *Service) writePageInScope(
 	}
 	if !sc.Settings.TypeAllowed(pageType) {
 		return nil, fmt.Errorf("%w: memories of type %q are disabled", ErrForbidden, pageType)
+	}
+
+	// Screening belongs here because this is the only path every write shares.
+	// It previously lived in the two callers that happened to think of it, so an
+	// agent calling memory_remember, or anyone using the memory editor, could
+	// store an instruction that is then prepended to every later turn, and could
+	// store a credential verbatim regardless of the deny-pattern and PII
+	// settings. Consolidation and explicit remember screen their input too; the
+	// checks are idempotent, and the duplication is cheaper than a bypass.
+	if err := screenMemoryText(sc.Settings, req); err != nil {
+		return nil, err
 	}
 
 	title := strings.TrimSpace(req.Title)

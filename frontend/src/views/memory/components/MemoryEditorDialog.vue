@@ -119,6 +119,9 @@ const loading = ref(false)
 const saving = ref(false)
 const revisions = ref<MemoryPageRevision[]>([])
 const version = ref(0)
+// Held so a save can send it back: the server reads an absent status as
+// "active", which would un-archive whatever is being edited.
+const status = ref('')
 
 const form = reactive<{
   page_type: string
@@ -145,6 +148,7 @@ function reset() {
   form.structured = {}
   revisions.value = []
   version.value = 0
+  status.value = ''
 }
 
 function formatDate(value: string): string {
@@ -167,6 +171,7 @@ async function load() {
     form.pinned = page.pinned
     form.structured = { ...(page.structured || {}) }
     version.value = page.version
+    status.value = page.status || ''
 
     const revisionRes: any = await listMemoryRevisions(props.slug)
     revisions.value = revisionRes?.data || []
@@ -190,6 +195,11 @@ async function save() {
       summary: form.summary,
       content: form.content,
       pinned: form.pinned,
+    }
+    // The server reads an absent status as "active", so editing an archived
+    // memory without saying so silently brings it back.
+    if (status.value) {
+      body.status = status.value
     }
     if (form.page_type === 'preference') {
       body.structured = form.structured
@@ -244,7 +254,7 @@ watch(
   &__hint {
     margin: 4px 0 0;
     font-size: 12px;
-    color: var(--td-text-color-placeholder, #999);
+    color: var(--td-text-color-placeholder);
   }
 
   &__preferences {
@@ -252,7 +262,7 @@ watch(
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0 16px;
     padding: 12px 16px;
-    background: var(--td-bg-color-secondarycontainer, #fafafa);
+    background: var(--td-bg-color-secondarycontainer);
     border-radius: 8px;
     margin-bottom: 8px;
   }
@@ -271,7 +281,7 @@ watch(
   justify-content: space-between;
   gap: 12px;
   font-size: 12px;
-  color: var(--td-text-color-secondary, #888);
+  color: var(--td-text-color-secondary);
 
   &__meta {
     overflow: hidden;

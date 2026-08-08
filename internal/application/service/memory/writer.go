@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +37,6 @@ type writerService struct {
 	spaces   interfaces.MemorySpaceRepository
 	pages    interfaces.MemoryPageRepository
 	notes    interfaces.MemoryNoteRepository
-	pending  interfaces.TaskPendingOpsRepository
 	messages interfaces.MessageService
 	models   interfaces.ModelService
 	enqueuer interfaces.TaskEnqueuer
@@ -60,7 +58,6 @@ func NewWriterService(
 	spaces interfaces.MemorySpaceRepository,
 	pages interfaces.MemoryPageRepository,
 	notes interfaces.MemoryNoteRepository,
-	pending interfaces.TaskPendingOpsRepository,
 	messages interfaces.MessageService,
 	models interfaces.ModelService,
 	enqueuer interfaces.TaskEnqueuer,
@@ -74,7 +71,6 @@ func NewWriterService(
 		spaces:   spaces,
 		pages:    pages,
 		notes:    notes,
-		pending:  pending,
 		messages: messages,
 		models:   models,
 		enqueuer: enqueuer,
@@ -84,9 +80,10 @@ func NewWriterService(
 	}
 }
 
+// minDecayDelta is the smallest strength change worth a database write.
+const minDecayDelta = 0.005
+
 const (
-	memoryPendingScope     = "memory_space"
-	memoryPendingOpExtract = "extract"
 	// maxExtractionMessages bounds how much conversation one window considers.
 	maxExtractionMessages = 24
 	// maxExtractionRunes bounds the prompt input.
@@ -141,22 +138,15 @@ func (w *writerService) ConsiderSession(ctx context.Context, req types.MemoryExt
 		return
 	}
 
-	op := &types.TaskPendingOp{
-		TenantID: req.TenantID,
-		TaskType: types.TypeMemoryExtract,
-		Scope:    memoryPendingScope,
-		ScopeID:  req.SpaceID,
-		Op:       memoryPendingOpExtract,
-		// One pending row per session: a burst of turns coalesces into a single
-		// extraction instead of queueing one job per message.
-		DedupKey: req.SessionID,
-		Payload:  json.RawMessage(`{"session_id":` + strconv.Quote(req.SessionID) + `}`),
-	}
-	if err := w.pending.Enqueue(ctx, op); err != nil {
-		logger.Warnf(ctx, "memory: failed to enqueue extraction for space %s: %v", req.SpaceID, err)
-		return
-	}
-
+	// No row in task_pending_ops. One was written here and never read: only the
+	// wiki task types are ever peeked or claimed, so it was an unbounded table
+	// growing by one row per session per debounce window, in the table the wiki
+	// pipeline scans. The coalescing its comment claimed comes entirely from the
+	// asynq task id below.
+	//
+	// What that costs: on Lite, where scheduled tasks are held in process, a
+	// restart inside the debounce window drops that extraction. The next turn in
+	// the session re-triggers it, so the loss is one window, not the memory.
 	debounce := time.Duration(req.Settings.DebounceSeconds) * time.Second
 	if debounce <= 0 {
 		debounce = 60 * time.Second
@@ -768,9 +758,20 @@ func (w *writerService) Decay(ctx context.Context, tenantID uint64, spaceID stri
 	archived := 0
 
 	for _, page := range pages {
+		// Strength is a pure function of how long it has been since the memory
+		// was last used, not a factor applied to whatever strength it already
+		// had. Multiplying compounded it: each daily sweep re-applied a factor
+		// computed from the total age, so with the shipped half-lives a profile
+		// crossed the archive threshold after about six weeks instead of the
+		// ~999 days the setting describes. Stated this way the sweep is also
+		// idempotent — running it twice in a day changes nothing.
+		//
+		// The reference is created_at rather than updated_at when a memory has
+		// never been recalled, because this sweep writes the page and so moves
+		// updated_at, which would keep resetting the clock it is reading.
 		reference := page.LastSeenAt
 		if reference == nil {
-			reference = &page.UpdatedAt
+			reference = &page.CreatedAt
 		}
 		halfLife := float64(settings.HalfLifeFor(page.PageType))
 		if halfLife <= 0 {
@@ -780,8 +781,17 @@ func (w *writerService) Decay(ctx context.Context, tenantID uint64, spaceID stri
 		if ageDays <= 0 {
 			continue
 		}
-		strength := page.Strength * pow2(-ageDays/halfLife)
+		strength := pow2(-ageDays / halfLife)
 		if strength >= page.Strength {
+			continue
+		}
+		// Skip writes that move nothing. Restating strength from elapsed time
+		// means every sweep recomputes a very slightly smaller number, so
+		// without this the daily pass rewrites every page in the space to shift
+		// it by a fraction of a percent — the exact cost the daily cadence was
+		// chosen to avoid. Crossing the archive threshold is never skipped.
+		crosses := strength < settings.ArchiveThreshold && page.Status != types.MemoryPageStatusArchived
+		if page.Strength-strength < minDecayDelta && !crosses {
 			continue
 		}
 		page.Strength = strength

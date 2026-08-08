@@ -72,7 +72,8 @@ func memoryDecayScheduleEnabled() bool {
 	return !strings.EqualFold(strings.TrimSpace(os.Getenv("MEMORY_DISABLE_DECAY_SWEEP")), "true")
 }
 
-// startMemoryDecaySweep runs the retention sweep once at startup and then daily.
+// startMemoryDecaySweep runs the retention sweep daily, beginning a few minutes
+// after boot so the first pass does not contend with startup work.
 //
 // Scheduled here rather than through asynq's periodic scheduler because it must
 // also run on Lite, where there is no Redis and therefore no scheduler; a

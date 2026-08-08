@@ -91,7 +91,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
 
-import { getMemorySpace, getMemorySettings, forgetMemories, exportMemoryUrl, type MemoryStats } from '@/api/memory'
+import { getMemorySpace, getMemorySettings, forgetMemories, exportMemories, type MemoryStats } from '@/api/memory'
 import MemorySettingsPanel from '../memory/components/MemorySettingsPanel.vue'
 import MemoryList from '../memory/components/MemoryList.vue'
 import MemoryInbox from '../memory/components/MemoryInbox.vue'
@@ -181,8 +181,18 @@ function onEditorSaved() {
   refreshAll()
 }
 
-function exportMemory() {
-  window.open(exportMemoryUrl(), '_blank')
+async function exportMemory() {
+  try {
+    const blob = await exportMemories()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `weknora-memory-${new Date().toISOString().slice(0, 10)}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    MessagePlugin.error(t('memory.errors.exportFailed'))
+  }
 }
 
 function confirmForgetAll() {

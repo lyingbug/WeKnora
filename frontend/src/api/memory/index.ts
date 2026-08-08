@@ -1,4 +1,4 @@
-import { get, post, put, del } from "../../utils/request";
+import { get, getDown, post, put, del } from "../../utils/request";
 
 // Long-term memory API client.
 //
@@ -291,7 +291,10 @@ export function createMemoryPage(body: Partial<MemoryPage> & { page_type: string
   return post("/api/v1/memory/pages", body);
 }
 
-export function updateMemoryPage(slug: string, body: Record<string, any>) {
+export function updateMemoryPage(
+  slug: string,
+  body: Record<string, any>,
+): Promise<{ data: MemoryPage }> {
   return put(`/api/v1/memory/pages/${encodeSlugPath(slug)}`, body);
 }
 
@@ -355,8 +358,16 @@ export function forgetMemories(body: {
   return post("/api/v1/memory/forget", body);
 }
 
-export function exportMemoryUrl(): string {
-  return "/api/v1/memory/export";
+/** Downloads the export as a blob.
+ *
+ * Not a URL for the browser to navigate to: authentication is a Bearer header
+ * plus X-Tenant-ID, both attached by the axios interceptor, and a plain
+ * navigation carries neither — it just produced a 401 in a blank tab. Every
+ * other download in this app goes through axios for the same reason.
+ */
+export async function exportMemories(): Promise<Blob> {
+  const response = await getDown("/api/v1/memory/export");
+  return response as unknown as Blob;
 }
 
 // ---------------------------------------------------------------------------

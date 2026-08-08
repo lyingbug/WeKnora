@@ -131,8 +131,11 @@ let height = 600
 
 const defaultStyle: GraphNodeStyle = {
   radius: 10,
-  fill: 'var(--td-brand-color-light, #d9e1ff)',
-  stroke: 'var(--td-brand-color, #0052d9)',
+  // Literal rather than var(): these land in SVG presentation attributes, where
+  // a custom property is not reliably resolved. Callers that care pass their own
+  // colours; this is only the fallback, and it follows the product's green.
+  fill: '#e9f8ec',
+  stroke: '#07c05f',
   strokeWidth: 1.5,
 }
 
@@ -410,7 +413,7 @@ watch(
   width: 100%;
   height: 100%;
   min-height: 320px;
-  background: var(--td-bg-color-container, #fff);
+  background: var(--td-bg-color-container);
   border-radius: 8px;
   overflow: hidden;
   cursor: grab;
@@ -431,17 +434,17 @@ watch(
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--td-text-color-placeholder, #bbb);
+    color: var(--td-text-color-placeholder);
     font-size: 13px;
   }
 
   &__edge {
-    stroke: var(--td-component-border, #dcdcdc);
+    stroke: var(--td-component-border);
     stroke-width: 1;
     transition: opacity 0.15s ease;
 
     &.is-anchor {
-      stroke: var(--td-warning-color, #e37318);
+      stroke: var(--td-warning-color);
       stroke-dasharray: 4 3;
     }
 
@@ -459,13 +462,13 @@ watch(
     }
 
     &.is-active circle {
-      filter: drop-shadow(0 0 6px var(--td-brand-color, #0052d9));
+      filter: drop-shadow(0 0 6px var(--td-brand-color));
     }
   }
 
   &__label {
     font-size: 11px;
-    fill: var(--td-text-color-secondary, #666);
+    fill: var(--td-text-color-secondary);
     pointer-events: none;
     user-select: none;
   }

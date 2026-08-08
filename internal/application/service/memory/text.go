@@ -195,7 +195,11 @@ var piiPatterns = []struct {
 }{
 	{regexp.MustCompile(`[\w.+-]+@[\w-]+\.[\w.-]+`), "[email]"},
 	{regexp.MustCompile(`\b(?:\+?86[-\s]?)?1[3-9]\d{9}\b`), "[phone]"},
-	{regexp.MustCompile(`\b\d{15}|\d{17}[\dXx]\b`), "[id]"},
+	// Both branches need the word boundaries, so they have to be grouped:
+	// alternation binds looser than concatenation, and the ungrouped form left
+	// the tail of an 18-digit id in the text and matched digits inside longer
+	// numbers.
+	{regexp.MustCompile(`\b(?:\d{15}|\d{17}[\dXx])\b`), "[id]"},
 	{regexp.MustCompile(`\b(?:\d[ -]?){13,19}\b`), "[card]"},
 }
 

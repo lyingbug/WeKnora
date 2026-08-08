@@ -29,7 +29,7 @@
 
     <t-loading :loading="loading" :show-overlay="false">
       <div v-if="!pages.length && !loading" class="memory-list__empty">
-        {{ t('memory.list.empty') }}
+        <t-empty :description="t('memory.list.empty')" />
       </div>
 
       <div v-else class="memory-list__items">
@@ -193,15 +193,22 @@ function reload() {
 
 async function togglePin(page: MemoryPage) {
   try {
-    await updateMemoryPage(page.slug, {
+    // status has to travel with the write: the server treats an absent status
+    // as "active", so pinning from the Archived tab used to quietly bring the
+    // memory back. version has to come back from the response, or pinning and
+    // immediately unpinning the same row sends a stale one and 409s.
+    const res = await updateMemoryPage(page.slug, {
       title: page.title,
       page_type: page.page_type,
+      status: page.status,
       content: page.content,
       summary: page.summary,
       pinned: !page.pinned,
       version: page.version,
     })
-    page.pinned = !page.pinned
+    const updated = res?.data
+    page.pinned = updated?.pinned ?? !page.pinned
+    page.version = updated?.version ?? page.version + 1
     MessagePlugin.success(page.pinned ? t('memory.list.pinned') : t('memory.list.unpinned'))
     emit('changed')
   } catch {
@@ -262,10 +269,7 @@ onMounted(load)
   }
 
   &__empty {
-    padding: 48px 0;
-    text-align: center;
-    color: var(--td-text-color-placeholder, #bbb);
-    font-size: 13px;
+    padding: 64px 0;
   }
 
   &__items {
@@ -315,21 +319,21 @@ onMounted(load)
     margin: 0;
     font-size: 14px;
     font-weight: 600;
-    color: var(--td-text-color-primary, #000);
+    color: var(--td-text-color-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   &__pin {
-    color: var(--td-warning-color, #e37318);
+    color: var(--td-warning-color);
   }
 
   &__summary {
     margin: 0 0 8px;
     font-size: 13px;
     line-height: 1.6;
-    color: var(--td-text-color-secondary, #666);
+    color: var(--td-text-color-secondary);
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -341,7 +345,7 @@ onMounted(load)
     gap: 14px;
     flex-wrap: wrap;
     font-size: 12px;
-    color: var(--td-text-color-placeholder, #999);
+    color: var(--td-text-color-placeholder);
   }
 
   &__strength {

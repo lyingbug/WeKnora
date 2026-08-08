@@ -6178,6 +6178,7 @@ export default {
       },
     },
     errors: {
+      exportFailed: '导出失败',
       loadFailed: '加载记忆失败',
       saveFailed: '保存失败',
       forgetFailed: '删除失败',

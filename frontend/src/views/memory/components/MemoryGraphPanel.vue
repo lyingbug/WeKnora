@@ -58,15 +58,23 @@ const mode = ref<'personal' | 'bridged'>('personal')
 const activeId = ref('')
 const graph = ref<MemoryGraphData>({ nodes: [], edges: [], meta: { mode: 'personal', total: 0, returned: 0, truncated: false } })
 
-const typeColors: Record<string, string> = {
-  profile: '#0052d9',
-  preference: '#0594fa',
-  project: '#2ba471',
+// A categorical palette: seven memory types that have to stay apart at a
+// glance. Deliberately literal hex rather than theme tokens, for two reasons —
+// the values land in SVG presentation attributes where var() is not reliably
+// resolved, and the fill is derived by appending an alpha pair, which only works
+// on six-digit hex. Reading a token that returns rgba() produced solid black
+// nodes. The hues are chosen around the product's green.
+const MEMORY_TYPE_COLOURS: Record<string, string> = {
+  profile: '#07c05f',
+  preference: '#059e8a',
+  project: '#0b8a45',
   entity: '#834ec2',
   topic: '#078d7a',
-  episode: '#5e5e5e',
+  episode: '#6b7280',
   open_question: '#e37318',
 }
+
+const FALLBACK_COLOUR = MEMORY_TYPE_COLOURS.profile
 
 // GraphCanvas is deliberately ignorant of what its nodes mean, so the styling
 // callback narrows back to the memory node shape it was given.
@@ -75,9 +83,15 @@ function nodeStyle(raw: GraphCanvasNode): GraphNodeStyle {
   if (node.kind === 'wiki') {
     // Knowledge-base pages are drawn as hollow, dashed satellites so they read
     // as "somewhere else that this connects to" rather than as memories.
-    return { radius: 8, fill: '#ffffff', stroke: '#e37318', strokeWidth: 1.5, dashed: true }
+    return {
+      radius: 8,
+      fill: '#ffffff',
+      stroke: MEMORY_TYPE_COLOURS.open_question,
+      strokeWidth: 1.5,
+      dashed: true,
+    }
   }
-  const colour = typeColors[node.type || ''] || '#0052d9'
+  const colour = MEMORY_TYPE_COLOURS[node.type || ''] || FALLBACK_COLOUR
   // Well-connected memories are drawn larger: size tracks how central a memory
   // is to the rest, which is the thing worth noticing at a glance.
   const radius = Math.min(18, 9 + Math.sqrt(node.link_count || 0) * 2.5)
@@ -125,7 +139,7 @@ onMounted(load)
 
   &__hint {
     font-size: 12px;
-    color: var(--td-text-color-secondary, #888);
+    color: var(--td-text-color-secondary);
   }
 
   &__legend {
@@ -136,7 +150,7 @@ onMounted(load)
 
   &__canvas {
     height: 520px;
-    border: 1px solid var(--td-component-stroke, #e7e7e7);
+    border: 1px solid var(--td-component-stroke);
     border-radius: 10px;
     overflow: hidden;
   }
@@ -144,7 +158,7 @@ onMounted(load)
   &__truncated {
     margin: 8px 0 0;
     font-size: 12px;
-    color: var(--td-text-color-placeholder, #999);
+    color: var(--td-text-color-placeholder);
   }
 }
 
@@ -153,7 +167,7 @@ onMounted(load)
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--td-text-color-secondary, #888);
+  color: var(--td-text-color-secondary);
 }
 
 .legend-dot {
@@ -163,13 +177,13 @@ onMounted(load)
   display: inline-block;
 
   &.is-memory {
-    background: #0052d922;
-    border: 2px solid #0052d9;
+    background: var(--td-brand-color-1);
+    border: 2px solid var(--td-brand-color);
   }
 
   &.is-wiki {
     background: #fff;
-    border: 1.5px dashed #e37318;
+    border: 1.5px dashed var(--td-warning-color);
   }
 }
 </style>

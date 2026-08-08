@@ -6,7 +6,7 @@
 
     <t-loading :loading="loading" :show-overlay="false">
       <div v-if="!notes.length && !loading" class="memory-inbox__empty">
-        {{ t('memory.inbox.empty') }}
+        <t-empty :description="t('memory.inbox.empty')" />
       </div>
 
       <div v-else class="memory-inbox__items">
@@ -141,10 +141,7 @@ onMounted(load)
   }
 
   &__empty {
-    padding: 48px 0;
-    text-align: center;
-    color: var(--td-text-color-placeholder);
-    font-size: 13px;
+    padding: 64px 0;
   }
 
   &__items {
@@ -180,7 +177,7 @@ onMounted(load)
     gap: 10px;
     margin-bottom: 8px;
     font-size: 12px;
-    color: var(--td-text-color-placeholder, #999);
+    color: var(--td-text-color-placeholder);
   }
 
   &__statement {

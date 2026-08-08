@@ -6158,6 +6158,7 @@ export default {
       },
     },
     errors: {
+      exportFailed: 'Export failed',
       loadFailed: 'Could not load your memory',
       saveFailed: 'Could not save',
       forgetFailed: 'Could not delete',
