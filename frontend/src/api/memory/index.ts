@@ -306,8 +306,18 @@ export function listMemoryRevisions(slug: string) {
   return get(`/api/v1/memory/revisions/${encodeSlugPath(slug)}`);
 }
 
-export function revertMemoryPage(slug: string, version: number) {
-  return post("/api/v1/memory/revert", { slug, version });
+export function revertMemoryPage(
+  slug: string,
+  version: number,
+  expectedVersion?: number,
+): Promise<{ data: MemoryPage }> {
+  // expected_version is what this client last saw, so a revert over an edit made
+  // in the meantime is refused rather than silently winning.
+  return post("/api/v1/memory/revert", {
+    slug,
+    version,
+    expected_version: expectedVersion,
+  });
 }
 
 // ---------------------------------------------------------------------------

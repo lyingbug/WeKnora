@@ -630,7 +630,15 @@ func (s *Service) RevertPage(
 	page.OutLinks = s.resolveLinkTargets(ctx, sc.Space.ID, revision.Content)
 	page.LastEditSource = types.MemoryEditSourceRevert
 
-	if err := s.pages.UpdateWithRevision(ctx, page, snapshot, 0); err != nil {
+	// Guard the write with a version. The page's own version closes the
+	// read-modify-write race inside this function; a caller that tells us what it
+	// last saw additionally gets protection from having reverted over an edit it
+	// never knew about. Passing 0 disabled both.
+	expected := page.Version
+	if req.ExpectedVersion > 0 {
+		expected = req.ExpectedVersion
+	}
+	if err := s.pages.UpdateWithRevision(ctx, page, snapshot, expected); err != nil {
 		return nil, err
 	}
 	s.syncInboundLinks(ctx, sc.Space.ID, page.Slug, previousLinks, page.OutLinks)
@@ -879,6 +887,12 @@ func (s *Service) AddAnchor(
 			"%w: relation %q is derived from usage and cannot be asserted directly",
 			ErrInvalidRequest, req.Relation)
 	}
+	if strings.TrimSpace(req.KnowledgeBaseID) == "" {
+		return nil, fmt.Errorf("%w: an anchor needs a knowledge base", ErrInvalidRequest)
+	}
+	if strings.TrimSpace(req.TargetRef) == "" {
+		return nil, fmt.Errorf("%w: an anchor needs a target", ErrInvalidRequest)
+	}
 	targetKind := req.TargetKind
 	if targetKind == "" {
 		targetKind = types.MemoryAnchorTargetWikiPage
@@ -918,7 +932,10 @@ func (s *Service) AddAnchor(
 			return a, nil
 		}
 	}
-	return nil, nil
+	// The upsert succeeded, so the row exists; not finding it means the read-back
+	// disagrees with the write. Returning (nil, nil) here answered 200 with a
+	// null body, which reads as success and gives the caller nothing.
+	return nil, fmt.Errorf("anchor was stored but could not be read back")
 }
 
 // DeleteAnchor removes one anchor.

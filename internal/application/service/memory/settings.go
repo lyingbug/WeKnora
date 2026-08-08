@@ -41,36 +41,29 @@ func (d Deployment) IsLite() bool { return strings.EqualFold(d.Edition, "lite") 
 
 // settingsService resolves the layered memory settings.
 type settingsService struct {
-	deployment  Deployment
-	envPatch    types.MemorySettingsPatch
-	tenants     interfaces.TenantService
-	users       interfaces.UserService
-	agents      interfaces.CustomAgentService
-	spaces      interfaces.MemorySpaceRepository
-	hasEmbedder func(ctx context.Context) bool
+	deployment Deployment
+	envPatch   types.MemorySettingsPatch
+	tenants    interfaces.TenantService
+	users      interfaces.UserService
+	agents     interfaces.CustomAgentService
+	spaces     interfaces.MemorySpaceRepository
 }
 
 // NewSettingsService creates the settings resolver.
-//
-// hasEmbedder may be nil. It is only consulted for capability reporting, and
-// exists for a future vector-backed recall path; the current relevance scorer
-// needs no embedding model, which is why memory works out of the box.
 func NewSettingsService(
 	deployment Deployment,
 	tenants interfaces.TenantService,
 	users interfaces.UserService,
 	agents interfaces.CustomAgentService,
 	spaces interfaces.MemorySpaceRepository,
-	hasEmbedder func(ctx context.Context) bool,
 ) interfaces.MemorySettingsService {
 	return &settingsService{
-		deployment:  deployment,
-		envPatch:    deploymentPatchFromEnv(),
-		tenants:     tenants,
-		users:       users,
-		agents:      agents,
-		spaces:      spaces,
-		hasEmbedder: hasEmbedder,
+		deployment: deployment,
+		envPatch:   deploymentPatchFromEnv(),
+		tenants:    tenants,
+		users:      users,
+		agents:     agents,
+		spaces:     spaces,
 	}
 }
 

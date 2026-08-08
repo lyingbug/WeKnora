@@ -191,10 +191,11 @@ type MemorySpace struct {
 	Status             string `json:"status"               gorm:"type:varchar(16);default:'active'"`
 	// Config holds space-level setting overrides (the narrowest layer).
 	Config MemorySettingsPatch `json:"config" gorm:"type:jsonb"`
-	// VectorKBID is the hidden knowledge base that indexes this space's pages
-	// for semantic recall. Using a hidden KB rather than a new user dimension
-	// in RetrieveParams keeps all ten vector drivers untouched, and works
-	// unchanged on Lite's sqlite-vec backend.
+	// VectorKBID is unused. The plan called for a hidden knowledge base per space
+	// to index its pages for semantic recall; recall is lexical and runs in Go
+	// instead, so nothing ever assigns this. Kept because dropping a column needs
+	// a migration on both engines for no functional gain — but read it as
+	// reserved, not as a feature.
 	VectorKBID string         `json:"vector_kb_id" gorm:"type:varchar(36)"`
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`

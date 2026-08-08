@@ -76,8 +76,13 @@ type MemoryPageWriteRequest struct {
 
 // MemoryRevertRequest rolls a page back to an earlier revision.
 type MemoryRevertRequest struct {
-	Slug    string `json:"slug"    binding:"required"`
-	Version int    `json:"version" binding:"required"`
+	Slug string `json:"slug"    binding:"required"`
+	// Version is the revision to restore.
+	Version int `json:"version" binding:"required"`
+	// ExpectedVersion is the caller's view of the page's current version. When
+	// supplied, a revert that would overwrite an edit made since the caller read
+	// the page is refused with a conflict instead of silently winning.
+	ExpectedVersion int `json:"expected_version,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -273,9 +278,8 @@ const (
 	MemoryCapabilityAutoExtract     = "auto_extract"
 	MemoryCapabilityInsights        = "insights"
 
-	MemoryCapabilityReasonLite             = "lite_edition"
-	MemoryCapabilityReasonDisabled         = "disabled_by_settings"
-	MemoryCapabilityReasonNoEmbeddingModel = "no_embedding_model"
+	MemoryCapabilityReasonLite     = "lite_edition"
+	MemoryCapabilityReasonDisabled = "disabled_by_settings"
 )
 
 // MemoryStats summarises a space for the memory centre header.
@@ -384,10 +388,13 @@ type MemoryInsight struct {
 // MemoryInsightsResponse carries the insight list plus the privacy parameters
 // it was computed under, so the reader knows what was suppressed.
 type MemoryInsightsResponse struct {
-	KnowledgeBaseID string          `json:"knowledge_base_id"`
-	KAnonymity      int             `json:"k_anonymity"`
-	Suppressed      int             `json:"suppressed"`
-	Insights        []MemoryInsight `json:"insights"`
+	KnowledgeBaseID string `json:"knowledge_base_id"`
+	KAnonymity      int    `json:"k_anonymity"`
+	Suppressed      int    `json:"suppressed"`
+	// SuppressedNeverLit counts untouched pages left out of the capped list, so a
+	// reader can tell a short list from a truncated one.
+	SuppressedNeverLit int             `json:"suppressed_never_lit,omitempty"`
+	Insights           []MemoryInsight `json:"insights"`
 }
 
 // MemoryAnchorAggregate is one target's usage summed across every space. It

@@ -87,7 +87,10 @@ func BuildMemoryGraph(
 	}
 
 	sortGraph(data)
-	data.Meta.Returned = len(data.Nodes)
+	// Returned counts the memories shown, not the nodes drawn: Total counts
+	// memory candidates, so including the wiki satellites made bridged mode
+	// report things like "showing 40 of 25".
+	data.Meta.Returned = len(selected)
 	data.Meta.Truncated = total > len(selected)
 	return data
 }

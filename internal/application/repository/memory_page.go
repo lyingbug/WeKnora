@@ -376,11 +376,43 @@ func (r *memoryPageRepository) PurgeArchivedBefore(
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	result := r.db.WithContext(ctx).
-		Unscoped().
-		Where("space_id = ? AND id IN ?", spaceID, ids).
-		Delete(&types.MemoryPage{})
-	return result.RowsAffected, result.Error
+
+	// Everything that pointed at these pages goes with them. There are no
+	// foreign keys and no cascades, so a hard delete of the page alone left
+	// revisions, anchors and the notes that had been merged into it behind —
+	// rows referencing an id that no longer resolves, which is how a "purged"
+	// memory keeps colouring the illumination overlay.
+	var purged int64
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Revisions key on page_id; anchors on memory_page_id.
+		if err := tx.Unscoped().
+			Where("space_id = ? AND page_id IN ?", spaceID, ids).
+			Delete(&types.MemoryPageRevision{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Unscoped().
+			Where("space_id = ? AND memory_page_id IN ?", spaceID, ids).
+			Delete(&types.MemoryAnchor{}).Error; err != nil {
+			return err
+		}
+		// The observations lose their page but not their meaning: they are marked
+		// as no longer merged rather than deleted, so the evidence trail survives
+		// a retention purge of the page it produced.
+		if err := tx.Model(&types.MemoryNote{}).
+			Where("space_id = ? AND merged_page_id IN ?", spaceID, ids).
+			Updates(map[string]interface{}{
+				"merged_page_id": "",
+				"status":         types.MemoryNoteStatusExpired,
+			}).Error; err != nil {
+			return err
+		}
+		result := tx.Unscoped().
+			Where("space_id = ? AND id IN ?", spaceID, ids).
+			Delete(&types.MemoryPage{})
+		purged = result.RowsAffected
+		return result.Error
+	})
+	return purged, err
 }
 
 func (r *memoryPageRepository) ListRevisions(

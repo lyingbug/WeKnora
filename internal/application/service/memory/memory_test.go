@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -550,5 +551,57 @@ func TestMemoryPreferenceSanitize(t *testing.T) {
 	}
 	if len(clean.AvoidTopics) != 1 || clean.AvoidTopics[0] != "salary" {
 		t.Errorf("avoid topics = %v, want only the plain label", clean.AvoidTopics)
+	}
+}
+
+// The k-anonymity gate has to measure the people it is protecting. asked_about
+// anchors are created automatically for every cited page, so gating a contested
+// insight on the widest population meant ten readers and one objection published
+// a report that made the objector identifiable in a small workspace.
+func TestBuildMemoryInsights_ContestedGateCountsDissentersNotReaders(t *testing.T) {
+	aggregates := []types.MemoryAnchorAggregate{
+		{
+			TargetKind: types.MemoryAnchorTargetWikiPage, TargetRef: "concept/rerank",
+			Relation: types.MemoryRelationAskedAbout, Interactions: 40, DistinctSpaces: 10,
+		},
+		{
+			TargetKind: types.MemoryAnchorTargetWikiPage, TargetRef: "concept/rerank",
+			Relation: types.MemoryRelationDisagreed, Interactions: 1, DistinctSpaces: 1,
+		},
+	}
+	pages := []types.MemoryInsightPage{{Slug: "concept/rerank", Title: "Rerank", ContentLength: 4000}}
+
+	resp := BuildMemoryInsights("kb-1", aggregates, pages, 5)
+	for _, insight := range resp.Insights {
+		if insight.Kind == types.MemoryInsightContested {
+			t.Fatalf("published a contested insight from a single dissenter among 10 readers: %+v", insight)
+		}
+	}
+	if resp.Suppressed == 0 {
+		t.Fatal("the contested insight was neither published nor counted as suppressed")
+	}
+}
+
+func TestBuildMemoryInsights_CapsTheUntouchedList(t *testing.T) {
+	pages := make([]types.MemoryInsightPage, 0, 120)
+	for i := 0; i < 120; i++ {
+		pages = append(pages, types.MemoryInsightPage{
+			Slug: fmt.Sprintf("page/%d", i), Title: "P", ContentLength: 2000,
+		})
+	}
+	resp := BuildMemoryInsights("kb-1", nil, pages, 5)
+
+	neverLit := 0
+	for _, insight := range resp.Insights {
+		if insight.Kind == types.MemoryInsightNeverLit {
+			neverLit++
+		}
+	}
+	if neverLit > maxNeverLitInsights {
+		t.Fatalf("returned %d untouched pages, want at most %d", neverLit, maxNeverLitInsights)
+	}
+	if resp.SuppressedNeverLit != len(pages)-neverLit {
+		t.Fatalf("suppressed count = %d, want %d so a reader can tell the list was truncated",
+			resp.SuppressedNeverLit, len(pages)-neverLit)
 	}
 }

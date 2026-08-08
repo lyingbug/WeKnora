@@ -334,3 +334,66 @@ func TestMemoryPageHitBumpIsScoped(t *testing.T) {
 		t.Errorf("hit count = %d, want 0: usage recorded against the wrong space", after.HitCount)
 	}
 }
+
+// A retention purge hard-deletes the page. There are no foreign keys, so
+// anything that pointed at it has to be dealt with explicitly: revisions and
+// anchors that outlive their page keep colouring the illumination overlay, and a
+// note still claiming to be merged into a row that no longer exists is a lie
+// about its own provenance.
+func TestPurgeArchivedTakesDependentRowsWithIt(t *testing.T) {
+	f := seedTwoSpaces(t)
+	ctx := context.Background()
+
+	pageID := uuid.New().String()
+	old := time.Now().Add(-90 * 24 * time.Hour)
+	if err := f.db.Create(&types.MemoryPage{
+		ID: pageID, TenantID: 1, SpaceID: f.spaceA, Slug: "episode/stale", Title: "stale",
+		PageType: types.MemoryTypeEpisode, Status: types.MemoryPageStatusArchived,
+		Version: 1, UpdatedAt: old,
+	}).Error; err != nil {
+		t.Fatalf("seed page: %v", err)
+	}
+	// GORM manages updated_at, so put it back where the purge window needs it.
+	if err := f.db.Model(&types.MemoryPage{}).Where("id = ?", pageID).
+		UpdateColumn("updated_at", old).Error; err != nil {
+		t.Fatalf("age page: %v", err)
+	}
+	for _, row := range []interface{}{
+		&types.MemoryPageRevision{
+			ID: uuid.New().String(), TenantID: 1, SpaceID: f.spaceA,
+			PageID: pageID, Version: 1, Title: "stale",
+		},
+		&types.MemoryAnchor{
+			ID: uuid.New().String(), TenantID: 1, SpaceID: f.spaceA,
+			MemoryPageID: pageID, KnowledgeBaseID: "kb-1",
+			TargetKind: types.MemoryAnchorTargetWikiPage, TargetRef: "concept/x",
+			Relation: types.MemoryRelationLearned,
+		},
+		&types.MemoryNote{
+			ID: uuid.New().String(), TenantID: 1, SpaceID: f.spaceA,
+			NoteType: types.MemoryTypeEpisode, Statement: "stale",
+			Status: types.MemoryNoteStatusMerged, MergedPageID: pageID,
+		},
+	} {
+		if err := f.db.Create(row).Error; err != nil {
+			t.Fatalf("seed dependent row: %v", err)
+		}
+	}
+
+	purged, err := f.pages.PurgeArchivedBefore(ctx, f.spaceA, time.Now().Add(-30*24*time.Hour), 10)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if purged != 1 {
+		t.Fatalf("purged %d pages, want 1", purged)
+	}
+
+	var revisions, anchors, merged int64
+	f.db.Model(&types.MemoryPageRevision{}).Where("page_id = ?", pageID).Count(&revisions)
+	f.db.Model(&types.MemoryAnchor{}).Where("memory_page_id = ?", pageID).Count(&anchors)
+	f.db.Model(&types.MemoryNote{}).Where("merged_page_id = ?", pageID).Count(&merged)
+	if revisions != 0 || anchors != 0 || merged != 0 {
+		t.Fatalf("orphans left behind: %d revisions, %d anchors, %d notes still merged",
+			revisions, anchors, merged)
+	}
+}

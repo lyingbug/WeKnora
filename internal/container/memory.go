@@ -49,7 +49,7 @@ func registerMemoryComponents(c *dig.Container, redisAvailable bool) {
 		agents interfaces.CustomAgentService,
 		spaces interfaces.MemorySpaceRepository,
 	) interfaces.MemorySettingsService {
-		return memorysvc.NewSettingsService(deployment, tenants, users, agents, spaces, nil)
+		return memorysvc.NewSettingsService(deployment, tenants, users, agents, spaces)
 	}))
 
 	// The concrete service is provided as well as the interface: the writer

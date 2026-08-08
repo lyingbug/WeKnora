@@ -12,6 +12,11 @@ import (
 // and leaves the decision to a human.
 const thinPageContentLength = 1000
 
+// maxNeverLitInsights caps the "nobody has read this" list. It is a finding, not
+// an inventory: a ten-thousand-page wiki nobody has touched yet would otherwise
+// answer with ten thousand entries in one response.
+const maxNeverLitInsights = 50
+
 // BuildMemoryInsights turns per-target anchor aggregates into the anonymised
 // report a knowledge-base owner sees.
 //
@@ -44,11 +49,18 @@ func BuildMemoryInsights(
 	}
 
 	type rollup struct {
-		asked          int
-		contested      int
-		distinctAsked  int
-		distinctAll    int
-		anyInteraction bool
+		asked     int
+		contested int
+		// Counted per relation, because the k-anonymity gate has to measure the
+		// population it is protecting. distinctAll is dominated by asked_about,
+		// which is created automatically for every cited page, so gating the
+		// contested insight on it protected readers rather than dissenters: ten
+		// readers and one objection published a report that made the one
+		// identifiable in a small workspace.
+		distinctAsked     int
+		distinctContested int
+		distinctAll       int
+		anyInteraction    bool
 	}
 	byTarget := map[string]*rollup{}
 
@@ -73,6 +85,9 @@ func BuildMemoryInsights(
 			}
 		case types.MemoryRelationCorrected, types.MemoryRelationDisagreed:
 			entry.contested += agg.Interactions
+			if agg.DistinctSpaces > entry.distinctContested {
+				entry.distinctContested = agg.DistinctSpaces
+			}
 		}
 	}
 
@@ -96,7 +111,7 @@ func BuildMemoryInsights(
 		}
 
 		if entry.contested > 0 {
-			if entry.distinctAll < kAnonymity {
+			if entry.distinctContested < kAnonymity {
 				resp.Suppressed++
 			} else {
 				resp.Insights = append(resp.Insights, types.MemoryInsight{
@@ -105,7 +120,7 @@ func BuildMemoryInsights(
 					Title:          page.Title,
 					ContentLength:  page.ContentLength,
 					Interactions:   entry.contested,
-					DistinctPeople: entry.distinctAll,
+					DistinctPeople: entry.distinctContested,
 				})
 			}
 		}
@@ -127,9 +142,17 @@ func BuildMemoryInsights(
 	}
 
 	// Pages nobody has ever touched need no k-anonymity gate: "zero people
-	// interacted with this" reveals nothing about anyone.
+	// interacted with this" reveals nothing about anyone. They are capped
+	// though — a large wiki that nobody has read yet would otherwise return one
+	// entry per page, and a list that long is not a finding.
+	untouched := 0
 	for _, page := range pages {
 		if entry, ok := byTarget[page.Slug]; !ok || !entry.anyInteraction {
+			if untouched >= maxNeverLitInsights {
+				resp.SuppressedNeverLit++
+				continue
+			}
+			untouched++
 			resp.Insights = append(resp.Insights, types.MemoryInsight{
 				Kind:          types.MemoryInsightNeverLit,
 				TargetRef:     page.Slug,

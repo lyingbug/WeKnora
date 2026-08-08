@@ -228,11 +228,18 @@ async function save() {
 
 async function revert(targetVersion: number) {
   try {
-    await revertMemoryPage(props.slug, targetVersion)
+    await revertMemoryPage(props.slug, targetVersion, version.value)
     MessagePlugin.success(t('memory.editor.reverted'))
     await load()
     emit('saved')
-  } catch {
+  } catch (error: any) {
+    // Same treatment as save: a conflict means the memory moved under us, and
+    // reloading is more useful than a generic failure.
+    if (error?.response?.status === 409) {
+      MessagePlugin.warning(t('memory.editor.conflict'))
+      await load()
+      return
+    }
     MessagePlugin.error(t('memory.errors.saveFailed'))
   }
 }

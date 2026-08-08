@@ -29,7 +29,6 @@ import (
 type MemoryHandler struct {
 	memoryService   interfaces.MemoryService
 	settingsService interfaces.MemorySettingsService
-	writerService   interfaces.MemoryWriterService
 	wikiService     interfaces.WikiPageService
 	kbService       interfaces.KnowledgeBaseService
 }
@@ -38,14 +37,12 @@ type MemoryHandler struct {
 func NewMemoryHandler(
 	memoryService interfaces.MemoryService,
 	settingsService interfaces.MemorySettingsService,
-	writerService interfaces.MemoryWriterService,
 	wikiService interfaces.WikiPageService,
 	kbService interfaces.KnowledgeBaseService,
 ) *MemoryHandler {
 	return &MemoryHandler{
 		memoryService:   memoryService,
 		settingsService: settingsService,
-		writerService:   writerService,
 		wikiService:     wikiService,
 		kbService:       kbService,
 	}
@@ -574,6 +571,20 @@ func (h *MemoryHandler) AddAnchor(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.NewBadRequestError(err.Error()).Error()})
 		return
 	}
+	// Anchoring writes into a knowledge base's aggregate view, so the caller has
+	// to be able to read that knowledge base. The route cannot check it: the id
+	// arrives in the body, not the path, so KBAccessRead has nothing to bind to.
+	// Without this, anyone could anchor into any knowledge base in the workspace
+	// and colour its coverage and insight aggregates.
+	if h.kbService != nil && strings.TrimSpace(req.KnowledgeBaseID) != "" {
+		if _, err := h.kbService.GetKnowledgeBaseByID(c.Request.Context(), req.KnowledgeBaseID); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": apperrors.NewNotFoundError("knowledge base not found").Error(),
+			})
+			return
+		}
+	}
+
 	anchor, err := h.memoryService.AddAnchor(c.Request.Context(), &req)
 	if err != nil {
 		h.respondMemoryError(c, err)
