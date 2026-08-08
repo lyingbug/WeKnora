@@ -892,7 +892,7 @@ func (h *WikiPageHandler) applyMemoryOverlay(c *gin.Context, kbID string, graph 
 	if !strings.EqualFold(strings.TrimSpace(c.Query("overlay")), "memory") {
 		return
 	}
-	overlay, err := h.memoryService.Overlay(c.Request.Context(), kbID)
+	overlay, err := h.memoryService.Overlay(c.Request.Context(), kbID, types.MemoryAnchorTargetWikiPage)
 	if err != nil || len(overlay) == 0 {
 		return
 	}

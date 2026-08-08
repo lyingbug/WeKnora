@@ -148,11 +148,12 @@ type MemoryService interface {
 	Export(ctx context.Context) (*types.MemoryExport, error)
 
 	// Coverage reports how much of a knowledge base the caller has lit up.
-	Coverage(ctx context.Context, kbID string, pages []types.MemoryCoveragePage) (*types.MemoryCoverage, error)
-	// Overlay returns per-wiki-slug illumination for the caller.
-	Overlay(ctx context.Context, kbID string) (map[string]types.MemoryOverlayNode, error)
+	Coverage(ctx context.Context, kbID string, pages []types.MemoryCoveragePage, targetKind string) (*types.MemoryCoverage, error)
+	// Overlay returns per-target illumination for the caller. targetKind selects
+	// wiki pages or the documents of an ordinary knowledge base.
+	Overlay(ctx context.Context, kbID, targetKind string) (map[string]types.MemoryOverlayNode, error)
 	// Insights returns the anonymised aggregate view for workspace admins.
-	Insights(ctx context.Context, kbID string, pages []types.MemoryInsightPage) (*types.MemoryInsightsResponse, error)
+	Insights(ctx context.Context, kbID string, pages []types.MemoryInsightPage, targetKind string) (*types.MemoryInsightsResponse, error)
 }
 
 // MemoryRecallService selects memories for injection and records usage.

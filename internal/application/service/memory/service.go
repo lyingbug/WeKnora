@@ -1064,13 +1064,18 @@ func (s *Service) Export(ctx context.Context) (*types.MemoryExport, error) {
 // Illumination
 // ---------------------------------------------------------------------------
 
-// Overlay returns per-wiki-slug illumination for the caller.
+// Overlay returns per-target illumination for the caller.
+//
+// targetKind selects what is being lit: wiki pages, or the documents of an
+// ordinary knowledge base. The maths is the same either way — the anchors only
+// differ in what their target_ref points at — so an ordinary knowledge base gets
+// the same four states and the same decay as a wiki.
 //
 // Returns nil (not an error) when memory is off or the overlay is disabled, so
 // the wiki graph endpoint can call it unconditionally and simply omit the
 // overlay field when there is nothing to add.
 func (s *Service) Overlay(
-	ctx context.Context, kbID string,
+	ctx context.Context, kbID, targetKind string,
 ) (map[string]types.MemoryOverlayNode, error) {
 	sc, err := s.resolveScope(ctx, false)
 	if err != nil || sc == nil || sc.Space == nil {
@@ -1079,7 +1084,10 @@ func (s *Service) Overlay(
 	if !sc.Settings.OverlayEnabled {
 		return nil, nil
 	}
-	anchors, err := s.anchors.ListOverlay(ctx, sc.Space.ID, kbID, types.MemoryAnchorTargetWikiPage)
+	if targetKind == "" {
+		targetKind = types.MemoryAnchorTargetWikiPage
+	}
+	anchors, err := s.anchors.ListOverlay(ctx, sc.Space.ID, kbID, targetKind)
 	if err != nil {
 		return nil, err
 	}
@@ -1091,9 +1099,9 @@ func (s *Service) Overlay(
 
 // Coverage reports how much of a knowledge base the caller has lit up.
 func (s *Service) Coverage(
-	ctx context.Context, kbID string, pages []types.MemoryCoveragePage,
+	ctx context.Context, kbID string, pages []types.MemoryCoveragePage, targetKind string,
 ) (*types.MemoryCoverage, error) {
-	overlay, err := s.Overlay(ctx, kbID)
+	overlay, err := s.Overlay(ctx, kbID, targetKind)
 	if err != nil {
 		return nil, err
 	}
@@ -1110,7 +1118,7 @@ func (s *Service) Coverage(
 // only shown once enough distinct people contributed to it that it says
 // something about the knowledge base instead of about a person.
 func (s *Service) Insights(
-	ctx context.Context, kbID string, pages []types.MemoryInsightPage,
+	ctx context.Context, kbID string, pages []types.MemoryInsightPage, targetKind string,
 ) (*types.MemoryInsightsResponse, error) {
 	tenantID, ok := types.TenantIDFromContext(ctx)
 	if !ok || tenantID == 0 {
@@ -1132,7 +1140,7 @@ func (s *Service) Insights(
 	if err != nil {
 		return nil, err
 	}
-	resp := BuildMemoryInsights(kbID, aggregates, pages, settings.InsightsKAnonymity)
+	resp := BuildMemoryInsights(kbID, aggregates, pages, settings.InsightsKAnonymity, targetKind)
 	return resp, nil
 }
 

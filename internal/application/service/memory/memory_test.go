@@ -442,7 +442,7 @@ func TestBuildMemoryInsights_AppliesKAnonymity(t *testing.T) {
 			Relation: types.MemoryRelationAskedAbout, Interactions: 9, DistinctSpaces: 1},
 	}
 
-	resp := BuildMemoryInsights("kb1", aggregates, pages, 5)
+	resp := BuildMemoryInsights("kb1", aggregates, pages, 5, types.MemoryAnchorTargetWikiPage)
 
 	var sawThin, sawPrivate, sawUntouched bool
 	for _, insight := range resp.Insights {
@@ -488,7 +488,7 @@ func TestBuildMemoryInsights_ContestedPagesRankFirst(t *testing.T) {
 			Relation: types.MemoryRelationCorrected, Interactions: 3, DistinctSpaces: 5},
 	}
 
-	resp := BuildMemoryInsights("kb1", aggregates, pages, 5)
+	resp := BuildMemoryInsights("kb1", aggregates, pages, 5, types.MemoryAnchorTargetWikiPage)
 
 	if len(resp.Insights) == 0 {
 		t.Fatal("expected insights")
@@ -571,7 +571,7 @@ func TestBuildMemoryInsights_ContestedGateCountsDissentersNotReaders(t *testing.
 	}
 	pages := []types.MemoryInsightPage{{Slug: "concept/rerank", Title: "Rerank", ContentLength: 4000}}
 
-	resp := BuildMemoryInsights("kb-1", aggregates, pages, 5)
+	resp := BuildMemoryInsights("kb-1", aggregates, pages, 5, types.MemoryAnchorTargetWikiPage)
 	for _, insight := range resp.Insights {
 		if insight.Kind == types.MemoryInsightContested {
 			t.Fatalf("published a contested insight from a single dissenter among 10 readers: %+v", insight)
@@ -589,7 +589,7 @@ func TestBuildMemoryInsights_CapsTheUntouchedList(t *testing.T) {
 			Slug: fmt.Sprintf("page/%d", i), Title: "P", ContentLength: 2000,
 		})
 	}
-	resp := BuildMemoryInsights("kb-1", nil, pages, 5)
+	resp := BuildMemoryInsights("kb-1", nil, pages, 5, types.MemoryAnchorTargetWikiPage)
 
 	neverLit := 0
 	for _, insight := range resp.Insights {
@@ -603,5 +603,83 @@ func TestBuildMemoryInsights_CapsTheUntouchedList(t *testing.T) {
 	if resp.SuppressedNeverLit != len(pages)-neverLit {
 		t.Fatalf("suppressed count = %d, want %d so a reader can tell the list was truncated",
 			resp.SuppressedNeverLit, len(pages)-neverLit)
+	}
+}
+
+// Illumination is unit-agnostic: an ordinary knowledge base's documents get the
+// same four states, the same decay and the same coverage arithmetic as a wiki's
+// pages. Only the anchors differ, in what their target_ref points at.
+func TestInsightsAndCoverageWorkOnOrdinaryDocuments(t *testing.T) {
+	aggregates := []types.MemoryAnchorAggregate{
+		{
+			TargetKind: types.MemoryAnchorTargetKnowledge, TargetRef: "kn-thin",
+			Relation: types.MemoryRelationAskedAbout, Interactions: 30, DistinctSpaces: 8,
+		},
+		// A wiki aggregate in the same workspace must not leak into a document
+		// report, and vice versa.
+		{
+			TargetKind: types.MemoryAnchorTargetWikiPage, TargetRef: "concept/other",
+			Relation: types.MemoryRelationAskedAbout, Interactions: 99, DistinctSpaces: 9,
+		},
+	}
+	documents := []types.MemoryInsightPage{
+		{Slug: "kn-thin", Title: "薄文档", ContentLength: 120},
+		{Slug: "kn-unread", Title: "没人读过", ContentLength: 9000},
+	}
+
+	resp := BuildMemoryInsights("kb-1", aggregates, documents, 5, types.MemoryAnchorTargetKnowledge)
+
+	var thinButHot, neverLit int
+	for _, insight := range resp.Insights {
+		switch insight.Kind {
+		case types.MemoryInsightThinButHot:
+			thinButHot++
+			if insight.TargetRef != "kn-thin" {
+				t.Fatalf("thin-but-hot pointed at %q", insight.TargetRef)
+			}
+		case types.MemoryInsightNeverLit:
+			neverLit++
+		}
+		if insight.TargetRef == "concept/other" {
+			t.Fatal("a wiki aggregate leaked into a document report")
+		}
+	}
+	if thinButHot != 1 {
+		t.Fatalf("thin-but-hot insights = %d, want 1", thinButHot)
+	}
+	if neverLit != 1 {
+		t.Fatalf("never-lit insights = %d, want 1 (the unread document)", neverLit)
+	}
+}
+
+func TestCoverageCountsDocumentsByFolder(t *testing.T) {
+	overlay := map[string]types.MemoryOverlayNode{
+		"kn-1": {State: types.MemoryStateMastered},
+		"kn-2": {State: types.MemoryStateTouched},
+	}
+	documents := []types.MemoryCoveragePage{
+		{Slug: "kn-1", Folder: "手册"},
+		{Slug: "kn-2", Folder: "手册"},
+		{Slug: "kn-3", Folder: "归档"},
+	}
+
+	coverage := types.ComputeMemoryCoverage("kb-1", documents, overlay)
+	if coverage.TotalPages != 3 {
+		t.Fatalf("total = %d, want 3 documents", coverage.TotalPages)
+	}
+	if coverage.LitPages != 2 {
+		t.Fatalf("lit = %d, want the 2 documents with any engagement", coverage.LitPages)
+	}
+	var manual *types.MemoryCoverageBucket
+	for i := range coverage.Folders {
+		if coverage.Folders[i].Folder == "手册" {
+			manual = &coverage.Folders[i]
+		}
+	}
+	if manual == nil {
+		t.Fatal("documents were not bucketed by folder")
+	}
+	if manual.TotalPages != 2 || manual.LitPages != 2 {
+		t.Fatalf("folder bucket = %d lit of %d, want 2 of 2", manual.LitPages, manual.TotalPages)
 	}
 }

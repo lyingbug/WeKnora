@@ -33,7 +33,11 @@ func BuildMemoryInsights(
 	aggregates []types.MemoryAnchorAggregate,
 	pages []types.MemoryInsightPage,
 	kAnonymity int,
+	targetKind string,
 ) *types.MemoryInsightsResponse {
+	if targetKind == "" {
+		targetKind = types.MemoryAnchorTargetWikiPage
+	}
 	if kAnonymity < 1 {
 		kAnonymity = 5
 	}
@@ -65,7 +69,7 @@ func BuildMemoryInsights(
 	byTarget := map[string]*rollup{}
 
 	for _, agg := range aggregates {
-		if agg.TargetKind != types.MemoryAnchorTargetWikiPage {
+		if agg.TargetKind != targetKind {
 			continue
 		}
 		entry, ok := byTarget[agg.TargetRef]

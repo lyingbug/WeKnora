@@ -27,10 +27,11 @@ import (
 // their anchors. The service derives the space from the request principal and
 // never accepts one from the client, so there is no identifier to tamper with.
 type MemoryHandler struct {
-	memoryService   interfaces.MemoryService
-	settingsService interfaces.MemorySettingsService
-	wikiService     interfaces.WikiPageService
-	kbService       interfaces.KnowledgeBaseService
+	memoryService    interfaces.MemoryService
+	settingsService  interfaces.MemorySettingsService
+	wikiService      interfaces.WikiPageService
+	kbService        interfaces.KnowledgeBaseService
+	knowledgeService interfaces.KnowledgeService
 }
 
 // NewMemoryHandler creates the memory handler.
@@ -39,12 +40,14 @@ func NewMemoryHandler(
 	settingsService interfaces.MemorySettingsService,
 	wikiService interfaces.WikiPageService,
 	kbService interfaces.KnowledgeBaseService,
+	knowledgeService interfaces.KnowledgeService,
 ) *MemoryHandler {
 	return &MemoryHandler{
-		memoryService:   memoryService,
-		settingsService: settingsService,
-		wikiService:     wikiService,
-		kbService:       kbService,
+		memoryService:    memoryService,
+		settingsService:  settingsService,
+		wikiService:      wikiService,
+		kbService:        kbService,
+		knowledgeService: knowledgeService,
 	}
 }
 
@@ -673,13 +676,14 @@ func (h *MemoryHandler) Export(c *gin.Context) {
 func (h *MemoryHandler) GetCoverage(c *gin.Context) {
 	ctx := c.Request.Context()
 	kbID := secutils.SanitizeForLog(c.Param("kb_id"))
+	targetKind := overlayTargetKind(c.Query("target"))
 
-	pages, err := h.coveragePages(c, kbID)
+	pages, err := h.coverageUnits(c, kbID, targetKind)
 	if err != nil {
 		h.respondMemoryError(c, err)
 		return
 	}
-	coverage, err := h.memoryService.Coverage(ctx, kbID, pages)
+	coverage, err := h.memoryService.Coverage(ctx, kbID, pages, targetKind)
 	if err != nil {
 		h.respondMemoryError(c, err)
 		return
@@ -687,11 +691,142 @@ func (h *MemoryHandler) GetCoverage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": coverage})
 }
 
-// coveragePages projects the knowledge base's live wiki pages.
+// GetOverlay godoc
+// @Summary      Get per-item illumination for a knowledge base
+// @Description  Returns the caller's engagement state keyed by wiki slug or document id
+// @Tags         Memory
+// @Produce      json
+// @Param        kb_id   path   string  true   "Knowledge base ID"
+// @Param        target  query  string  false  "wiki_page (default) or knowledge"
+// @Success      200  {object}  map[string]types.MemoryOverlayNode
+// @Security     Bearer
+// @Router       /knowledgebase/{kb_id}/memory/overlay [get]
 //
-// Archived pages are excluded from the denominator on purpose: retiring a page
-// should not make everyone's coverage percentage drop for reasons unrelated to
-// what they have read.
+// The wiki graph gets its overlay folded into the graph response, because it is
+// drawing nodes anyway. A document list has no such carrier, so it asks here.
+func (h *MemoryHandler) GetOverlay(c *gin.Context) {
+	kbID := secutils.SanitizeForLog(c.Param("kb_id"))
+	overlay, err := h.memoryService.Overlay(
+		c.Request.Context(), kbID, overlayTargetKind(c.Query("target")),
+	)
+	if err != nil {
+		h.respondMemoryError(c, err)
+		return
+	}
+	if overlay == nil {
+		// Illumination switched off, or no space yet. An empty map says "nothing
+		// is lit" without the caller having to special-case a null.
+		overlay = map[string]types.MemoryOverlayNode{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": overlay})
+}
+
+// overlayTargetKind maps the query parameter onto an anchor target kind.
+func overlayTargetKind(raw string) string {
+	if strings.TrimSpace(raw) == types.MemoryAnchorTargetKnowledge {
+		return types.MemoryAnchorTargetKnowledge
+	}
+	return types.MemoryAnchorTargetWikiPage
+}
+
+// insightUnits projects the same units coverage uses, plus the size that decides
+// whether something counts as thin.
+func (h *MemoryHandler) insightUnits(
+	c *gin.Context, kbID, targetKind string,
+) ([]types.MemoryInsightPage, error) {
+	ctx := c.Request.Context()
+	if targetKind == types.MemoryAnchorTargetKnowledge {
+		if h.knowledgeService == nil {
+			return nil, nil
+		}
+		all, err := h.knowledgeService.ListKnowledgeByKnowledgeBaseID(ctx, kbID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]types.MemoryInsightPage, 0, len(all))
+		for _, knowledge := range all {
+			if knowledge == nil || knowledge.ID == "" {
+				continue
+			}
+			// A document's stored size stands in for a wiki page's body length.
+			// It is a coarser measure — a scanned PDF is large and may still say
+			// little — but "asked about a great deal, and barely anything here"
+			// is the signal, and size carries it.
+			out = append(out, types.MemoryInsightPage{
+				Slug: knowledge.ID, Title: knowledge.Title, ContentLength: int(knowledge.FileSize),
+			})
+		}
+		return out, nil
+	}
+
+	all, err := h.wikiService.ListAllPages(ctx, kbID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]types.MemoryInsightPage, 0, len(all))
+	for _, page := range all {
+		if page.Status != types.WikiPageStatusPublished {
+			continue
+		}
+		out = append(out, types.MemoryInsightPage{
+			Slug: page.Slug, Title: page.Title, ContentLength: len(page.Content),
+		})
+	}
+	return out, nil
+}
+
+// coverageUnits projects whatever the knowledge base is made of: wiki pages, or
+// the documents of an ordinary knowledge base.
+//
+// Retired items are excluded from the denominator on purpose: taking something
+// out of circulation should not make everyone's coverage drop for reasons
+// unrelated to what they have read.
+func (h *MemoryHandler) coverageUnits(
+	c *gin.Context, kbID, targetKind string,
+) ([]types.MemoryCoveragePage, error) {
+	if targetKind == types.MemoryAnchorTargetKnowledge {
+		return h.coverageDocuments(c, kbID)
+	}
+	return h.coveragePages(c, kbID)
+}
+
+// coverageDocuments projects an ordinary knowledge base's documents, keyed by
+// id because that is what a retrieval anchor records as its target.
+func (h *MemoryHandler) coverageDocuments(
+	c *gin.Context, kbID string,
+) ([]types.MemoryCoveragePage, error) {
+	if h.knowledgeService == nil {
+		return nil, nil
+	}
+	all, err := h.knowledgeService.ListKnowledgeByKnowledgeBaseID(c.Request.Context(), kbID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]types.MemoryCoveragePage, 0, len(all))
+	for _, knowledge := range all {
+		if knowledge == nil || knowledge.ID == "" {
+			continue
+		}
+		out = append(out, types.MemoryCoveragePage{
+			Slug:   knowledge.ID,
+			Folder: firstFolderSegment(knowledge.FolderPath),
+		})
+	}
+	return out, nil
+}
+
+// firstFolderSegment reduces "/a/b/c" to "a", matching how wiki coverage buckets
+// by the first breadcrumb.
+func firstFolderSegment(path string) string {
+	for _, segment := range strings.Split(strings.Trim(path, "/"), "/") {
+		if segment != "" {
+			return segment
+		}
+	}
+	return ""
+}
+
+// coveragePages projects the knowledge base's live wiki pages.
 func (h *MemoryHandler) coveragePages(c *gin.Context, kbID string) ([]types.MemoryCoveragePage, error) {
 	all, err := h.wikiService.ListAllPages(c.Request.Context(), kbID)
 	if err != nil {
@@ -724,22 +859,14 @@ func (h *MemoryHandler) GetInsights(c *gin.Context) {
 	ctx := c.Request.Context()
 	kbID := secutils.SanitizeForLog(c.Param("kb_id"))
 
-	all, err := h.wikiService.ListAllPages(ctx, kbID)
+	targetKind := overlayTargetKind(c.Query("target"))
+	pages, err := h.insightUnits(c, kbID, targetKind)
 	if err != nil {
 		h.respondMemoryError(c, err)
 		return
 	}
-	pages := make([]types.MemoryInsightPage, 0, len(all))
-	for _, page := range all {
-		if page.Status != types.WikiPageStatusPublished {
-			continue
-		}
-		pages = append(pages, types.MemoryInsightPage{
-			Slug: page.Slug, Title: page.Title, ContentLength: len(page.Content),
-		})
-	}
 
-	resp, err := h.memoryService.Insights(ctx, kbID, pages)
+	resp, err := h.memoryService.Insights(ctx, kbID, pages, targetKind)
 	if err != nil {
 		h.respondMemoryError(c, err)
 		return

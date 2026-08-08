@@ -68,6 +68,9 @@ func RegisterMemoryRoutes(r *gin.RouterGroup, memoryHandler *handler.MemoryHandl
 		// Coverage is the caller's own mastery of a knowledge base they can
 		// read, so it needs the same KB access check as any other KB read.
 		kbScoped.GET("/coverage", g.Viewer(), g.KBAccessRead("kb_id"), memoryHandler.GetCoverage)
+		// The wiki graph carries its overlay inside the graph response; a document
+		// list has no such carrier and asks for it directly.
+		kbScoped.GET("/overlay", g.Viewer(), g.KBAccessRead("kb_id"), memoryHandler.GetOverlay)
 		// Insights aggregate every member, so they are restricted to the
 		// people responsible for the knowledge base's content.
 		kbScoped.GET("/insights", g.OwnedWikiKBOrAdmin(), g.KBAccessRead("kb_id"), memoryHandler.GetInsights)
