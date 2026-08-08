@@ -252,7 +252,8 @@ const (
 	TypeWikiIngest               = "wiki:ingest"                // Wiki 页面同步任务
 	TypeWikiFinalize             = "wiki:finalize"              // Wiki KB 级收尾任务（防抖：索引重建/死链清理/交叉链接）
 	TypeTemporaryDocumentProcess = "temporary_document:process" // 会话临时文档解析任务
-	TypeMemoryExtract            = "memory:extract"             // 长期记忆抽取任务（会话轮次防抖后异步执行）
+	// TypeMemoryExtract 长期记忆抽取任务（会话轮次防抖后异步执行）
+	TypeMemoryExtract = "memory:extract"
 )
 
 // MemoryExtractPayload carries everything the background distillation task

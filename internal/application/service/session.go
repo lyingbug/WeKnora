@@ -123,7 +123,7 @@ type sessionService struct {
 	webSearchProviderRepo interfaces.WebSearchProviderRepository // Repository for web search provider entities
 	kbShareService        interfaces.KBShareService              // Service for KB sharing operations
 	suggestionRepo        interfaces.MessageSuggestionRepository
-	memoryService         interfaces.MemoryService               // Service for cross-session long-term memory
+	memoryService         interfaces.MemoryService // Service for cross-session long-term memory
 }
 
 // NewSessionService creates a new session service instance with all required dependencies

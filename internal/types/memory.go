@@ -132,7 +132,7 @@ type MemorySubject struct {
 	TenantID uint64 `json:"tenant_id" gorm:"column:tenant_id;not null;uniqueIndex:idx_memory_subjects_scope,priority:1"`
 	// SubjectID is Principal.StorageID(), so IM users, embed visitors and API
 	// external users each get their own space without needing an account.
-	SubjectID string `json:"subject_id" gorm:"column:subject_id;type:varchar(512);not null;uniqueIndex:idx_memory_subjects_scope,priority:2"`
+	SubjectID string `json:"subject_id" gorm:"type:varchar(512);not null;uniqueIndex:idx_memory_subjects_scope,priority:2"`
 	// Enabled is the per-user opt out. The workspace switch lives on
 	// Tenant.MemoryConfig and takes precedence over it.
 	Enabled bool `json:"enabled" gorm:"not null;default:true"`
@@ -165,7 +165,7 @@ type MemoryItem struct {
 	// the same key as an active one supersedes it, which is how contradictions
 	// ("I use MySQL" then "I moved to Postgres") resolve without an LLM in the
 	// read path.
-	NormalizedKey   string     `json:"normalized_key"     gorm:"column:normalized_key;type:varchar(255);not null;default:''"`
+	NormalizedKey   string     `json:"normalized_key" gorm:"column:normalized_key;type:varchar(255);not null;default:''"`
 	Importance      int        `json:"importance"         gorm:"not null;default:3"`
 	Origin          string     `json:"origin"             gorm:"type:varchar(16);not null;default:'extracted'"`
 	Status          string     `json:"status"             gorm:"type:varchar(16);not null;default:'active'"`

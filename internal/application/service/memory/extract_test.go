@@ -14,7 +14,9 @@ import (
 
 // newExtractionHarness wires the pieces the background task needs: a message
 // source, a chat model and a task enqueuer.
-func newExtractionHarness(t *testing.T) (*Service, *stubTenantRepo, *stubMessageRepo, *stubModelService, *stubEnqueuer) {
+func newExtractionHarness(t *testing.T) (
+	*Service, *stubTenantRepo, *stubMessageRepo, *stubModelService, *stubEnqueuer,
+) {
 	t.Helper()
 	svc, _, tenantRepo := newMemoryHarness(t)
 	messages := &stubMessageRepo{}
@@ -43,7 +45,8 @@ func TestExtractionRebuildsScopeFromPayload(t *testing.T) {
 	messages.messages = []*types.Message{
 		{Role: "user", Content: "我们的生产库是 PostgreSQL 17"},
 	}
-	models.response = `{"memories":[{"action":"add","kind":"fact","topic":"生产数据库","content":"生产库是 PostgreSQL 17","importance":4}]}`
+	models.response = `{"memories":[{"action":"add","kind":"fact","topic":"生产数据库",
+		"content":"生产库是 PostgreSQL 17","importance":4}]}`
 
 	// Deliberately a bare context: nothing about the original request survives.
 	err := svc.Handle(context.Background(), extractTask(t, types.MemoryExtractPayload{
@@ -182,7 +185,9 @@ func TestExtractionToleratesUnparsableModelOutput(t *testing.T) {
 
 func TestExtractionParsesFencedJSON(t *testing.T) {
 	decisions, err := parseExtractionResponse(
-		"好的，结果如下：\n```json\n{\"memories\":[{\"action\":\"add\",\"kind\":\"fact\",\"topic\":\"t\",\"content\":\"c\"}]}\n```",
+		"好的，结果如下：\n```json\n" +
+			"{\"memories\":[{\"action\":\"add\",\"kind\":\"fact\"," +
+			"\"topic\":\"t\",\"content\":\"c\"}]}\n```",
 	)
 	require.NoError(t, err)
 	require.Len(t, decisions, 1)

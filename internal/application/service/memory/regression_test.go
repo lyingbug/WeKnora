@@ -40,7 +40,10 @@ func TestCrossSessionMemoryScenarios(t *testing.T) {
 			name:      "记住个人画像并在新会话里带上",
 			userTurns: []string{"我是做医疗影像的后端工程师，主要写 Go"},
 			extracted: []map[string]any{
-				{"action": "add", "kind": "profile", "topic": "职业", "content": "医疗影像方向的后端工程师，主要写 Go"},
+				{
+					"action": "add", "kind": "profile", "topic": "职业",
+					"content": "医疗影像方向的后端工程师，主要写 Go",
+				},
 			},
 			laterQuery:   "帮我设计一个接口",
 			wantInPrompt: []string{"医疗影像", "后端工程师"},
@@ -61,7 +64,10 @@ func TestCrossSessionMemoryScenarios(t *testing.T) {
 				"前端是 Vue 3 加 Vite",
 			},
 			extracted: []map[string]any{
-				{"action": "add", "kind": "fact", "topic": "生产数据库", "content": "生产库是 PostgreSQL 17，部署在法兰克福"},
+				{
+					"action": "add", "kind": "fact", "topic": "生产数据库",
+					"content": "生产库是 PostgreSQL 17，部署在法兰克福",
+				},
 				{"action": "add", "kind": "fact", "topic": "前端技术栈", "content": "前端是 Vue 3 加 Vite"},
 			},
 			laterQuery:   "数据库连接池应该配多大",
@@ -86,7 +92,10 @@ func TestCrossSessionMemoryScenarios(t *testing.T) {
 			name:      "在办事项可以跨会话续接",
 			userTurns: []string{"这周在重构订单服务的支付流程，还没弄完"},
 			extracted: []map[string]any{
-				{"action": "add", "kind": "task", "topic": "在做的重构", "content": "在重构订单服务的支付流程，尚未完成"},
+				{
+					"action": "add", "kind": "task", "topic": "在做的重构",
+					"content": "在重构订单服务的支付流程，尚未完成",
+				},
 			},
 			laterQuery:   "订单服务那个重构接着往下怎么做",
 			wantInPrompt: []string{"支付流程"},
