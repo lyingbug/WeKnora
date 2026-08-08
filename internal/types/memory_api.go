@@ -183,6 +183,10 @@ const (
 const (
 	MemoryGraphNodeMemory = "memory"
 	MemoryGraphNodeWiki   = "wiki"
+	// MemoryGraphNodeKnowledge is a document in an ordinary knowledge base. Its
+	// slug is the document id, so a caller that can resolve titles should; a raw
+	// id is not a label.
+	MemoryGraphNodeKnowledge = "knowledge"
 )
 
 // Memory graph edge kinds.

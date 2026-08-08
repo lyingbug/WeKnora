@@ -683,3 +683,89 @@ func TestCoverageCountsDocumentsByFolder(t *testing.T) {
 		t.Fatalf("folder bucket = %d lit of %d, want 2 of 2", manual.LitPages, manual.TotalPages)
 	}
 }
+
+// The bridged graph has to show what the person has anchored, not only what a
+// specific memory happens to point at. Retrieval anchors — the overwhelming
+// majority, and the only kind an ordinary knowledge base produces — belong to
+// the person rather than to any one memory, and excluding them left an empty
+// canvas beside a header counting them.
+func TestBuildMemoryGraph_BridgedShowsAnchorsWithoutAMemory(t *testing.T) {
+	pages := []*types.MemoryPage{
+		{ID: "p1", Slug: "profile/me", Title: "我", PageType: types.MemoryTypeProfile},
+	}
+	anchors := []*types.MemoryAnchor{
+		// Tied to a memory: drawn with an edge, as before.
+		{
+			MemoryPageID: "p1", KnowledgeBaseID: "kb-1",
+			TargetKind: types.MemoryAnchorTargetWikiPage, TargetRef: "concept/rag",
+			Relation: types.MemoryRelationLearned,
+		},
+		// Recorded at retrieval time against an ordinary document: no memory, and
+		// previously invisible.
+		{
+			KnowledgeBaseID: "kb-1",
+			TargetKind:      types.MemoryAnchorTargetKnowledge, TargetRef: "kn-42",
+			Relation: types.MemoryRelationAskedAbout,
+		},
+	}
+
+	data := BuildMemoryGraph(pages, anchors, &types.MemoryGraphRequest{
+		Mode: types.MemoryGraphModeBridged, Limit: 50,
+	})
+
+	var wiki, knowledge int
+	for _, node := range data.Nodes {
+		switch node.Kind {
+		case types.MemoryGraphNodeWiki:
+			wiki++
+		case types.MemoryGraphNodeKnowledge:
+			knowledge++
+			if node.Slug != "kn-42" {
+				t.Fatalf("document satellite has slug %q", node.Slug)
+			}
+		}
+	}
+	if wiki != 1 {
+		t.Fatalf("wiki satellites = %d, want 1", wiki)
+	}
+	if knowledge != 1 {
+		t.Fatalf("document satellites = %d, want 1 — an ordinary knowledge base is invisible again", knowledge)
+	}
+	// The anchored one gets an edge; the retrieval one has nothing to join to.
+	anchorEdges := 0
+	for _, edge := range data.Edges {
+		if edge.Kind == types.MemoryGraphEdgeAnchor {
+			anchorEdges++
+		}
+	}
+	if anchorEdges != 1 {
+		t.Fatalf("anchor edges = %d, want 1", anchorEdges)
+	}
+}
+
+func TestBuildMemoryGraph_BridgedCapsUnattachedSatellites(t *testing.T) {
+	pages := []*types.MemoryPage{{ID: "p1", Slug: "profile/me", Title: "我"}}
+	anchors := make([]*types.MemoryAnchor, 0, 80)
+	for i := 0; i < 80; i++ {
+		anchors = append(anchors, &types.MemoryAnchor{
+			KnowledgeBaseID: "kb-1",
+			TargetKind:      types.MemoryAnchorTargetKnowledge,
+			TargetRef:       fmt.Sprintf("kn-%d", i),
+			Relation:        types.MemoryRelationAskedAbout,
+		})
+	}
+
+	data := BuildMemoryGraph(pages, anchors, &types.MemoryGraphRequest{
+		Mode: types.MemoryGraphModeBridged, Limit: 200,
+	})
+
+	satellites := 0
+	for _, node := range data.Nodes {
+		if node.Kind == types.MemoryGraphNodeKnowledge {
+			satellites++
+		}
+	}
+	if satellites != maxUnattachedSatellites {
+		t.Fatalf("unattached satellites = %d, want the cap of %d", satellites, maxUnattachedSatellites)
+	}
+}

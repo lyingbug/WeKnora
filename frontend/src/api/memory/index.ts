@@ -183,7 +183,7 @@ export interface MemorySettingsUpdateResponse {
 
 export interface MemoryGraphNode {
   id: string;
-  kind: "memory" | "wiki";
+  kind: "memory" | "wiki" | "knowledge";
   slug: string;
   title: string;
   type?: string;

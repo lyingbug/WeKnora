@@ -29,8 +29,8 @@
       />
     </div>
 
-    <p v-if="mode === 'bridged' && !hasWikiSatellites" class="memory-graph__note">
-      {{ t('memory.graph.noWikiAnchors') }}
+    <p v-if="mode === 'bridged' && !hasSatellites" class="memory-graph__note">
+      {{ t('memory.graph.noAnchors') }}
     </p>
 
     <p v-if="graph.meta?.truncated" class="memory-graph__truncated">
@@ -71,8 +71,8 @@ const graph = ref<MemoryGraphData>({ nodes: [], edges: [], meta: { mode: 'person
 // Bridged mode draws memory → wiki-page edges. An ordinary knowledge base has
 // no wiki pages, so its anchors — which are real, and do rank its content higher
 // — have nothing to attach to here. Saying so beats an empty canvas.
-const hasWikiSatellites = computed(() =>
-  (graph.value.nodes || []).some((node) => node.kind === 'wiki'),
+const hasSatellites = computed(() =>
+  (graph.value.nodes || []).some((node) => node.kind === 'wiki' || node.kind === 'knowledge'),
 )
 
 const MEMORY_TYPE_COLOURS: Record<string, string> = {
@@ -91,9 +91,12 @@ const FALLBACK_COLOUR = MEMORY_TYPE_COLOURS.profile
 // callback narrows back to the memory node shape it was given.
 function nodeStyle(raw: GraphCanvasNode): GraphNodeStyle {
   const node = raw as MemoryGraphNode
-  if (node.kind === 'wiki') {
-    // Knowledge-base pages are drawn as hollow, dashed satellites so they read
-    // as "somewhere else that this connects to" rather than as memories.
+  if (node.kind === 'wiki' || node.kind === 'knowledge') {
+    // Knowledge-base items are hollow, dashed satellites so they read as
+    // "somewhere else that this connects to" rather than as memories. Wiki pages
+    // and ordinary documents share the treatment: from the reader's side they
+    // are the same thing, something in the knowledge base they have engaged
+    // with, and the label already says which.
     return {
       radius: 8,
       fill: '#ffffff',

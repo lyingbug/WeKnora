@@ -523,7 +523,52 @@ func (h *MemoryHandler) GetGraph(c *gin.Context) {
 		h.respondMemoryError(c, err)
 		return
 	}
+	h.resolveDocumentTitles(c, data)
 	c.JSON(http.StatusOK, gin.H{"data": data})
+}
+
+// resolveDocumentTitles replaces document ids with document titles.
+//
+// A knowledge-base document is anchored by id, because that is what a retrieval
+// result carries, but an id is not a label. The graph service has no knowledge
+// service and should not grow one for a display concern, so the substitution
+// happens here. A document that has since been deleted keeps its id, which at
+// least says something is there.
+func (h *MemoryHandler) resolveDocumentTitles(c *gin.Context, data *types.MemoryGraphData) {
+	if data == nil || h.knowledgeService == nil {
+		return
+	}
+	ids := make([]string, 0)
+	for _, node := range data.Nodes {
+		if node.Kind == types.MemoryGraphNodeKnowledge && node.Slug != "" {
+			ids = append(ids, node.Slug)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	tenantID, ok := types.TenantIDFromContext(c.Request.Context())
+	if !ok {
+		return
+	}
+	docs, err := h.knowledgeService.GetKnowledgeBatch(c.Request.Context(), tenantID, ids)
+	if err != nil {
+		return
+	}
+	titles := make(map[string]string, len(docs))
+	for _, doc := range docs {
+		if doc != nil && doc.ID != "" && doc.Title != "" {
+			titles[doc.ID] = doc.Title
+		}
+	}
+	for i := range data.Nodes {
+		if data.Nodes[i].Kind != types.MemoryGraphNodeKnowledge {
+			continue
+		}
+		if title, ok := titles[data.Nodes[i].Slug]; ok {
+			data.Nodes[i].Title = title
+		}
+	}
 }
 
 // GetStats godoc

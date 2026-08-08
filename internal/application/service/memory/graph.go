@@ -170,11 +170,25 @@ func bfsNeighbourhood(
 	return selected
 }
 
-// appendAnchorSatellites adds the knowledge-base pages the selected memories
-// point at, as a second family of nodes.
+// maxUnattachedSatellites caps the knowledge-base items shown that are not tied
+// to any one memory. They are the most numerous kind by far — one per cited item
+// on every turn — and past a few dozen they stop being a picture of what someone
+// engages with and become a wall.
+const maxUnattachedSatellites = 30
+
+// appendAnchorSatellites adds the knowledge-base items this person has anchored,
+// as a second family of nodes.
 //
-// This is the visual form of the whole idea: on one canvas the user sees what
+// This is the visual form of the whole idea: on one canvas someone sees what
 // they know and where it attaches to what the organisation knows.
+//
+// Two kinds of attachment, and both belong here. An anchor produced by
+// consolidation points from a specific memory at a specific page, and is drawn
+// as an edge. An anchor produced at retrieval time — the overwhelming majority —
+// records that this person engaged with something, without any one memory being
+// responsible, so it is drawn as a satellite with no edge. Showing only the
+// first kind meant an ordinary knowledge base, whose anchors are all of the
+// second kind, produced an empty canvas next to a header counting its anchors.
 func appendAnchorSatellites(
 	data *types.MemoryGraphData,
 	bySlug map[string]*types.MemoryPage,
@@ -189,25 +203,35 @@ func appendAnchorSatellites(
 	}
 
 	satellites := map[string]*types.MemoryGraphNode{}
+	attached := map[string]bool{}
+	order := make([]string, 0, len(anchors))
+
 	for _, anchor := range anchors {
-		if anchor.TargetKind != types.MemoryAnchorTargetWikiPage {
+		kind := types.MemoryGraphNodeWiki
+		if anchor.TargetKind == types.MemoryAnchorTargetKnowledge {
+			kind = types.MemoryGraphNodeKnowledge
+		} else if anchor.TargetKind != types.MemoryAnchorTargetWikiPage {
 			continue
 		}
-		memorySlug, ok := pageIDToSlug[anchor.MemoryPageID]
-		if !ok {
-			continue
-		}
+
 		nodeID := wikiNodeID(anchor.KnowledgeBaseID, anchor.TargetRef)
 		if _, exists := satellites[nodeID]; !exists {
 			satellites[nodeID] = &types.MemoryGraphNode{
 				ID:              nodeID,
-				Kind:            types.MemoryGraphNodeWiki,
+				Kind:            kind,
 				Slug:            anchor.TargetRef,
 				Title:           anchor.TargetRef,
 				KnowledgeBaseID: anchor.KnowledgeBaseID,
 			}
+			order = append(order, nodeID)
 		}
 		satellites[nodeID].LinkCount++
+
+		memorySlug, ok := pageIDToSlug[anchor.MemoryPageID]
+		if !ok {
+			continue
+		}
+		attached[nodeID] = true
 		data.Edges = append(data.Edges, types.MemoryGraphEdge{
 			Source:   memoryNodeID(memorySlug),
 			Target:   nodeID,
@@ -216,7 +240,18 @@ func appendAnchorSatellites(
 		})
 	}
 
-	for _, node := range satellites {
+	// Anything joined to a memory is kept; the rest is capped, keeping the ones
+	// engaged with most. The anchors arrive ordered by recency, so ties break
+	// towards what was touched last.
+	unattached := 0
+	for _, nodeID := range order {
+		node := satellites[nodeID]
+		if !attached[nodeID] {
+			if unattached >= maxUnattachedSatellites {
+				continue
+			}
+			unattached++
+		}
 		data.Nodes = append(data.Nodes, *node)
 	}
 }
