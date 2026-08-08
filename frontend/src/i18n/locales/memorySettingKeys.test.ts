@@ -61,3 +61,79 @@ test('the locales describe the same memory settings', () => {
     )
   }
 })
+
+// The keys subtree was guarded and the option labels were not, so the relation
+// and extraction-source multi-selects rendered raw tokens (asked_about,
+// user_message) in every language. SettingRow falls back to the token when a
+// label is absent, which is silent.
+//
+// The values below are the ones the backend descriptors declare as selectable.
+// A hardcoded list drifts from the backend, which is the failure mode this whole
+// file exists to catch, so the parity test after it is the real guard: it fails
+// when any locale gains or loses an option the others do not have, whatever the
+// option happens to be.
+const SELECTABLE_OPTIONS = [
+  // memory.write.mode
+  'off', 'explicit_only', 'gated_auto', 'always_auto',
+  // memory.privacy.pii_redaction
+  'redact', 'block',
+  // memory.embed_visitor_space
+  'session_only', 'persistent',
+  // anchor relations: decay_exempt_relations and relation_weights
+  'mentioned', 'asked_about', 'bookmarked', 'disagreed', 'learned', 'corrected', 'owns',
+  // memory.security.extract_sources
+  'user_message',
+  // memory types: write.allowed_types and recall.always_include_types
+  'profile', 'preference', 'project', 'entity', 'topic', 'episode', 'open_question',
+  // memory.channels
+  'web', 'api', 'im', 'embed',
+]
+
+function optionsOf(locale: unknown): Record<string, unknown> {
+  return ((locale as Record<string, any>)?.memory?.settings?.options ?? {}) as Record<string, unknown>
+}
+
+test('every selectable option has a label in every locale', () => {
+  const failures: string[] = []
+  for (const [name, locale] of Object.entries(locales)) {
+    const options = optionsOf(locale)
+    for (const option of SELECTABLE_OPTIONS) {
+      const label = options[option]
+      if (typeof label !== 'string' || label.trim() === '') {
+        failures.push(`${name}: memory.settings.options.${option}`)
+      }
+    }
+  }
+  assert.deepEqual(failures, [], `options rendering as raw tokens:\n${failures.join('\n')}`)
+})
+
+test('the locales offer the same option labels', () => {
+  const reference = Object.keys(optionsOf(zhCN)).sort()
+  for (const [name, locale] of Object.entries(locales)) {
+    assert.deepEqual(
+      Object.keys(optionsOf(locale)).sort(),
+      reference,
+      `${name} does not label the same options as zh-CN`,
+    )
+  }
+})
+
+test('every setting group has a title and a description in every locale', () => {
+  const groups = Object.keys(
+    ((zhCN as Record<string, any>).memory?.settings?.groups ?? {}) as Record<string, unknown>,
+  )
+  assert.ok(groups.length > 0, 'found no setting groups, so this test proves nothing')
+  const failures: string[] = []
+  for (const [name, locale] of Object.entries(locales)) {
+    const declared = (locale as Record<string, any>)?.memory?.settings?.groups ?? {}
+    for (const group of groups) {
+      for (const field of ['title', 'description']) {
+        const value = declared[group]?.[field]
+        if (typeof value !== 'string' || value.trim() === '') {
+          failures.push(`${name}: memory.settings.groups.${group}.${field}`)
+        }
+      }
+    }
+  }
+  assert.deepEqual(failures, [], `missing group text:\n${failures.join('\n')}`)
+})
