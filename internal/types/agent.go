@@ -28,6 +28,7 @@ type AgentConfig struct {
 	WebSearchProviderID     string        `json:"web_search_provider_id,omitempty"`     // WebSearchProviderEntity ID (resolved from agent config)
 	MultiTurnEnabled        bool          `json:"multi_turn_enabled"`                   // Whether multi-turn conversation is enabled
 	HistoryTurns            int           `json:"history_turns"`                        // Number of history turns to keep in context
+	MemoryEnabled           *bool         `json:"memory_enabled,omitempty"`             // Nil inherits the workspace memory setting; false opts this agent out
 	SearchTargets           SearchTargets `json:"-"`                                    // Pre-computed unified search targets (runtime only)
 	// MCP service selection
 	MCPSelectionMode string   `json:"mcp_selection_mode"` // MCP selection mode: "all", "selected", "none"

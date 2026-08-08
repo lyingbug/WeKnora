@@ -1,0 +1,430 @@
+package memory
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/google/uuid"
+)
+
+// ErrMemoryDisabled is returned by write operations when memory is off at the
+// workspace or user level.
+var ErrMemoryDisabled = errors.New("memory: disabled for this scope")
+
+// ErrItemNotFound is returned when an item id does not exist in the caller's
+// own memory space. Scope mismatch and genuine absence deliberately produce
+// the same error so an id cannot be probed for existence across users.
+var ErrItemNotFound = errors.New("memory: item not found")
+
+// Service implements interfaces.MemoryService.
+type Service struct {
+	repo         interfaces.MemoryRepository
+	tenantRepo   interfaces.TenantRepository
+	messageRepo  interfaces.MessageRepository
+	modelService interfaces.ModelService
+	enqueuer     interfaces.TaskEnqueuer
+	config       *config.Config
+}
+
+// NewMemoryService builds the long-term memory service.
+func NewMemoryService(
+	repo interfaces.MemoryRepository,
+	tenantRepo interfaces.TenantRepository,
+	messageRepo interfaces.MessageRepository,
+	modelService interfaces.ModelService,
+	enqueuer interfaces.TaskEnqueuer,
+	cfg *config.Config,
+) interfaces.MemoryService {
+	return &Service{
+		repo:         repo,
+		tenantRepo:   tenantRepo,
+		messageRepo:  messageRepo,
+		modelService: modelService,
+		enqueuer:     enqueuer,
+		config:       cfg,
+	}
+}
+
+// workspaceConfig loads the workspace memory switch. A missing tenant or an
+// unset column yields a zero-value config, which is disabled.
+func (s *Service) workspaceConfig(ctx context.Context, tenantID uint64) *types.MemoryConfig {
+	tenant, err := s.tenantRepo.GetTenantByID(ctx, tenantID)
+	if err != nil || tenant == nil || tenant.MemoryConfig == nil {
+		return &types.MemoryConfig{}
+	}
+	cfg := *tenant.MemoryConfig
+	cfg.Normalize()
+	return &cfg
+}
+
+// enabledScope resolves the scope and checks every level of the switch. The
+// second return value is false whenever memory must not be used, and callers
+// on the read path treat that as "no memory" rather than as a failure.
+func (s *Service) enabledScope(ctx context.Context) (interfaces.MemoryScope, *types.MemoryConfig, bool) {
+	scope, err := ResolveScope(ctx)
+	if err != nil {
+		return scope, nil, false
+	}
+	cfg := s.workspaceConfig(ctx, scope.TenantID)
+	if !cfg.MemoryEnabled() {
+		return scope, cfg, false
+	}
+	if !types.MemoryAllowedForAgent(ctx) {
+		return scope, cfg, false
+	}
+	subject, err := s.repo.GetSubject(ctx, scope)
+	if err != nil {
+		logger.Warnf(ctx, "memory: load subject failed: %v", err)
+		return scope, cfg, false
+	}
+	// A subject row is created on first write. Its absence means the user has
+	// nothing stored yet, which is still "enabled" for the write path.
+	if subject != nil && !subject.Enabled {
+		return scope, cfg, false
+	}
+	return scope, cfg, true
+}
+
+// Recall assembles the memory to inject for one turn. It never calls a model
+// and never returns an error: memory is an enhancement, so any failure has to
+// degrade into an ordinary answer rather than into a failed request.
+func (s *Service) Recall(ctx context.Context, query string) interfaces.MemoryRecall {
+	scope, _, ok := s.enabledScope(ctx)
+	if !ok {
+		return interfaces.MemoryRecall{}
+	}
+
+	subject, err := s.repo.GetSubject(ctx, scope)
+	if err != nil || subject == nil {
+		return interfaces.MemoryRecall{}
+	}
+
+	residentItems, err := s.repo.ListActiveByKinds(ctx, scope,
+		[]string{types.MemoryKindProfile, types.MemoryKindPreference}, 60)
+	if err != nil {
+		logger.Warnf(ctx, "memory: load resident items failed: %v", err)
+		residentItems = nil
+	}
+	block := subject.BlockText
+	if block == "" && len(residentItems) > 0 {
+		// The cache is rebuilt on every write, so an empty cache with items
+		// present means the row predates a write failure. Render inline rather
+		// than silently dropping the user's memories.
+		block = types.RenderMemoryBlock(residentItems)
+	}
+
+	situational, err := s.repo.ListActiveByKinds(ctx, scope,
+		[]string{types.MemoryKindFact, types.MemoryKindTask}, 400)
+	if err != nil {
+		logger.Warnf(ctx, "memory: load situational items failed: %v", err)
+		situational = nil
+	}
+	matched := selectRecallItems(query, situational, types.MemoryRecallMaxItems, types.MemoryRecallRuneBudget)
+
+	prompt := types.WrapMemoryForPrompt(block, types.RenderMemoryRecall(matched))
+	if prompt == "" {
+		return interfaces.MemoryRecall{}
+	}
+
+	// The resident block is rendered from a truncated list, so report the
+	// items that actually fit rather than everything that was loaded: the chat
+	// UI promises "these are the memories this answer saw".
+	used := append(residentItemsWithinBlock(residentItems, block), matched...)
+	s.touchAsync(ctx, scope, used)
+
+	return interfaces.MemoryRecall{Prompt: prompt, Items: used}
+}
+
+// residentItemsWithinBlock filters to the items whose content survived the
+// block's rune budget.
+func residentItemsWithinBlock(items []*types.MemoryItem, block string) []*types.MemoryItem {
+	if block == "" {
+		return nil
+	}
+	within := make([]*types.MemoryItem, 0, len(items))
+	for _, item := range items {
+		if item != nil && strings.Contains(block, types.SanitizeMemoryContent(item.Content)) {
+			within = append(within, item)
+		}
+	}
+	return within
+}
+
+// touchAsync records usage without adding a write to the request's critical
+// path. WithoutCancel keeps it alive after the HTTP handler returns.
+func (s *Service) touchAsync(ctx context.Context, scope interfaces.MemoryScope, items []*types.MemoryItem) {
+	if len(items) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	bgCtx := context.WithoutCancel(ctx)
+	go func() {
+		if err := s.repo.TouchUsed(bgCtx, scope, ids); err != nil {
+			logger.Warnf(bgCtx, "memory: touch used failed: %v", err)
+		}
+	}()
+}
+
+// Remember stores one statement, resolving any contradiction with what is
+// already known about the same topic.
+func (s *Service) Remember(ctx context.Context, item types.MemoryItem) (*types.MemoryItem, error) {
+	scope, cfg, ok := s.enabledScope(ctx)
+	if !ok {
+		return nil, ErrMemoryDisabled
+	}
+	return s.write(ctx, scope, cfg, item)
+}
+
+// write is the single insertion path. Both the explicit "remember this" route
+// and the background extraction task go through it, so sanitization, conflict
+// resolution, block rebuild and capacity enforcement cannot be bypassed by
+// adding a new caller.
+func (s *Service) write(
+	ctx context.Context,
+	scope interfaces.MemoryScope,
+	cfg *types.MemoryConfig,
+	item types.MemoryItem,
+) (*types.MemoryItem, error) {
+	content := types.SanitizeMemoryContent(item.Content)
+	if content == "" {
+		return nil, errors.New("memory: empty content")
+	}
+	if !types.IsValidMemoryKind(item.Kind) {
+		item.Kind = types.MemoryKindFact
+	}
+	if _, err := s.repo.EnsureSubject(ctx, scope); err != nil {
+		return nil, fmt.Errorf("ensure memory subject: %w", err)
+	}
+
+	normalizedKey := types.NormalizeMemoryKey(item.NormalizedKey, content)
+	existing, err := s.repo.FindActiveByKey(ctx, scope, normalizedKey)
+	if err != nil {
+		return nil, fmt.Errorf("find conflicting memory: %w", err)
+	}
+	if existing != nil && types.SanitizeMemoryContent(existing.Content) == content {
+		// Same statement about the same topic: nothing changed, so keep the
+		// original timestamps instead of churning the row on every turn.
+		return existing, nil
+	}
+
+	stored := &types.MemoryItem{
+		ID:              uuid.New().String(),
+		TenantID:        scope.TenantID,
+		SubjectID:       scope.SubjectID,
+		Kind:            item.Kind,
+		Content:         content,
+		NormalizedKey:   normalizedKey,
+		Importance:      types.ClampMemoryImportance(item.Importance),
+		Origin:          item.Origin,
+		Status:          types.MemoryStatusActive,
+		SourceSessionID: item.SourceSessionID,
+		SourceMessageID: item.SourceMessageID,
+		ValidFrom:       time.Now(),
+	}
+	if stored.Origin == "" {
+		stored.Origin = types.MemoryOriginExtracted
+	}
+	if err := s.repo.CreateItem(ctx, stored); err != nil {
+		return nil, fmt.Errorf("create memory item: %w", err)
+	}
+	if existing != nil {
+		// Supersede rather than delete: the old statement keeps its content
+		// and gains invalid_at, so the memory manager can show what changed.
+		if err := s.repo.SupersedeItem(ctx, scope, existing.ID, stored.ID); err != nil {
+			logger.Warnf(ctx, "memory: supersede %s failed: %v", existing.ID, err)
+		}
+	}
+
+	s.enforceCapacity(ctx, scope, cfg)
+	s.rebuildBlock(ctx, scope)
+	return stored, nil
+}
+
+// enforceCapacity archives the lowest ranked items once the subject exceeds
+// its cap. This is the only automatic forgetting in the system.
+func (s *Service) enforceCapacity(ctx context.Context, scope interfaces.MemoryScope, cfg *types.MemoryConfig) {
+	maxItems := cfg.EffectiveMaxItems()
+	count, err := s.repo.CountActive(ctx, scope)
+	if err != nil {
+		logger.Warnf(ctx, "memory: count active failed: %v", err)
+		return
+	}
+	if count <= int64(maxItems) {
+		return
+	}
+	archived, err := s.repo.ArchiveLowestRanked(ctx, scope, maxItems)
+	if err != nil {
+		logger.Warnf(ctx, "memory: archive overflow failed: %v", err)
+		return
+	}
+	logger.Infof(ctx, "memory: archived %d items over the %d cap", archived, maxItems)
+}
+
+// rebuildBlock re-renders the resident block so the read path stays a single
+// primary-key lookup. Called after every mutation.
+func (s *Service) rebuildBlock(ctx context.Context, scope interfaces.MemoryScope) {
+	items, err := s.repo.ListActiveByKinds(ctx, scope,
+		[]string{types.MemoryKindProfile, types.MemoryKindPreference}, 60)
+	if err != nil {
+		logger.Warnf(ctx, "memory: rebuild block load failed: %v", err)
+		return
+	}
+	count, err := s.repo.CountActive(ctx, scope)
+	if err != nil {
+		logger.Warnf(ctx, "memory: rebuild block count failed: %v", err)
+		return
+	}
+	block := types.RenderMemoryBlock(items)
+	if err := s.repo.UpdateSubjectBlock(ctx, scope, block, int(count)); err != nil {
+		logger.Warnf(ctx, "memory: rebuild block store failed: %v", err)
+	}
+}
+
+// ListItems backs the memory manager list.
+func (s *Service) ListItems(
+	ctx context.Context, status string, limit, offset int,
+) ([]*types.MemoryItem, int64, error) {
+	scope, err := ResolveScope(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.repo.ListItems(ctx, scope, status, limit, offset)
+}
+
+// CreateItem adds a memory the user typed themselves. It goes through the same
+// write path as everything else, so a hand-written memory can supersede an
+// extracted one about the same topic rather than sitting next to it.
+func (s *Service) CreateItem(
+	ctx context.Context, kind, content string, importance int,
+) (*types.MemoryItem, error) {
+	scope, cfg, ok := s.enabledScope(ctx)
+	if !ok {
+		return nil, ErrMemoryDisabled
+	}
+	if !types.IsValidMemoryKind(kind) {
+		kind = types.MemoryKindFact
+	}
+	if importance <= 0 {
+		importance = 3
+	}
+	return s.write(ctx, scope, cfg, types.MemoryItem{
+		Kind:       kind,
+		Content:    content,
+		Importance: importance,
+		Origin:     types.MemoryOriginManual,
+	})
+}
+
+// UpdateItem edits one item from the memory manager. Edited items become
+// manual so a later extraction does not quietly undo a user's correction.
+func (s *Service) UpdateItem(
+	ctx context.Context, id, content string, importance int,
+) (*types.MemoryItem, error) {
+	scope, err := ResolveScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := s.repo.GetItem(ctx, scope, id)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, ErrItemNotFound
+	}
+	sanitized := types.SanitizeMemoryContent(content)
+	if sanitized == "" {
+		return nil, errors.New("memory: empty content")
+	}
+	normalizedKey := types.NormalizeMemoryKey("", sanitized)
+	importance = types.ClampMemoryImportance(importance)
+	if err := s.repo.UpdateItemContent(ctx, scope, id, sanitized, normalizedKey, importance); err != nil {
+		return nil, err
+	}
+	s.rebuildBlock(ctx, scope)
+	return s.repo.GetItem(ctx, scope, id)
+}
+
+// DeleteItem forgets one memory permanently.
+func (s *Service) DeleteItem(ctx context.Context, id string) error {
+	scope, err := ResolveScope(ctx)
+	if err != nil {
+		return err
+	}
+	existing, err := s.repo.GetItem(ctx, scope, id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrItemNotFound
+	}
+	if err := s.repo.DeleteItem(ctx, scope, id); err != nil {
+		return err
+	}
+	s.rebuildBlock(ctx, scope)
+	return nil
+}
+
+// Clear forgets everything in the caller's memory space.
+func (s *Service) Clear(ctx context.Context) (int64, error) {
+	scope, err := ResolveScope(ctx)
+	if err != nil {
+		return 0, err
+	}
+	removed, err := s.repo.DeleteAll(ctx, scope)
+	if err != nil {
+		return 0, err
+	}
+	s.rebuildBlock(ctx, scope)
+	return removed, nil
+}
+
+// GetSettings returns the merged view the settings UI renders.
+func (s *Service) GetSettings(ctx context.Context) (*types.MemorySettings, error) {
+	scope, err := ResolveScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cfg := s.workspaceConfig(ctx, scope.TenantID)
+	settings := &types.MemorySettings{
+		WorkspaceEnabled: cfg.MemoryEnabled(),
+		UserEnabled:      true,
+		WriteMode:        cfg.WriteMode,
+		MaxItems:         cfg.EffectiveMaxItems(),
+	}
+	if settings.WriteMode == "" {
+		settings.WriteMode = types.MemoryWriteExplicitOnly
+	}
+	subject, err := s.repo.GetSubject(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	if subject != nil {
+		settings.UserEnabled = subject.Enabled
+		settings.ItemCount = subject.ItemCount
+	}
+	count, err := s.repo.CountActive(ctx, scope)
+	if err == nil {
+		settings.ItemCount = int(count)
+	}
+	settings.Effective = settings.WorkspaceEnabled && settings.UserEnabled
+	return settings, nil
+}
+
+// SetEnabled flips the caller's own opt out.
+func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
+	scope, err := ResolveScope(ctx)
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdateSubjectEnabled(ctx, scope, enabled)
+}

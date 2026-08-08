@@ -1383,4 +1383,35 @@ func (h *Handler) completeAssistantMessage(ctx context.Context, assistantMessage
 			}
 		}()
 	}
+	if userQuery != "" {
+		go h.recordTurnMemory(bgCtx, assistantMessage, userQuery)
+	}
+}
+
+// recordTurnMemory runs the long-term memory write path for a finished turn.
+//
+// This is the single place a conversation can produce memory, and it sits at
+// the point where both the RAG and the Agent path converge, so neither mode
+// can silently miss it. A stopped conversation arrives with an empty query and
+// is skipped by the caller.
+func (h *Handler) recordTurnMemory(ctx context.Context, assistantMessage *types.Message, userQuery string) {
+	if h.memoryService == nil {
+		return
+	}
+	// An explicit "remember ..." directive is stored verbatim and immediately,
+	// with no model in the loop. This is what makes the default explicit_only
+	// mode useful rather than merely safe.
+	if statement, ok := types.DetectExplicitMemory(userQuery); ok {
+		if _, err := h.memoryService.Remember(ctx, types.MemoryItem{
+			Kind:            types.MemoryKindFact,
+			Content:         statement,
+			Importance:      4,
+			Origin:          types.MemoryOriginExplicit,
+			SourceSessionID: assistantMessage.SessionID,
+			SourceMessageID: assistantMessage.ID,
+		}); err != nil {
+			logger.Warnf(ctx, "memory: explicit remember failed for message %s: %v", assistantMessage.ID, err)
+		}
+	}
+	h.memoryService.ScheduleExtraction(ctx, assistantMessage.SessionID, assistantMessage.ID, assistantMessage.ModelID)
 }
