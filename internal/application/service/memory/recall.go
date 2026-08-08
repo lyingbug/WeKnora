@@ -182,35 +182,32 @@ func (s *recallService) assemble(
 func (s *recallService) anchorHints(
 	ctx context.Context, req types.MemoryRecallRequest, result *types.MemoryRecallResult,
 ) []types.MemoryAnchorHint {
-	if !req.Settings.BoostEnabled || len(result.Items) == 0 {
-		return nil
-	}
-	slugs := make([]string, 0, len(result.Items))
-	for _, item := range result.Items {
-		slugs = append(slugs, item.Slug)
-	}
-	pages, err := s.pages.GetBySlugs(ctx, req.SpaceID, slugs)
-	if err != nil {
+	if !req.Settings.BoostEnabled {
 		return nil
 	}
 
-	allowedKB := make(map[string]struct{}, len(req.KnowledgeBaseIDs))
-	for _, id := range req.KnowledgeBaseIDs {
-		allowedKB[id] = struct{}{}
+	// Anchors are loaded for the space and the knowledge bases in play, not for
+	// the memories recalled this turn.
+	//
+	// The overwhelming majority of anchors are written at retrieval time — one
+	// per cited item, every turn — and those belong to a person's engagement with
+	// the knowledge base, not to any particular memory, so they carry no memory
+	// page id. Loading via the recalled pages therefore skipped nearly all of
+	// them, and skipped every anchor on an ordinary (non-wiki) knowledge base
+	// outright, since those are only ever produced at retrieval time. The result
+	// was that "prefer what this person has engaged with" preferred nothing.
+	kbIDs := req.KnowledgeBaseIDs
+	if len(kbIDs) == 0 {
+		kbIDs = []string{""} // whole space
 	}
 
 	hints := map[string]types.MemoryAnchorHint{}
-	for _, page := range pages {
-		anchors, err := s.anchors.ListByPage(ctx, req.SpaceID, page.ID)
+	for _, kbID := range kbIDs {
+		anchors, err := s.anchors.ListBySpace(ctx, req.SpaceID, kbID)
 		if err != nil {
 			continue
 		}
 		for _, anchor := range anchors {
-			if len(allowedKB) > 0 {
-				if _, ok := allowedKB[anchor.KnowledgeBaseID]; !ok {
-					continue
-				}
-			}
 			key := anchor.KnowledgeBaseID + "|" + anchor.TargetKind + "|" + anchor.TargetRef
 			hint, exists := hints[key]
 			if !exists {

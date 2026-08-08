@@ -37,7 +37,7 @@
             class="graph-canvas__label"
             :y="styleFor(node).radius + 12"
             text-anchor="middle"
-          >{{ truncate(node.title || node.id) }}</text>
+          >{{ truncate(node.title || node.id) }}<title>{{ node.title || node.id }}</title></text>
         </g>
       </g>
     </svg>
@@ -181,6 +181,17 @@ function truncate(text: string): string {
   return text.length > 14 ? `${text.slice(0, 13)}…` : text
 }
 
+// Approximate rendered label width at 11px. CJK glyphs are full-width and latin
+// ones roughly half that; being a few pixels out is fine, since this only feeds
+// a separation constraint.
+function labelHalfWidth(text: string): number {
+  let width = 0
+  for (const ch of truncate(text)) {
+    width += ch.charCodeAt(0) > 0x2e80 ? 11 : 6
+  }
+  return width / 2
+}
+
 /**
  * Seed positions on a circle and let the simulation sort them out.
  *
@@ -221,6 +232,10 @@ const DAMPING = 0.86
 // The simulation stops itself rather than spinning forever: a graph that keeps
 // drifting under the cursor is harder to read than one that has settled.
 const MAX_TICKS = 400
+// Space a caption needs beside its neighbour, and how close two captions have to
+// be vertically before they can collide at all.
+const LABEL_GAP = 12
+const LABEL_LINE_HEIGHT = 16
 
 let ticks = 0
 
@@ -293,6 +308,30 @@ function tick() {
     node.x += node.vx
     node.y += node.vy
     motion += Math.abs(node.vx) + Math.abs(node.vy)
+  }
+
+  // Keep labels off each other. Repulsion balances gravity at roughly a hundred
+  // pixels, which is about how wide a dozen Chinese characters render, so two
+  // memories with ordinary titles settled with their captions overlapping into
+  // one unreadable line. Resolving it positionally rather than with more
+  // repulsion keeps dense graphs from flying apart.
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i]
+      const b = nodes[j]
+      const needed =
+        labelHalfWidth(a.title || a.id) + labelHalfWidth(b.title || b.id) + LABEL_GAP
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      // Only captions on roughly the same line can collide.
+      if (Math.abs(dy) > LABEL_LINE_HEIGHT) continue
+      const gap = Math.abs(dx)
+      if (gap >= needed) continue
+      const push = (needed - gap) / 2
+      const dir = dx === 0 ? (i % 2 === 0 ? 1 : -1) : Math.sign(dx)
+      if (!a.pinned) a.x -= push * dir
+      if (!b.pinned) b.x += push * dir
+    }
   }
 
   layoutNodes.value = [...nodes]

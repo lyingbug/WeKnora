@@ -49,14 +49,25 @@ func (p *PluginMemoryBoost) OnEvent(
 		return nil
 	}
 
-	// Anchors point at wiki slugs and knowledge ids; a result matches when
-	// either identifier lines up. Matching on the knowledge id as well means a
-	// page the user engaged with still gets its boost when retrieval returned
-	// the underlying document chunk rather than the wiki page.
-	refs := make(map[string]struct{}, len(chatManage.MemoryAnchorHints))
+	// Anchors point at wiki slugs and knowledge ids; a result matches when any of
+	// its identifiers lines up. Matching on the knowledge id as well means a page
+	// the user engaged with still gets its boost when retrieval returned the
+	// underlying document chunk rather than the wiki page — and it is the only
+	// way an ordinary, non-wiki knowledge base can match at all.
+	//
+	// Each hint carries the weight of its strongest relation, and that weight
+	// scales the boost. It used to be computed and then dropped, so a page the
+	// person merely mentioned was promoted exactly as hard as one they had
+	// corrected, which makes memory.overlay.relation_weights meaningless in
+	// ranking.
+	weights := make(map[string]float64, len(chatManage.MemoryAnchorHints))
 	for _, hint := range chatManage.MemoryAnchorHints {
-		if hint.TargetRef != "" {
-			refs[strings.ToLower(hint.TargetRef)] = struct{}{}
+		if hint.TargetRef == "" {
+			continue
+		}
+		ref := strings.ToLower(hint.TargetRef)
+		if hint.Weight > weights[ref] {
+			weights[ref] = hint.Weight
 		}
 	}
 
@@ -66,10 +77,14 @@ func (p *PluginMemoryBoost) OnEvent(
 		if result == nil {
 			continue
 		}
-		if !anchorMatchesResult(refs, result) {
+		weight, ok := anchorWeightForResult(weights, result)
+		if !ok {
 			continue
 		}
-		chatManage.RerankResult[i].Score *= factor
+		// weight 1 leaves the configured factor as-is; a heavier relation scales
+		// it further, and the whole thing is still bounded by the factor a
+		// workspace chose.
+		chatManage.RerankResult[i].Score *= 1 + (factor-1)*weight
 		boosted++
 	}
 
@@ -83,7 +98,10 @@ func (p *PluginMemoryBoost) OnEvent(
 	return nil
 }
 
-func anchorMatchesResult(refs map[string]struct{}, result *types.SearchResult) bool {
+// anchorWeightForResult returns the weight of the anchor matching this result.
+func anchorWeightForResult(
+	weights map[string]float64, result *types.SearchResult,
+) (float64, bool) {
 	// A wiki anchor stores the page slug, so the slug has to be one of the
 	// candidates. Without it the boost could never match wiki content, which is
 	// the content anchors were designed around: every wiki anchor is written as
@@ -96,13 +114,14 @@ func anchorMatchesResult(refs map[string]struct{}, result *types.SearchResult) b
 	if result.KnowledgeTitle != "" {
 		candidates = append(candidates, result.KnowledgeTitle)
 	}
+	best, found := 0.0, false
 	for _, candidate := range candidates {
 		if candidate == "" {
 			continue
 		}
-		if _, ok := refs[strings.ToLower(candidate)]; ok {
-			return true
+		if w, ok := weights[strings.ToLower(candidate)]; ok && (!found || w > best) {
+			best, found = w, true
 		}
 	}
-	return false
+	return best, found
 }

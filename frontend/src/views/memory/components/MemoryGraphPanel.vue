@@ -29,6 +29,10 @@
       />
     </div>
 
+    <p v-if="mode === 'bridged' && !hasWikiSatellites" class="memory-graph__note">
+      {{ t('memory.graph.noWikiAnchors') }}
+    </p>
+
     <p v-if="graph.meta?.truncated" class="memory-graph__truncated">
       {{ t('memory.graph.truncated', { returned: graph.meta.returned, total: graph.meta.total }) }}
     </p>
@@ -44,7 +48,7 @@
  * are the user's own understanding, the dashed satellites are the wiki pages
  * that understanding is anchored to.
  */
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 
@@ -64,6 +68,13 @@ const graph = ref<MemoryGraphData>({ nodes: [], edges: [], meta: { mode: 'person
 // resolved, and the fill is derived by appending an alpha pair, which only works
 // on six-digit hex. Reading a token that returns rgba() produced solid black
 // nodes. The hues are chosen around the product's green.
+// Bridged mode draws memory → wiki-page edges. An ordinary knowledge base has
+// no wiki pages, so its anchors — which are real, and do rank its content higher
+// — have nothing to attach to here. Saying so beats an empty canvas.
+const hasWikiSatellites = computed(() =>
+  (graph.value.nodes || []).some((node) => node.kind === 'wiki'),
+)
+
 const MEMORY_TYPE_COLOURS: Record<string, string> = {
   profile: '#07c05f',
   preference: '#059e8a',
@@ -153,6 +164,13 @@ onMounted(load)
     border: 1px solid var(--td-component-stroke);
     border-radius: 10px;
     overflow: hidden;
+  }
+
+  &__note {
+    margin: 10px 0 0;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--td-text-color-placeholder);
   }
 
   &__truncated {

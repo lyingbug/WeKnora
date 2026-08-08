@@ -5988,6 +5988,7 @@ export default {
       accepted: 'Added to your memory',
     },
     graph: {
+      noWikiAnchors: 'No anchors point at a wiki page yet. Engagement with an ordinary knowledge base is recorded too, and does rank that content higher for you, but it has no wiki page to draw an edge to.',
       modePersonal: 'My memory',
       modeBridged: 'Memory ∩ knowledge base',
       personalHint: 'Memories linked to each other with [[links]].',

@@ -6008,6 +6008,7 @@ export default {
       accepted: '已采纳为记忆',
     },
     graph: {
+      noWikiAnchors: '这个空间里还没有指向 Wiki 页的锚点。普通知识库的浏览记录也会被记下，并用来给你看过的内容加权，但它们没有 Wiki 页可以连线，所以不出现在这里。',
       modePersonal: '我的记忆',
       modeBridged: '记忆 ∩ 知识库',
       personalHint: '记忆之间通过 [[链接]] 相连。',
