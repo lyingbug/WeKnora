@@ -45,6 +45,7 @@ type MemoryPageRepository interface {
 	List(ctx context.Context, req *types.MemoryPageListRequest) ([]*types.MemoryPage, int64, error)
 	ListAll(ctx context.Context, spaceID string) ([]*types.MemoryPage, error)
 	ListByTypes(ctx context.Context, spaceID string, types_ []string, statuses []string, limit int) ([]*types.MemoryPage, error)
+	ListBySaved(ctx context.Context, spaceID string, saved bool, statuses []string, limit int) ([]*types.MemoryPage, error)
 	Search(ctx context.Context, spaceID, query string, limit int) ([]*types.MemoryPage, error)
 	Delete(ctx context.Context, spaceID, id string) error
 	DeleteBySlugs(ctx context.Context, spaceID string, slugs []string) (int64, error)

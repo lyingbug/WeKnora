@@ -76,6 +76,8 @@ func updateMemoryPageRow(db *gorm.DB, page *types.MemoryPage, expectVersion int)
 	result := query.Updates(map[string]interface{}{
 		"title":            page.Title,
 		"page_type":        page.PageType,
+		"saved":            page.Saved,
+		"memory_key":       page.MemoryKey,
 		"status":           page.Status,
 		"content":          page.Content,
 		"summary":          page.Summary,
@@ -183,6 +185,9 @@ func (r *memoryPageRepository) List(
 	if len(req.Statuses) > 0 {
 		query = query.Where("status IN ?", req.Statuses)
 	}
+	if req.Saved != nil {
+		query = query.Where("saved = ?", *req.Saved)
+	}
 	if req.Query != "" {
 		term := likeTerm(req.Query)
 		query = query.Where(
@@ -247,6 +252,21 @@ func (r *memoryPageRepository) ListByTypes(
 	// Pinned first, then strongest: the recall path takes the head of this
 	// list, so the ordering is the priority policy.
 	err := query.Order("pinned DESC").Order("strength DESC").Order("updated_at DESC").Find(&pages).Error
+	return pages, err
+}
+
+func (r *memoryPageRepository) ListBySaved(
+	ctx context.Context, spaceID string, saved bool, statuses []string, limit int,
+) ([]*types.MemoryPage, error) {
+	query := r.db.WithContext(ctx).Where("space_id = ? AND saved = ?", spaceID, saved)
+	if len(statuses) > 0 {
+		query = query.Where("status IN ?", statuses)
+	}
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	var pages []*types.MemoryPage
+	err := query.Order("pinned DESC").Order("updated_at DESC").Find(&pages).Error
 	return pages, err
 }
 
@@ -452,7 +472,7 @@ func (r *memoryPageRepository) ListForDecay(
 	}
 	var pages []*types.MemoryPage
 	err := r.db.WithContext(ctx).
-		Where("space_id = ? AND status = ? AND pinned = ?", spaceID, types.MemoryPageStatusActive, false).
+		Where("space_id = ? AND status = ? AND pinned = ? AND saved = ?", spaceID, types.MemoryPageStatusActive, false, false).
 		Order("last_seen_at ASC NULLS FIRST").
 		Limit(limit).
 		Find(&pages).Error
@@ -461,7 +481,7 @@ func (r *memoryPageRepository) ListForDecay(
 		// ordering rather than failing the sweep.
 		var fallback []*types.MemoryPage
 		if ferr := r.db.WithContext(ctx).
-			Where("space_id = ? AND status = ? AND pinned = ?", spaceID, types.MemoryPageStatusActive, false).
+			Where("space_id = ? AND status = ? AND pinned = ? AND saved = ?", spaceID, types.MemoryPageStatusActive, false, false).
 			Order("updated_at ASC").
 			Limit(limit).
 			Find(&fallback).Error; ferr != nil {

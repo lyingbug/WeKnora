@@ -305,7 +305,15 @@ type MemoryPage struct {
 	Slug     string `json:"slug"      gorm:"type:varchar(255)"`
 	Title    string `json:"title"     gorm:"type:varchar(512)"`
 	PageType string `json:"page_type" gorm:"type:varchar(32);index"`
-	Status   string `json:"status"    gorm:"type:varchar(16);default:'active'"`
+	// Saved distinguishes memories the user explicitly chose to keep from
+	// background facts inferred from chat history. Saved memories are durable,
+	// always considered for recall, and exempt from automatic decay.
+	Saved bool `json:"saved" gorm:"default:false;index"`
+	// MemoryKey is the fine-grained identity of a fact (for example
+	// "preference/language" or "project/weknora/database"). Only observations
+	// with the same key may replace one another.
+	MemoryKey string `json:"memory_key" gorm:"type:varchar(255)"`
+	Status    string `json:"status"    gorm:"type:varchar(16);default:'active'"`
 	// Content is markdown and may contain [[slug|title]] links to other pages.
 	Content string `json:"content" gorm:"type:text"`
 	// Summary is the one-line form used when injecting into a prompt.
@@ -584,17 +592,20 @@ const (
 // MemoryNote is a single extracted observation, kept append-only so every
 // memory can be traced back to the exact messages that produced it.
 type MemoryNote struct {
-	ID       string `json:"id"        gorm:"type:varchar(36);primaryKey"`
-	TenantID uint64 `json:"tenant_id" gorm:"index"`
-	SpaceID  string `json:"space_id"  gorm:"type:varchar(36);index"`
-	NoteType string `json:"note_type" gorm:"type:varchar(32)"`
+	ID        string `json:"id"        gorm:"type:varchar(36);primaryKey"`
+	TenantID  uint64 `json:"tenant_id" gorm:"index"`
+	SpaceID   string `json:"space_id"  gorm:"type:varchar(36);index"`
+	NoteType  string `json:"note_type" gorm:"type:varchar(32)"`
+	MemoryKey string `json:"memory_key" gorm:"type:varchar(255)"`
 	// Statement is a single declarative sentence.
-	Statement   string  `json:"statement" gorm:"type:text"`
-	Subject     string  `json:"subject"   gorm:"type:varchar(255)"`
-	Scope       string  `json:"scope"     gorm:"type:varchar(16);default:'permanent'"`
-	Confidence  float64 `json:"confidence" gorm:"type:real;default:0.5"`
-	Sensitivity string  `json:"sensitivity" gorm:"type:varchar(16);default:'normal'"`
-	Source      string  `json:"source"      gorm:"type:varchar(16);default:'pipeline'"`
+	Statement  string  `json:"statement" gorm:"type:text"`
+	Subject    string  `json:"subject"   gorm:"type:varchar(255)"`
+	Scope      string  `json:"scope"     gorm:"type:varchar(16);default:'permanent'"`
+	Confidence float64 `json:"confidence" gorm:"type:real;default:0.5"`
+	// Structured carries typed preference fields from extraction to the page.
+	Structured  MemoryPreference `json:"structured" gorm:"type:jsonb"`
+	Sensitivity string           `json:"sensitivity" gorm:"type:varchar(16);default:'normal'"`
+	Source      string           `json:"source"      gorm:"type:varchar(16);default:'pipeline'"`
 	// OriginRole records which conversation role the statement came from.
 	// Extraction only ever accepts "user": a memory must never be distilled
 	// from a retrieved document or a tool result, or a poisoned document could

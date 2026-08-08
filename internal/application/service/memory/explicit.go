@@ -4,6 +4,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // rememberMarkers are the phrases that turn a message into a direct request to
@@ -18,6 +20,68 @@ var rememberMarkers = []string{
 	"please remember", "remember that", "remember this", "remember:", "remember ",
 	"keep in mind that", "keep in mind", "don't forget that",
 	"don't forget", "do not forget",
+}
+
+// ClassifyExplicitMemory turns the common forms of "remember ..." into a
+// useful saved-memory slot without paying for another model call. It is
+// intentionally conservative: uncertain statements remain episodes, but are
+// still durable because all explicit memories are saved.
+func ClassifyExplicitMemory(statement string) (string, string, types.MemoryPreference) {
+	lower := strings.ToLower(strings.TrimSpace(statement))
+	pref := types.MemoryPreference{}
+
+	if containsAny(lower, "简洁", "简短", "精简", "concise", "brief answers", "short answers") {
+		pref.Verbosity = types.MemoryVerbosityConcise
+	} else if containsAny(lower, "详细", "详尽", "detailed", "in depth", "thorough") {
+		pref.Verbosity = types.MemoryVerbosityDetailed
+	}
+	if containsAny(lower, "中文回答", "用中文", "简体中文", "chinese answers", "answer in chinese") {
+		pref.Language = "zh"
+	} else if containsAny(lower, "英文回答", "用英文", "english answers", "answer in english") {
+		pref.Language = "en"
+	}
+	if containsAny(lower, "专业语气", "正式语气", "professional tone") {
+		pref.Tone = types.MemoryToneProfessional
+	} else if containsAny(lower, "友好语气", "亲切", "friendly tone") {
+		pref.Tone = types.MemoryToneFriendly
+	}
+	if containsAny(lower, "项目符号", "列表回答", "bullet points", "bulleted") {
+		pref.Format = types.MemoryFormatBullets
+	} else if containsAny(lower, "markdown") {
+		pref.Format = types.MemoryFormatMarkdown
+	}
+
+	if !pref.IsZero() || containsAny(lower, "我偏好", "我喜欢", "我希望回答", "i prefer", "my preference") {
+		key := "preference/general"
+		switch {
+		case pref.Language != "":
+			key = "preference/language"
+		case pref.Verbosity != "":
+			key = "preference/verbosity"
+		case pref.Tone != "":
+			key = "preference/tone"
+		case pref.Format != "":
+			key = "preference/format"
+		}
+		return types.MemoryTypePreference, key, pref.Sanitize()
+	}
+
+	if containsAny(lower, "我是", "我的名字", "我的职业", "我的角色", "i am ", "i'm ", "my name", "my role") {
+		return types.MemoryTypeProfile, "profile/identity", pref
+	}
+	if containsAny(lower, "我在做", "我正在做", "我的项目", "我负责", "i work on", "my project", "i'm building") {
+		return types.MemoryTypeProject, "project/current", pref
+	}
+	return types.MemoryTypeEpisode, "episode/" + normalizeSlugSegment(DeriveMemoryTitle(statement)), pref
+}
+
+func containsAny(text string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // statementTrimCutset removes the punctuation and particles that sit between the

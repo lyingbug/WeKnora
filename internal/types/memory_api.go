@@ -17,6 +17,7 @@ type MemoryPageListRequest struct {
 	Types    []string
 	Statuses []string
 	Query    string
+	Saved    *bool
 	Page     int
 	PageSize int
 	SortBy   string
@@ -58,6 +59,8 @@ type MemoryPageWriteRequest struct {
 	Slug       string            `json:"slug"`
 	Title      string            `json:"title"`
 	PageType   string            `json:"page_type"`
+	Saved      *bool             `json:"saved,omitempty"`
+	MemoryKey  string            `json:"memory_key,omitempty"`
 	Content    string            `json:"content"`
 	Summary    string            `json:"summary"`
 	Structured *MemoryPreference `json:"structured,omitempty"`
@@ -509,12 +512,14 @@ type MemoryExtractTrigger struct {
 
 // MemoryExplicitWriteRequest stores a memory the user asked for by hand.
 type MemoryExplicitWriteRequest struct {
-	TenantID  uint64
-	SpaceID   string
-	SessionID string
-	MessageID string
-	Statement string
-	NoteType  string
-	Source    string
-	Settings  MemorySettings
+	TenantID   uint64
+	SpaceID    string
+	SessionID  string
+	MessageID  string
+	Statement  string
+	NoteType   string
+	MemoryKey  string
+	Structured MemoryPreference
+	Source     string
+	Settings   MemorySettings
 }

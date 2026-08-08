@@ -119,6 +119,9 @@ func TestConsiderSessionStoresADirectRequestUnderTheDefaultWriteMode(t *testing.
 	if stored[0].LastEditSource != types.MemoryEditSourceUser {
 		t.Fatalf("edit source = %q, want %q", stored[0].LastEditSource, types.MemoryEditSourceUser)
 	}
+	if !stored[0].Saved {
+		t.Fatal("a direct remember request was not marked saved")
+	}
 
 	// The evidence trail matters as much as the memory: the user must be able to
 	// see which message produced it.
@@ -131,6 +134,139 @@ func TestConsiderSessionStoresADirectRequestUnderTheDefaultWriteMode(t *testing.
 	}
 	if len(kept[0].SourceMessageIDs) != 1 || kept[0].SourceMessageIDs[0] != "message-1" {
 		t.Fatalf("source messages = %v, want [message-1]", kept[0].SourceMessageIDs)
+	}
+	if !stored[0].NoteRefs.Contains(kept[0].ID) {
+		t.Fatalf("page note refs = %v, want explicit evidence note %s", stored[0].NoteRefs, kept[0].ID)
+	}
+}
+
+func TestDirectPreferenceBecomesStructuredSavedMemory(t *testing.T) {
+	writer, spaceID, ctx := newWritePathFixture(t)
+	writer.ConsiderSession(ctx, types.MemoryExtractTrigger{
+		TenantID: 7, SpaceID: spaceID, SessionID: "session-1", MessageID: "message-1",
+		Settings: explicitOnlySettings(), UserText: "记住我偏好简体中文回答", TurnIndex: 1,
+	})
+
+	stored := listPages(t, writer, spaceID)
+	if len(stored) != 1 {
+		t.Fatalf("stored %d memories, want 1", len(stored))
+	}
+	if stored[0].PageType != types.MemoryTypePreference || stored[0].Structured.Language != "zh" {
+		t.Fatalf("preference was not typed: type=%q structured=%+v", stored[0].PageType, stored[0].Structured)
+	}
+}
+
+func TestCandidateEvidenceUsesOnlyCitedMessages(t *testing.T) {
+	writer, spaceID, _ := newWritePathFixture(t)
+	settings := explicitOnlySettings()
+	settings.MinConfidence = 0.6
+	settings.MaxNotesPerWindow = 10
+	messages := []*types.Message{
+		{ID: "user-empty", Role: "user", Content: "   "},
+		{ID: "user-1", Role: "user", Content: "我用 Go"},
+		{ID: "assistant-1", Role: "assistant", Content: "你用 SQLite"},
+		{ID: "user-2", Role: "user", Content: "项目数据库是 PostgreSQL"},
+	}
+	space := &types.MemorySpace{ID: spaceID}
+	notes := writer.candidatesToNotes(context.Background(), 7, space, "session-1", messages, settings,
+		[]memoryCandidate{{
+			Type: types.MemoryTypeProject, Key: "project/database", Statement: "项目数据库是 PostgreSQL",
+			Confidence: 0.95, Evidence: []string{"m1"},
+		}})
+	if len(notes) != 1 || len(notes[0].SourceMessageIDs) != 1 || notes[0].SourceMessageIDs[0] != "user-2" {
+		t.Fatalf("evidence = %+v, want only user-2", notes)
+	}
+
+	missing := writer.candidatesToNotes(context.Background(), 7, space, "session-1", messages, settings,
+		[]memoryCandidate{{
+			Type: types.MemoryTypeProject, Key: "project/database", Statement: "项目数据库是 PostgreSQL",
+			Confidence: 0.95,
+		}})
+	if len(missing) != 0 {
+		t.Fatalf("accepted %d candidates without evidence", len(missing))
+	}
+}
+
+func TestDifferentMemoryKeysDoNotOverwriteEachOther(t *testing.T) {
+	writer, spaceID, ctx := newWritePathFixture(t)
+	space, err := writer.spaces.GetByID(ctx, 7, spaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := &scope{TenantID: 7, Space: space, Settings: explicitOnlySettings()}
+	notes := []*types.MemoryNote{
+		{ID: "note-db", TenantID: 7, SpaceID: spaceID, NoteType: types.MemoryTypeProject,
+			MemoryKey: "project/weknora/database", Statement: "WeKnora 使用 PostgreSQL", Confidence: 0.9,
+			Status: types.MemoryNoteStatusPending, NormalizedHash: "db"},
+		{ID: "note-lang", TenantID: 7, SpaceID: spaceID, NoteType: types.MemoryTypeProject,
+			MemoryKey: "project/weknora/language", Statement: "WeKnora 后端使用 Go", Confidence: 0.9,
+			Status: types.MemoryNoteStatusPending, NormalizedHash: "lang"},
+	}
+	if err := writer.notes.CreateBatch(ctx, notes); err != nil {
+		t.Fatal(err)
+	}
+	for _, note := range notes {
+		if _, err := writer.consolidateNote(ctx, sc, note); err != nil {
+			t.Fatalf("consolidate %s: %v", note.ID, err)
+		}
+	}
+	if got := listPages(t, writer, spaceID); len(got) != 2 {
+		t.Fatalf("got %d pages, want two independent project facts", len(got))
+	}
+}
+
+func TestChatHistoryCannotOverwriteSavedMemory(t *testing.T) {
+	writer, spaceID, ctx := newWritePathFixture(t)
+	saved, err := writer.RememberExplicit(ctx, types.MemoryExplicitWriteRequest{
+		TenantID: 7, SpaceID: spaceID, Statement: "WeKnora 使用 PostgreSQL",
+		NoteType: types.MemoryTypeProject, MemoryKey: "project/weknora/database",
+		Settings: explicitOnlySettings(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	note := &types.MemoryNote{
+		ID: "note-conflict", TenantID: 7, SpaceID: spaceID, NoteType: types.MemoryTypeProject,
+		MemoryKey: "project/weknora/database", Statement: "WeKnora 使用 SQLite", Confidence: 0.9,
+		Status: types.MemoryNoteStatusPending, NormalizedHash: "conflict",
+	}
+	if err := writer.notes.CreateBatch(ctx, []*types.MemoryNote{note}); err != nil {
+		t.Fatal(err)
+	}
+	space, _ := writer.spaces.GetByID(ctx, 7, spaceID)
+	if page, err := writer.consolidateNote(ctx, &scope{
+		TenantID: 7, Space: space, Settings: explicitOnlySettings(),
+	}, note); err != nil || page != nil {
+		t.Fatalf("conflicting history result page=%+v err=%v, want ignored", page, err)
+	}
+	kept, err := writer.pages.GetByID(ctx, spaceID, saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !kept.Saved || kept.Summary != "WeKnora 使用 PostgreSQL" {
+		t.Fatalf("saved memory was changed by history: %+v", kept)
+	}
+}
+
+func TestRecallAlwaysConsidersSavedMemoriesRegardlessOfType(t *testing.T) {
+	writer, spaceID, ctx := newWritePathFixture(t)
+	if err := writer.pages.Create(ctx, &types.MemoryPage{
+		ID: uuid.New().String(), TenantID: 7, SpaceID: spaceID, Slug: "episode/saved",
+		Title: "Saved", PageType: types.MemoryTypeEpisode, Status: types.MemoryPageStatusActive,
+		Saved: true, Content: "用户明确要求记住这件事", Summary: "用户明确要求记住这件事", Strength: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	settings := explicitOnlySettings()
+	settings.RecallEnabled = true
+	settings.InjectionTokenBudget = 200
+	settings.RecallMaxItems = 8
+	recall := NewRecallService(writer.spaces, writer.pages, nil)
+	result := recall.Recall(ctx, types.MemoryRecallRequest{
+		SpaceID: spaceID, Query: "完全无关的问题", Language: "zh", Settings: settings,
+	})
+	if result == nil || len(result.Items) != 1 || result.Items[0].Slug != "episode/saved" {
+		t.Fatalf("saved memory was not resident: %+v", result)
 	}
 }
 

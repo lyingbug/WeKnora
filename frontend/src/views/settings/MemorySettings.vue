@@ -11,7 +11,7 @@
             <template #icon><t-icon name="setting" /></template>
           </t-button>
         </t-tooltip>
-        <t-button v-if="activeTab !== 'graph'" theme="primary" size="medium" @click="openCreate">
+        <t-button v-if="activeTab === 'saved'" theme="primary" size="medium" @click="openCreate">
           <template #icon><t-icon name="add" /></template>
           {{ t('memory.actions.create') }}
         </t-button>
@@ -30,13 +30,16 @@
 
     <template v-if="!disabled">
       <t-tabs v-model="activeTab" class="memory-tabs">
-        <t-tab-panel value="memories" :label="memoryTabLabel" />
+        <t-tab-panel value="saved" :label="t('memory.tabs.saved')" />
+        <t-tab-panel value="history" :label="t('memory.tabs.history')" />
         <t-tab-panel value="inbox" :label="inboxTabLabel" />
         <t-tab-panel value="graph" :label="t('memory.tabs.graph')" />
       </t-tabs>
 
       <div class="memory-body" :class="{ 'memory-body--graph': activeTab === 'graph' }">
-        <MemoryList v-if="activeTab === 'memories'" :key="`list-${refreshKey}`" @edit="openEdit"
+        <MemoryList v-if="activeTab === 'saved'" :key="`saved-${refreshKey}`" :saved="true" @edit="openEdit"
+          @changed="refreshStats" />
+        <MemoryList v-else-if="activeTab === 'history'" :key="`history-${refreshKey}`" :saved="false" @edit="openEdit"
           @changed="refreshStats" />
         <MemoryInbox v-else-if="activeTab === 'inbox'" :key="`inbox-${refreshKey}`" @changed="refreshAll" />
         <MemoryGraphPanel v-else :key="`graph-${refreshKey}`" @edit="openEdit" />
@@ -63,7 +66,7 @@ import MemoryPersonalSettingsDrawer from '../memory/components/MemoryPersonalSet
 
 const { t } = useI18n()
 
-const activeTab = ref('memories')
+const activeTab = ref('saved')
 const disabled = ref(false)
 const refreshKey = ref(0)
 const editorVisible = ref(false)
@@ -81,9 +84,6 @@ const emptyStats: MemoryStats = {
 }
 const stats = ref<MemoryStats>({ ...emptyStats })
 
-const memoryTabLabel = computed(() =>
-  t('memory.tabs.memoriesCount', { count: stats.value.active_pages }),
-)
 const inboxTabLabel = computed(() =>
   t('memory.tabs.inboxCount', { count: stats.value.pending_notes }),
 )

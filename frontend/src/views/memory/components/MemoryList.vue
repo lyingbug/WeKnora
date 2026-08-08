@@ -19,7 +19,7 @@
 
     <t-loading :loading="loading" size="small" class="memory-list__body">
       <div v-if="!pages.length && !loading" class="memory-list__empty">
-        <t-empty :description="t('memory.list.empty')" />
+        <t-empty :description="t(props.saved === false ? 'memory.list.historyEmpty' : 'memory.list.empty')" />
       </div>
 
       <ul v-else class="memory-list__rows" role="list">
@@ -29,6 +29,7 @@
           <div class="memory-item__content">
             <div class="memory-item__head">
               <span class="memory-item__type">{{ typeLabel(page.page_type) }}</span>
+              <span class="memory-item__origin">{{ t(page.saved ? 'memory.list.savedOrigin' : 'memory.list.historyOrigin') }}</span>
               <h3 class="memory-item__title">{{ page.title }}</h3>
               <t-icon v-if="page.pinned" name="pin-filled" class="memory-item__pin" />
             </div>
@@ -73,6 +74,7 @@ import {
   type MemoryPage,
 } from '@/api/memory'
 
+const props = defineProps<{ saved?: boolean }>()
 const { t } = useI18n()
 const emit = defineEmits<{ (e: 'edit', slug: string): void; (e: 'changed'): void }>()
 
@@ -135,6 +137,7 @@ async function load() {
       query: query.value || undefined,
       type: typeFilter.value.length ? typeFilter.value.join(',') : undefined,
       status: statusFilter.value,
+      saved: props.saved,
       page: currentPage.value,
       page_size: pageSize,
     })
@@ -171,6 +174,9 @@ async function togglePin(page: MemoryPage) {
     page.pinned = updated?.pinned ?? !page.pinned
     page.version = updated?.version ?? page.version + 1
     MessagePlugin.success(page.pinned ? t('memory.list.pinned') : t('memory.list.unpinned'))
+    if (updated?.saved !== undefined && updated.saved !== props.saved) {
+      await load()
+    }
     emit('changed')
   } catch {
     MessagePlugin.error(t('memory.errors.saveFailed'))
@@ -198,7 +204,7 @@ function confirmDelete(page: MemoryPage) {
 }
 
 let searchTimer: number | null = null
-watch([typeFilter, statusFilter], reload)
+watch([typeFilter, statusFilter, () => props.saved], reload)
 watch(query, () => {
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = window.setTimeout(reload, 300)
@@ -355,6 +361,14 @@ onMounted(load)
     color: var(--td-text-color-secondary);
     transition: opacity 0.15s ease;
   }
+}
+
+.memory-item__origin {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  background: var(--td-bg-color-secondarycontainer);
 }
 
 .memory-list__pagination {

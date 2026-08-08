@@ -247,6 +247,7 @@ func (h *MemoryHandler) UpdateTenantSettings(c *gin.Context) {
 // @Param        type       query  string  false  "Comma-separated memory types"
 // @Param        status     query  string  false  "Comma-separated statuses"
 // @Param        query      query  string  false  "Keyword filter"
+// @Param        saved      query  bool    false  "Saved memory or chat-history memory"
 // @Param        page       query  int     false  "Page number"
 // @Param        page_size  query  int     false  "Page size"
 // @Success      200  {object}  types.MemoryPageListResponse
@@ -256,10 +257,17 @@ func (h *MemoryHandler) ListPages(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 
+	var saved *bool
+	if raw, ok := c.GetQuery("saved"); ok {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			saved = &parsed
+		}
+	}
 	req := &types.MemoryPageListRequest{
 		Types:    splitCSV(c.Query("type")),
 		Statuses: splitCSV(c.Query("status")),
 		Query:    c.Query("query"),
+		Saved:    saved,
 		Page:     page,
 		PageSize: pageSize,
 		SortBy:   c.Query("sort_by"),
@@ -306,6 +314,8 @@ func (h *MemoryHandler) CreatePage(c *gin.Context) {
 		return
 	}
 	req.EditSource = types.MemoryEditSourceUser
+	saved := true
+	req.Saved = &saved
 	page, err := h.memoryService.WritePage(c.Request.Context(), &req)
 	if err != nil {
 		h.respondMemoryError(c, err)
@@ -332,6 +342,8 @@ func (h *MemoryHandler) UpdatePage(c *gin.Context) {
 	}
 	req.Slug = memorySlugParam(c)
 	req.EditSource = types.MemoryEditSourceUser
+	saved := true
+	req.Saved = &saved
 
 	page, err := h.memoryService.WritePage(c.Request.Context(), &req)
 	if err != nil {

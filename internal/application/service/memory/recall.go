@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -62,20 +63,27 @@ func (s *recallService) Recall(
 
 	result := &types.MemoryRecallResult{SpaceID: req.SpaceID}
 
-	resident, err := s.pages.ListByTypes(
-		ctx, req.SpaceID, req.Settings.ResidentTypes,
+	// Saved memories are the user's explicit contract with the product. They
+	// are considered on every turn regardless of type; chat-history memories
+	// must earn a slot through relevance instead of becoming permanent prompt
+	// furniture merely because an extractor labelled them profile/preference.
+	resident, err := s.pages.ListBySaved(
+		ctx, req.SpaceID, true,
 		[]string{types.MemoryPageStatusActive}, req.Settings.RecallMaxItems*2,
 	)
 	if err != nil {
 		logger.Warnf(ctx, "memory recall: resident lookup failed: %v", err)
 	}
 
-	openQuestions, err := s.pages.ListByTypes(
-		ctx, req.SpaceID, []string{types.MemoryTypeOpenQuestion},
-		[]string{types.MemoryPageStatusActive}, 3,
-	)
-	if err != nil {
-		logger.Warnf(ctx, "memory recall: open-question lookup failed: %v", err)
+	var openQuestions []*types.MemoryPage
+	if shouldRecallOpenQuestions(req.Query) {
+		openQuestions, err = s.pages.ListByTypes(
+			ctx, req.SpaceID, []string{types.MemoryTypeOpenQuestion},
+			[]string{types.MemoryPageStatusActive}, 12,
+		)
+		if err != nil {
+			logger.Warnf(ctx, "memory recall: open-question lookup failed: %v", err)
+		}
 	}
 
 	var relevant []types.MemoryRecallItem
@@ -85,8 +93,15 @@ func (s *recallService) Recall(
 
 	result.Preference = mergePreferences(resident)
 	result.Items = s.assemble(resident, relevant, req.Settings)
-	result.OpenQuestions = toRecallItems(openQuestions, true)
-	result.TokensUsed = EstimateTokens(FormatMemoryBlock(result, req.Language))
+	if len(openQuestions) > 0 {
+		result.OpenQuestions = scoreMemories(req.Query, openQuestions, func() float64 {
+			return float64(time.Now().Unix())
+		})
+		if len(result.OpenQuestions) > 2 {
+			result.OpenQuestions = result.OpenQuestions[:2]
+		}
+	}
+	s.enforceRenderedBudget(result, req.Settings, req.Language)
 
 	if result.IsEmpty() {
 		return nil
@@ -107,7 +122,7 @@ func (s *recallService) scoreRelevant(
 		return nil
 	}
 
-	// Resident memories are injected unconditionally, so scoring them again
+	// Saved memories are injected unconditionally, so scoring them again
 	// would only let them occupy the relevance slots twice.
 	residentSlugs := make(map[string]struct{}, len(resident))
 	for _, page := range resident {
@@ -126,6 +141,49 @@ func (s *recallService) scoreRelevant(
 
 	now := func() float64 { return float64(time.Now().Unix()) }
 	return scoreMemories(req.Query, filtered, now)
+}
+
+func shouldRecallOpenQuestions(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"继续", "接着", "上次", "之前", "进展", "未解决", "待办",
+		"continue", "pick up", "last time", "previous", "progress", "open question", "todo",
+	} {
+		if strings.Contains(query, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// enforceRenderedBudget measures the complete block, including headers,
+// structured preferences and open questions. The old implementation budgeted
+// only ordinary bullets, so the actual prompt could exceed the advertised cap.
+func (s *recallService) enforceRenderedBudget(
+	result *types.MemoryRecallResult, settings types.MemorySettings, language string,
+) {
+	budget := settings.InjectionTokenBudget
+	if budget <= 0 {
+		budget = 600
+	}
+	for EstimateTokens(FormatMemoryBlock(result, language)) > budget {
+		switch {
+		case len(result.OpenQuestions) > 0:
+			result.OpenQuestions = result.OpenQuestions[:len(result.OpenQuestions)-1]
+		case len(result.Items) > 0:
+			result.Items = result.Items[:len(result.Items)-1]
+		default:
+			// Structured preferences are bounded and sanitized; if an operator
+			// configures a budget smaller than the block header, return no memory.
+			result.Preference = types.MemoryPreference{}
+			result.TokensUsed = 0
+			return
+		}
+	}
+	result.TokensUsed = EstimateTokens(FormatMemoryBlock(result, language))
 }
 
 // assemble applies the item cap and the token budget.
@@ -186,28 +244,33 @@ func (s *recallService) anchorHints(
 		return nil
 	}
 
-	// Anchors are loaded for the space and the knowledge bases in play, not for
-	// the memories recalled this turn.
-	//
-	// The overwhelming majority of anchors are written at retrieval time — one
-	// per cited item, every turn — and those belong to a person's engagement with
-	// the knowledge base, not to any particular memory, so they carry no memory
-	// page id. Loading via the recalled pages therefore skipped nearly all of
-	// them, and skipped every anchor on an ordinary (non-wiki) knowledge base
-	// outright, since those are only ever produced at retrieval time. The result
-	// was that "prefer what this person has engaged with" preferred nothing.
-	kbIDs := req.KnowledgeBaseIDs
-	if len(kbIDs) == 0 {
-		kbIDs = []string{""} // whole space
+	// Only anchors attached to memories actually selected for this turn may
+	// influence retrieval. Loading every anchor in the space created a
+	// rich-get-richer loop where unrelated past citations biased every query.
+	slugs := make([]string, 0, len(result.Items)+len(result.OpenQuestions))
+	for _, item := range append(append([]types.MemoryRecallItem{}, result.Items...), result.OpenQuestions...) {
+		slugs = append(slugs, item.Slug)
 	}
-
+	pages, err := s.pages.GetBySlugs(ctx, req.SpaceID, slugs)
+	if err != nil {
+		return nil
+	}
+	allowedKBs := make(map[string]struct{}, len(req.KnowledgeBaseIDs))
+	for _, id := range req.KnowledgeBaseIDs {
+		allowedKBs[id] = struct{}{}
+	}
 	hints := map[string]types.MemoryAnchorHint{}
-	for _, kbID := range kbIDs {
-		anchors, err := s.anchors.ListBySpace(ctx, req.SpaceID, kbID)
+	for _, page := range pages {
+		anchors, err := s.anchors.ListByPage(ctx, req.SpaceID, page.ID)
 		if err != nil {
 			continue
 		}
 		for _, anchor := range anchors {
+			if len(allowedKBs) > 0 {
+				if _, ok := allowedKBs[anchor.KnowledgeBaseID]; !ok {
+					continue
+				}
+			}
 			key := anchor.KnowledgeBaseID + "|" + anchor.TargetKind + "|" + anchor.TargetRef
 			hint, exists := hints[key]
 			if !exists {

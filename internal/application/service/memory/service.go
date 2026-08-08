@@ -373,6 +373,7 @@ func (s *Service) createPage(
 		Slug:           slug,
 		Title:          title,
 		PageType:       pageType,
+		MemoryKey:      strings.TrimSpace(req.MemoryKey),
 		Status:         status,
 		Content:        req.Content,
 		Summary:        firstNonEmpty(strings.TrimSpace(req.Summary), DeriveMemoryTitle(req.Content)),
@@ -382,6 +383,12 @@ func (s *Service) createPage(
 		Strength:       1,
 		Confidence:     0.9,
 		LastEditSource: editSource,
+	}
+	// API/user/agent writes are saved memories. Background consolidation opts
+	// out explicitly and becomes referenceable chat history instead.
+	page.Saved = editSource != types.MemoryEditSourcePipeline
+	if req.Saved != nil {
+		page.Saved = *req.Saved
 	}
 	if req.Structured != nil {
 		page.Structured = req.Structured.Sanitize()
@@ -411,6 +418,12 @@ func (s *Service) updateExistingPage(
 
 	page.Title = title
 	page.PageType = pageType
+	if req.MemoryKey != "" {
+		page.MemoryKey = strings.TrimSpace(req.MemoryKey)
+	}
+	if req.Saved != nil {
+		page.Saved = *req.Saved
+	}
 	page.Status = status
 	page.Content = req.Content
 	page.Summary = firstNonEmpty(strings.TrimSpace(req.Summary), page.Summary)
@@ -718,8 +731,11 @@ func (s *Service) PromoteNote(
 		Slug:       slug,
 		Title:      title,
 		PageType:   noteType,
+		Saved:      boolPtr(true),
+		MemoryKey:  note.MemoryKey,
 		Content:    statement,
 		Summary:    statement,
+		Structured: preferencePtr(note.Structured),
 		EditSource: types.MemoryEditSourceUser,
 	})
 	if err != nil {

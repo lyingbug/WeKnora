@@ -57,6 +57,8 @@ export interface MemoryPage {
   slug: string;
   title: string;
   page_type: MemoryType;
+  saved: boolean;
+  memory_key: string;
   status: "active" | "archived" | "superseded";
   content: string;
   summary: string;
@@ -89,6 +91,7 @@ export interface MemoryNote {
   id: string;
   space_id: string;
   note_type: MemoryType;
+  memory_key: string;
   statement: string;
   subject: string;
   scope: string;
@@ -275,6 +278,7 @@ export function listMemoryPages(params: {
   type?: string;
   status?: string;
   query?: string;
+  saved?: boolean;
   page?: number;
   page_size?: number;
   sort_by?: string;
@@ -418,4 +422,3 @@ export function getDocumentMemoryCoverage(kbID: string): Promise<{ data: MemoryC
 export function getMemoryCoverage(kbId: string) {
   return get(`/api/v1/knowledgebase/${encodeURIComponent(kbId)}/memory/coverage`);
 }
-

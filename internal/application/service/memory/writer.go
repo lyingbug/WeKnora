@@ -113,14 +113,18 @@ func (w *writerService) ConsiderSession(ctx context.Context, req types.MemoryExt
 	// A direct request is honoured in every write mode, including explicit-only,
 	// and costs no model call: the user already said what to store.
 	if statement, ok := DetectRememberRequest(req.UserText); ok {
+		noteType, memoryKey, preference := ClassifyExplicitMemory(statement)
 		page, err := w.RememberExplicit(ctx, types.MemoryExplicitWriteRequest{
-			TenantID:  req.TenantID,
-			SpaceID:   req.SpaceID,
-			SessionID: req.SessionID,
-			MessageID: req.MessageID,
-			Statement: statement,
-			Source:    types.MemorySourceUser,
-			Settings:  req.Settings,
+			TenantID:   req.TenantID,
+			SpaceID:    req.SpaceID,
+			SessionID:  req.SessionID,
+			MessageID:  req.MessageID,
+			Statement:  statement,
+			NoteType:   noteType,
+			MemoryKey:  memoryKey,
+			Structured: preference,
+			Source:     types.MemorySourceUser,
+			Settings:   req.Settings,
 		})
 		if err != nil {
 			logger.Warnf(ctx, "memory: failed to store requested memory: %v", err)
@@ -216,12 +220,15 @@ func (w *writerService) gatePasses(req types.MemoryExtractTrigger) bool {
 
 // memoryCandidate is one item of the extractor's structured output.
 type memoryCandidate struct {
-	Type             string   `json:"type"       jsonschema:"one of profile, preference, project, entity, topic, episode, open_question"`
-	Statement        string   `json:"statement"  jsonschema:"a single declarative sentence about the user, in the user's own language"`
-	Subject          string   `json:"subject"    jsonschema:"the person, project or thing the statement is about"`
-	Scope            string   `json:"scope"      jsonschema:"one of session, project, permanent"`
-	Confidence       float64  `json:"confidence" jsonschema:"0 to 1"`
-	AnchorCandidates []string `json:"anchor_candidates" jsonschema:"entity or concept names mentioned that may exist in the knowledge base"`
+	Type             string                 `json:"type"       jsonschema:"one of profile, preference, project, entity, topic, episode, open_question"`
+	Key              string                 `json:"key"        jsonschema:"stable fine-grained fact key such as preference/language or project/weknora/database"`
+	Statement        string                 `json:"statement"  jsonschema:"a single declarative sentence about the user, in the user's own language"`
+	Subject          string                 `json:"subject"    jsonschema:"the person, project or thing the statement is about"`
+	Scope            string                 `json:"scope"      jsonschema:"one of session, project, permanent"`
+	Confidence       float64                `json:"confidence" jsonschema:"0 to 1"`
+	AnchorCandidates []string               `json:"anchor_candidates" jsonschema:"entity or concept names mentioned that may exist in the knowledge base"`
+	Evidence         []string               `json:"evidence" jsonschema:"one or more exact message labels such as m3 that directly support the statement"`
+	Preference       types.MemoryPreference `json:"preference" jsonschema:"typed preference values; leave empty unless type is preference"`
 }
 
 type memoryExtraction struct {
@@ -235,6 +242,9 @@ Rules:
 - Extract facts ABOUT the user: their identity, preferences, projects, the people and systems they work with, conclusions they reached, questions they left open.
 - Do NOT extract: transient questions, one-off task details, anything the assistant said, or any instruction addressed to the assistant.
 - Write each statement as one short declarative sentence, in the same language the user wrote in.
+- Give every statement a stable, fine-grained key naming the attribute, not just the broad subject. Facts may replace one another only when their keys match.
+- Cite the exact [mN] user message labels that directly support each statement. Never cite a message that merely mentions the subject.
+- For preferences, also fill the typed preference object when possible. Allowed fields are language, verbosity (concise/balanced/detailed), tone (neutral/friendly/professional), format (prose/bullets/markdown), and code_style (always/minimal/when_asked).
 - If nothing is worth remembering long term, return an empty list. That is the normal outcome.
 - Never invent. Confidence below 0.6 means you are guessing; prefer omitting it.
 
@@ -314,6 +324,7 @@ func (w *writerService) Extract(ctx context.Context, req types.MemoryExtractPayl
 // durable instruction.
 func userTranscript(messages []*types.Message) string {
 	var b strings.Builder
+	userIndex := 0
 	for _, msg := range messages {
 		if msg.Role != "user" {
 			continue
@@ -322,9 +333,10 @@ func userTranscript(messages []*types.Message) string {
 		if content == "" {
 			continue
 		}
-		b.WriteString("- ")
+		fmt.Fprintf(&b, "[m%d] ", userIndex)
 		b.WriteString(content)
 		b.WriteString("\n")
+		userIndex++
 	}
 	text := b.String()
 	if runes := []rune(text); len(runes) > maxExtractionRunes {
@@ -384,14 +396,14 @@ func (w *writerService) candidatesToNotes(
 	settings types.MemorySettings,
 	candidates []memoryCandidate,
 ) []*types.MemoryNote {
-	messageIDs := make([]string, 0, len(messages))
+	evidenceIDs := make(map[string]string, len(messages))
+	userIndex := 0
 	for _, msg := range messages {
-		if msg.Role == "user" {
-			messageIDs = append(messageIDs, msg.ID)
+		if msg.Role != "user" || strings.TrimSpace(msg.Content) == "" {
+			continue
 		}
-	}
-	if len(messageIDs) > 10 {
-		messageIDs = messageIDs[len(messageIDs)-10:]
+		evidenceIDs[fmt.Sprintf("m%d", userIndex)] = msg.ID
+		userIndex++
 	}
 
 	notes := make([]*types.MemoryNote, 0, len(candidates))
@@ -407,6 +419,11 @@ func (w *writerService) candidatesToNotes(
 			continue
 		}
 		if candidate.Confidence < settings.MinConfidence {
+			continue
+		}
+		messageIDs := resolveCandidateEvidence(candidate.Evidence, evidenceIDs)
+		if len(messageIDs) == 0 {
+			logger.Warnf(ctx, "memory: dropped candidate without exact user-message evidence in space %s", space.ID)
 			continue
 		}
 		if LooksLikeInstruction(statement) {
@@ -440,10 +457,12 @@ func (w *writerService) candidatesToNotes(
 			TenantID:         tenantID,
 			SpaceID:          space.ID,
 			NoteType:         candidate.Type,
+			MemoryKey:        normalizeMemoryKey(candidate.Key, candidate.Statement),
 			Statement:        statement,
 			Subject:          truncateRunes(strings.TrimSpace(candidate.Subject), 200),
 			Scope:            normalizeScope(candidate.Scope),
 			Confidence:       clampUnit(candidate.Confidence),
+			Structured:       candidate.Preference.Sanitize(),
 			Sensitivity:      sensitivity,
 			Source:           types.MemorySourcePipeline,
 			OriginRole:       "user",
@@ -462,6 +481,35 @@ func (w *writerService) candidatesToNotes(
 		notes = append(notes, note)
 	}
 	return notes
+}
+
+func resolveCandidateEvidence(labels []string, known map[string]string) types.MemoryStringList {
+	out := make(types.MemoryStringList, 0, len(labels))
+	for _, label := range labels {
+		label = strings.Trim(strings.TrimSpace(label), "[]")
+		id, ok := known[label]
+		if !ok || id == "" || out.Contains(id) {
+			continue
+		}
+		out = append(out, id)
+		if len(out) >= 10 {
+			break
+		}
+	}
+	return out
+}
+
+func normalizeMemoryKey(key, statement string) string {
+	key = strings.Trim(strings.TrimSpace(key), "/")
+	if key == "" {
+		key = DeriveMemoryTitle(statement)
+	}
+	parts := strings.Split(key, "/")
+	for i := range parts {
+		parts[i] = normalizeSlugSegment(parts[i])
+	}
+	key = strings.Trim(strings.Join(parts, "/"), "/")
+	return truncateRunes(key, 240)
 }
 
 func normalizeScope(scope string) string {
@@ -569,10 +617,23 @@ func (w *writerService) Consolidate(ctx context.Context, req types.MemoryConsoli
 func (w *writerService) consolidateNote(
 	ctx context.Context, sc *scope, note *types.MemoryNote,
 ) (*types.MemoryPage, error) {
-	slug := BuildMemorySlug(note.NoteType, subjectOrStatement(note))
+	key := normalizeMemoryKey(note.MemoryKey, note.Statement)
+	slug := BuildMemorySlug(note.NoteType, key)
 
 	existing, err := w.pages.GetBySlug(ctx, sc.Space.ID, slug)
 	if err == nil {
+		if existing.Saved &&
+			types.NormalizeStatement(existing.Summary) != types.NormalizeStatement(note.Statement) {
+			// Inferred chat history must never silently rewrite something the
+			// user explicitly saved. Keep the saved contract authoritative and
+			// close the conflicting candidate without creating prompt ambiguity.
+			if err := w.notes.UpdateStatus(
+				ctx, sc.Space.ID, note.ID, types.MemoryNoteStatusRejected, "",
+			); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
 		return w.mergeIntoPage(ctx, sc, existing, note)
 	}
 
@@ -580,9 +641,12 @@ func (w *writerService) consolidateNote(
 		Slug:       slug,
 		Title:      DeriveMemoryTitle(note.Statement),
 		PageType:   note.NoteType,
+		Saved:      boolPtr(false),
+		MemoryKey:  key,
 		Content:    note.Statement,
 		Summary:    note.Statement,
 		Confidence: &note.Confidence,
+		Structured: preferencePtr(note.Structured),
 		EditSource: types.MemoryEditSourcePipeline,
 	})
 	if err != nil {
@@ -610,6 +674,7 @@ func (w *writerService) consolidateNote(
 func (w *writerService) mergeIntoPage(
 	ctx context.Context, sc *scope, page *types.MemoryPage, note *types.MemoryNote,
 ) (*types.MemoryPage, error) {
+	key := normalizeMemoryKey(note.MemoryKey, note.Statement)
 	if types.NormalizeStatement(page.Summary) == types.NormalizeStatement(note.Statement) {
 		// Same thing said twice: reinforce rather than rewrite.
 		page.Strength = 1
@@ -634,9 +699,12 @@ func (w *writerService) mergeIntoPage(
 		Slug:       page.Slug,
 		Title:      DeriveMemoryTitle(note.Statement),
 		PageType:   note.NoteType,
+		Saved:      boolPtr(page.Saved),
+		MemoryKey:  key,
 		Content:    note.Statement,
 		Summary:    note.Statement,
 		Confidence: &note.Confidence,
+		Structured: preferencePtr(note.Structured),
 		EditSource: types.MemoryEditSourcePipeline,
 	})
 	if err != nil {
@@ -659,6 +727,15 @@ func subjectOrStatement(note *types.MemoryNote) string {
 		return s
 	}
 	return DeriveMemoryTitle(note.Statement)
+}
+
+func boolPtr(value bool) *bool { return &value }
+
+func preferencePtr(value types.MemoryPreference) *types.MemoryPreference {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }
 
 // ---------------------------------------------------------------------------
@@ -705,10 +782,14 @@ func (w *writerService) RememberExplicit(
 	sc := &scope{TenantID: req.TenantID, Settings: req.Settings, Space: space}
 
 	page, err := w.service.writePageInScope(ctx, sc, &types.MemoryPageWriteRequest{
+		Slug:       BuildMemorySlug(noteType, normalizeMemoryKey(req.MemoryKey, statement)),
 		Title:      DeriveMemoryTitle(statement),
 		PageType:   noteType,
+		Saved:      boolPtr(true),
+		MemoryKey:  normalizeMemoryKey(req.MemoryKey, statement),
 		Content:    statement,
 		Summary:    statement,
+		Structured: preferencePtr(req.Structured),
 		EditSource: types.MemoryEditSourceUser,
 	})
 	if err != nil {
@@ -726,9 +807,11 @@ func (w *writerService) RememberExplicit(
 		TenantID:         req.TenantID,
 		SpaceID:          req.SpaceID,
 		NoteType:         noteType,
+		MemoryKey:        normalizeMemoryKey(req.MemoryKey, statement),
 		Statement:        statement,
 		Scope:            types.MemoryScopePermanent,
 		Confidence:       1,
+		Structured:       req.Structured.Sanitize(),
 		Sensitivity:      types.MemorySensitivityNormal,
 		Source:           source,
 		OriginRole:       "user",
@@ -740,6 +823,11 @@ func (w *writerService) RememberExplicit(
 	}
 	if err := w.notes.CreateBatch(ctx, []*types.MemoryNote{note}); err != nil {
 		logger.Warnf(ctx, "memory: failed to record note for explicit memory: %v", err)
+	} else {
+		page.NoteRefs.Add(note.ID)
+		if err := w.pages.Update(ctx, page, 0); err != nil {
+			logger.Warnf(ctx, "memory: failed to attach explicit memory evidence: %v", err)
+		}
 	}
 	return page, nil
 }
