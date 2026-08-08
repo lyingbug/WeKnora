@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     subject_id VARCHAR(512) NOT NULL,
     kind VARCHAR(32) NOT NULL,
     content TEXT NOT NULL,
+    topic VARCHAR(255) NOT NULL DEFAULT '',
     normalized_key VARCHAR(255) NOT NULL DEFAULT '',
     importance INTEGER NOT NULL DEFAULT 3,
     origin VARCHAR(16) NOT NULL DEFAULT 'extracted',

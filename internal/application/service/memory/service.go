@@ -206,7 +206,8 @@ func (s *Service) write(
 		return nil, fmt.Errorf("ensure memory subject: %w", err)
 	}
 
-	normalizedKey := types.NormalizeMemoryKey(item.NormalizedKey, content)
+	topic := types.SanitizeMemoryTopic(item.Topic)
+	normalizedKey := types.NormalizeMemoryKey(topic, content)
 	existing, err := s.repo.FindActiveByKey(ctx, scope, normalizedKey)
 	if err != nil {
 		return nil, fmt.Errorf("find conflicting memory: %w", err)
@@ -223,6 +224,7 @@ func (s *Service) write(
 		SubjectID:       scope.SubjectID,
 		Kind:            item.Kind,
 		Content:         content,
+		Topic:           topic,
 		NormalizedKey:   normalizedKey,
 		Importance:      types.ClampMemoryImportance(item.Importance),
 		Origin:          item.Origin,
@@ -345,7 +347,10 @@ func (s *Service) UpdateItem(
 	if sanitized == "" {
 		return nil, errors.New("memory: empty content")
 	}
-	normalizedKey := types.NormalizeMemoryKey("", sanitized)
+	// Keep the original topic: the user is correcting the statement, not
+	// re-filing it under a different subject, and reusing the topic is what
+	// keeps the correction able to supersede a future extraction.
+	normalizedKey := types.NormalizeMemoryKey(existing.Topic, sanitized)
 	importance = types.ClampMemoryImportance(importance)
 	if err := s.repo.UpdateItemContent(ctx, scope, id, sanitized, normalizedKey, importance); err != nil {
 		return nil, err

@@ -52,13 +52,25 @@ func (s *Service) ScheduleExtraction(ctx context.Context, sessionID, messageID, 
 		return
 	}
 
-	subject, err := s.repo.GetSubject(ctx, scope)
+	// The subject row is what carries the debounce timestamp, so it has to
+	// exist before the first task is queued. Without it a user with no
+	// memories yet would enqueue an extraction on every single turn.
+	subject, err := s.repo.EnsureSubject(ctx, scope)
 	if err != nil {
-		logger.Warnf(ctx, "memory: load subject for extraction failed: %v", err)
+		logger.Warnf(ctx, "memory: ensure subject for extraction failed: %v", err)
 		return
 	}
-	if subject != nil && subject.LastExtractedAt != nil &&
-		time.Since(*subject.LastExtractedAt) < extractMinInterval {
+	if !subject.Enabled {
+		return
+	}
+	if subject.LastExtractedAt != nil && time.Since(*subject.LastExtractedAt) < extractMinInterval {
+		return
+	}
+	// Claim the interval at enqueue time rather than at completion. The task
+	// runs after a debounce delay, so waiting until it finishes would leave the
+	// whole window open for duplicates.
+	if err := s.repo.MarkExtracted(ctx, scope); err != nil {
+		logger.Warnf(ctx, "memory: claim extraction interval failed: %v", err)
 		return
 	}
 
@@ -156,10 +168,6 @@ func (s *Service) Handle(ctx context.Context, task *asynq.Task) error {
 		return err
 	}
 	s.applyDecisions(ctx, scope, cfg, payload, decisions)
-
-	if err := s.repo.MarkExtracted(ctx, scope); err != nil {
-		logger.Warnf(ctx, "memory: mark extracted failed: %v", err)
-	}
 	return nil
 }
 
@@ -245,7 +253,7 @@ func (s *Service) callExtractionModel(
 		if item == nil {
 			continue
 		}
-		fmt.Fprintf(&known, "- [%s] (%s) %s\n", item.Kind, item.NormalizedKey, item.Content)
+		fmt.Fprintf(&known, "- [%s] (topic: %s) %s\n", item.Kind, item.Topic, item.Content)
 	}
 	if known.Len() == 0 {
 		known.WriteString("(none)\n")
@@ -324,7 +332,7 @@ func (s *Service) applyDecisions(
 		}
 		switch strings.ToLower(strings.TrimSpace(decision.Action)) {
 		case "delete":
-			key := types.NormalizeMemoryKey(decision.Topic, decision.Content)
+			key := types.NormalizeMemoryKey(types.SanitizeMemoryTopic(decision.Topic), decision.Content)
 			existing, err := s.repo.FindActiveByKey(ctx, scope, key)
 			if err != nil || existing == nil {
 				continue
@@ -342,7 +350,7 @@ func (s *Service) applyDecisions(
 			item := types.MemoryItem{
 				Kind:            decision.Kind,
 				Content:         decision.Content,
-				NormalizedKey:   decision.Topic,
+				Topic:           decision.Topic,
 				Importance:      decision.Importance,
 				Origin:          types.MemoryOriginExtracted,
 				SourceSessionID: payload.SessionID,

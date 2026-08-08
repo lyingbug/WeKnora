@@ -96,17 +96,23 @@ func scoreItems(query string, items []*types.MemoryItem) []scoredItem {
 		if item == nil {
 			continue
 		}
-		itemTokens := tokenize(item.Content + " " + item.NormalizedKey)
-		if len(itemTokens) == 0 {
-			continue
-		}
-		itemUnigrams := make(map[string]struct{}, len(itemTokens))
-		for _, token := range itemTokens {
-			itemUnigrams[token] = struct{}{}
-		}
+		// Score against the topic as well as the statement, indexed separately
+		// so no bigram spans the boundary between them. The normalized key is
+		// deliberately not used: it is a sorted character soup built for
+		// collision detection, so its adjacency carries no meaning.
+		itemUnigrams := make(map[string]struct{})
 		itemBigrams := make(map[string]struct{})
-		for _, pair := range bigrams(itemTokens) {
-			itemBigrams[pair] = struct{}{}
+		for _, text := range []string{item.Content, item.Topic} {
+			tokens := tokenize(text)
+			for _, token := range tokens {
+				itemUnigrams[token] = struct{}{}
+			}
+			for _, pair := range bigrams(tokens) {
+				itemBigrams[pair] = struct{}{}
+			}
+		}
+		if len(itemUnigrams) == 0 {
+			continue
 		}
 
 		var hits float64

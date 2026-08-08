@@ -125,11 +125,14 @@ func ApplyAgentMemoryPreference(ctx context.Context, enabled *bool) context.Cont
 // workspace. Scope is always derived from the request context, never from a
 // client-supplied id.
 type MemorySubject struct {
-	ID       string `json:"id"        gorm:"primaryKey;type:varchar(36)"`
-	TenantID uint64 `json:"tenant_id" gorm:"column:tenant_id;not null"`
+	ID string `json:"id" gorm:"primaryKey;type:varchar(36)"`
+	// The scope is declared as a unique index on the model, not only in the
+	// migration, so EnsureSubject's upsert has a constraint to target on every
+	// database the model is auto-migrated onto.
+	TenantID uint64 `json:"tenant_id" gorm:"column:tenant_id;not null;uniqueIndex:idx_memory_subjects_scope,priority:1"`
 	// SubjectID is Principal.StorageID(), so IM users, embed visitors and API
 	// external users each get their own space without needing an account.
-	SubjectID string `json:"subject_id" gorm:"column:subject_id;type:varchar(512);not null"`
+	SubjectID string `json:"subject_id" gorm:"column:subject_id;type:varchar(512);not null;uniqueIndex:idx_memory_subjects_scope,priority:2"`
 	// Enabled is the per-user opt out. The workspace switch lives on
 	// Tenant.MemoryConfig and takes precedence over it.
 	Enabled bool `json:"enabled" gorm:"not null;default:true"`
@@ -152,6 +155,12 @@ type MemoryItem struct {
 	SubjectID string `json:"subject_id" gorm:"column:subject_id;type:varchar(512);not null"`
 	Kind      string `json:"kind"       gorm:"type:varchar(32);not null"`
 	Content   string `json:"content"    gorm:"not null"`
+	// Topic is the readable subject the statement is about, as the extraction
+	// model named it ("在用的数据库"). It is kept verbatim next to the
+	// normalized key because it is the best retrieval handle available: a
+	// question often names the topic while the statement itself only carries
+	// the value ("已经迁到 PostgreSQL").
+	Topic string `json:"topic" gorm:"type:varchar(255);not null;default:''"`
 	// NormalizedKey identifies the topic this item is about. A new item with
 	// the same key as an active one supersedes it, which is how contradictions
 	// ("I use MySQL" then "I moved to Postgres") resolve without an LLM in the
@@ -299,6 +308,15 @@ func NormalizeMemoryKey(key, content string) string {
 		result = string([]rune(result)[:200])
 	}
 	return result
+}
+
+// SanitizeMemoryTopic normalizes the readable subject to a single short line.
+func SanitizeMemoryTopic(topic string) string {
+	topic = SanitizeMemoryContent(topic)
+	if runes := []rune(topic); len(runes) > 80 {
+		topic = strings.TrimSpace(string(runes[:80]))
+	}
+	return topic
 }
 
 // SanitizeMemoryContent trims a statement to a single line within the length

@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS memory_items (
     -- profile | preference | fact | task
     kind VARCHAR(32) NOT NULL,
     content TEXT NOT NULL,
+    -- Readable subject the statement is about, kept verbatim because a question
+    -- often names the topic while the statement carries only the value.
+    topic VARCHAR(255) NOT NULL DEFAULT '',
     -- Normalized topic key used to detect that a new statement contradicts an
     -- existing one. Two items sharing a key are the same fact at different times.
     normalized_key VARCHAR(255) NOT NULL DEFAULT '',
