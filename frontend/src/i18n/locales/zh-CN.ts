@@ -3160,6 +3160,11 @@ export default {
     }
   },
   chat: {
+    memoryUsedCount: '本次使用了 {count} 条记忆',
+    memoryForget: '删除这条记忆',
+    memoryForgotten: '已删除这条记忆',
+    memoryForgetFailed: '删除失败',
+    memoryHint: '这些是助手在回答时看到的长期记忆，删除后不会再被使用。',
     suggestedQuestions: '你可以这样问我',
     followUpQuestions: '继续问',
     followUpQuestionsLoading: '加载推荐问题',
@@ -4550,6 +4555,72 @@ export default {
     toasts: {
       saveSuccess: '检索配置已保存',
       saveFailed: '保存配置失败: {message}'
+    }
+  },
+  memorySettings: {
+    title: '我的记忆',
+    description: '这里是助手跨会话记住的关于你的内容。你可以随时查看、修改和删除，删除后不会再被使用。',
+    workspaceDisabled: '当前空间尚未开启长期记忆，管理员开启后这里的开关才会生效。',
+    enableLabel: '为我启用长期记忆',
+    enableDescription: '关闭后助手不再读取或新增你的记忆，已有记忆会保留，重新开启即可继续使用。',
+    listTitle: '记忆列表',
+    listCount: '共 {count} 条',
+    statusActive: '生效中',
+    statusSuperseded: '已被更新',
+    statusArchived: '已归档',
+    export: '导出',
+    clear: '清空',
+    clearConfirm: '将永久删除你的全部记忆，此操作不可撤销。确定继续吗？',
+    deleteConfirm: '永久删除这条记忆？',
+    add: '添加',
+    addPlaceholder: '用一句话写下你希望助手记住的事',
+    emptyTitle: '还没有记忆',
+    emptyDescription: '在对话里说「记住：……」，或者在上面直接添加一条。',
+    kinds: {
+      profile: '个人信息',
+      preference: '偏好',
+      fact: '事实',
+      task: '在办事项'
+    },
+    origins: {
+      explicit: '你要求记住',
+      extracted: '自动提炼',
+      manual: '手动添加'
+    },
+    toasts: {
+      enabled: '已为你开启长期记忆',
+      disabled: '已关闭长期记忆',
+      added: '已添加',
+      updated: '已更新',
+      deleted: '已删除',
+      cleared: '已删除 {count} 条记忆',
+      saveFailed: '操作失败：{message}'
+    }
+  },
+  memoryWorkspaceSettings: {
+    title: '长期记忆',
+    description: '让助手跨会话记住成员说过的个人信息、偏好、事实与在办事项。',
+    introTitle: '默认关闭，需要你显式开启',
+    introDescription: '长期记忆会保留成员在对话中说过的内容，因此默认不开启。开启后每位成员的记忆彼此隔离，成员可以在「我的记忆」里随时查看、修改、删除或整体关闭。',
+    enableLabel: '在本空间启用长期记忆',
+    enableDescription: '关闭后本空间的所有会话都不会读取或写入记忆。',
+    writeModeLabel: '记忆写入方式',
+    writeModeDescription: '决定什么内容会被记住。',
+    writeModeExplicit: '仅显式记录',
+    writeModeAuto: '自动提炼',
+    writeModeExplicitHint: '只记录成员明确说「记住：……」的内容，以及在记忆页手动添加的条目，不额外调用模型。',
+    writeModeAutoHint: '在此基础上，会话结束后在后台调用一次模型，从成员自己说过的话里提炼值得长期保留的内容。',
+    extractModelLabel: '提炼模型',
+    extractModelDescription: '留空则使用该次会话所用的模型。',
+    extractDelayLabel: '挖掘延迟',
+    extractDelayDescription: '一轮对话结束后等待多久再挖掘。等一等可以让一次模型调用覆盖用户连着发的几条消息。',
+    extractMinIntervalLabel: '两次挖掘的最小间隔',
+    extractMinIntervalDescription: '同一个人两次挖掘之间至少间隔多久，用来控制成本。间隔内产生的消息不会被丢弃，会顺延到下一次挖掘一并处理。',
+    maxItemsLabel: '每人记忆上限',
+    maxItemsDescription: '超出后按重要度与使用时间归档最低的若干条，归档的记忆仍可在「我的记忆」里查看。',
+    toasts: {
+      saveSuccess: '长期记忆配置已保存',
+      saveFailed: '保存失败：{message}'
     }
   },
   chatHistorySettings: {

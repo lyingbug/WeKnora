@@ -1349,6 +1349,72 @@ export default {
       errorGeneric: 'An error occurred. Please try again.'
     }
   },
+  memorySettings: {
+    title: 'My memory',
+    description: 'What the assistant remembers about you across conversations. You can review, edit and delete anything here; deleted memories are never used again.',
+    workspaceDisabled: 'Long-term memory is off for this workspace. This switch takes effect once an admin turns it on.',
+    enableLabel: 'Use long-term memory for me',
+    enableDescription: 'When off, the assistant neither reads nor adds your memories. Existing ones are kept and resume when you turn it back on.',
+    listTitle: 'Memories',
+    listCount: '{count} total',
+    statusActive: 'Active',
+    statusSuperseded: 'Replaced',
+    statusArchived: 'Archived',
+    export: 'Export',
+    clear: 'Clear all',
+    clearConfirm: 'This permanently deletes all of your memories and cannot be undone. Continue?',
+    deleteConfirm: 'Permanently delete this memory?',
+    add: 'Add',
+    addPlaceholder: 'Write one sentence you want the assistant to remember',
+    emptyTitle: 'No memories yet',
+    emptyDescription: 'Say "remember that ..." in a conversation, or add one directly above.',
+    kinds: {
+      profile: 'About you',
+      preference: 'Preference',
+      fact: 'Fact',
+      task: 'Ongoing task'
+    },
+    origins: {
+      explicit: 'You asked',
+      extracted: 'Distilled',
+      manual: 'Added by hand'
+    },
+    toasts: {
+      enabled: 'Long-term memory enabled for you',
+      disabled: 'Long-term memory disabled',
+      added: 'Added',
+      updated: 'Updated',
+      deleted: 'Deleted',
+      cleared: 'Deleted {count} memories',
+      saveFailed: 'Operation failed: {message}'
+    }
+  },
+  memoryWorkspaceSettings: {
+    title: 'Long-term memory',
+    description: 'Let the assistant remember what members tell it — who they are, how they like to work, stable facts and what they are working on — across conversations.',
+    introTitle: 'Off by default, you have to turn it on',
+    introDescription: 'Long-term memory retains what members say in conversations, so it does not arrive enabled. Once on, each member has their own isolated memory space and can review, edit, delete or switch it off entirely under "My memory".',
+    enableLabel: 'Enable long-term memory in this workspace',
+    enableDescription: 'When off, no conversation in this workspace reads or writes memory.',
+    writeModeLabel: 'How memories are written',
+    writeModeDescription: 'Controls what gets remembered.',
+    writeModeExplicit: 'Explicit only',
+    writeModeAuto: 'Distill automatically',
+    writeModeExplicitHint: 'Only records what a member explicitly asks to remember, plus entries added by hand. No extra model call.',
+    writeModeAutoHint: 'Additionally makes one background model call after a conversation to distill what is worth keeping from what the member said.',
+    extractModelLabel: 'Distillation model',
+    extractModelDescription: 'Leave blank to use the model the conversation itself used.',
+    extractDelayLabel: 'Distillation delay',
+    extractDelayDescription: 'How long a finished turn waits before distillation runs. Waiting lets one model call cover the several messages a user usually sends in a row.',
+    extractMinIntervalLabel: 'Minimum interval between runs',
+    extractMinIntervalDescription: 'The floor between two distillation runs for one person, used to bound cost. Messages produced inside the interval are not dropped — they are carried over to the next run.',
+    maxItemsLabel: 'Memories per member',
+    maxItemsDescription: 'Beyond this, the lowest ranked memories are archived by importance and recency. Archived memories stay visible under "My memory".',
+    toasts: {
+      saveSuccess: 'Long-term memory settings saved',
+      saveFailed: 'Failed to save: {message}'
+    }
+  },
   chatHistorySettings: {
     title: 'Message Management',
     description: 'Configure chat history knowledge base to automatically index conversation messages for semantic search',
@@ -2622,6 +2688,11 @@ export default {
     }
   },
   chat: {
+    memoryUsedCount: 'Used {count} memories',
+    memoryForget: 'Delete this memory',
+    memoryForgotten: 'Memory deleted',
+    memoryForgetFailed: 'Failed to delete',
+    memoryHint: 'These are the long-term memories this answer saw. Deleting one stops it from being used again.',
     suggestedQuestions: 'You can ask me',
     followUpQuestions: 'Keep asking',
     followUpQuestionsLoading: 'Loading suggested questions',

@@ -73,6 +73,14 @@ type MessageRepository interface {
 	GetMessagesBySessionBeforeTime(
 		ctx context.Context, sessionID string, beforeTime time.Time, limit int,
 	) ([]*types.Message, error)
+	// ListMessagesBySessionAfterTime returns messages created strictly after
+	// afterTime, oldest first. Long-term memory distillation walks forward from
+	// a watermark, so it needs the oldest unprocessed messages rather than the
+	// newest ones: paging from the newest end would skip everything in between
+	// once a session outruns the page size.
+	ListMessagesBySessionAfterTime(
+		ctx context.Context, sessionID string, afterTime time.Time, limit int,
+	) ([]*types.Message, error)
 	// UpdateMessage updates a message
 	UpdateMessage(ctx context.Context, message *types.Message) error
 	// UpdateMessageImages updates only the images JSONB column for a message

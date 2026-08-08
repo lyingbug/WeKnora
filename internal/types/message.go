@@ -252,6 +252,11 @@ type Message struct {
 	// KnowledgeID links this message to a Knowledge entry in the chat history knowledge base
 	// Used for vector search indexing: when set, the message content has been indexed as a Knowledge passage
 	KnowledgeID string `json:"knowledge_id,omitempty" gorm:"type:varchar(36);index"`
+	// UsedMemories records which long-term memories were injected into this
+	// answer, so the chat UI can show them and let the user delete one on the
+	// spot. Persisted rather than only streamed so reopening a conversation
+	// still explains what the answer saw.
+	UsedMemories UsedMemories `json:"used_memories,omitempty" gorm:"type:jsonb;column:used_memories"`
 	// Message creation timestamp
 	CreatedAt time.Time `json:"created_at"`
 	// Last update timestamp
