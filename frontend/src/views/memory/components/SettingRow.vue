@@ -107,15 +107,21 @@ const { t, te } = useI18n()
 // the single entry named "memory.write.mode".
 const translationKey = computed(() => props.descriptor.key.replace(/\./g, '_'))
 
-const label = computed(() => {
-  const key = `memory.settings.keys.${translationKey.value}.label`
-  return te(key) ? t(key) : props.descriptor.key
-})
+// The same key means different things depending on whose screen it is: on a
+// personal screen "write mode" is a choice, on the workspace screen it is a
+// ceiling for everyone. Where that distinction matters, a level-specific
+// wording wins, which is what stops the two screens reading as one form shown
+// twice.
+function localised(field: 'label' | 'help'): string {
+  const scoped = `memory.settings.keys.${translationKey.value}.${field}_${props.level}`
+  if (te(scoped)) return t(scoped)
+  const shared = `memory.settings.keys.${translationKey.value}.${field}`
+  if (te(shared)) return t(shared)
+  return field === 'label' ? props.descriptor.key : ''
+}
 
-const help = computed(() => {
-  const key = `memory.settings.keys.${translationKey.value}.help`
-  return te(key) ? t(key) : ''
-})
+const label = computed(() => localised('label'))
+const help = computed(() => localised('help'))
 
 function optionLabel(option: string): string {
   const key = `memory.settings.options.${option}`

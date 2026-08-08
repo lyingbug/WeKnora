@@ -59,23 +59,31 @@
             </div>
           </div>
 
-          <div class="memory-item__actions">
-            <t-tooltip :content="page.pinned ? t('memory.list.unpin') : t('memory.list.pin')">
-              <t-button size="small" variant="text" shape="square" @click="togglePin(page)">
-                <t-icon :name="page.pinned ? 'pin-filled' : 'pin'" />
-              </t-button>
-            </t-tooltip>
-            <t-tooltip :content="t('memory.list.edit')">
-              <t-button size="small" variant="text" shape="square" @click="$emit('edit', page.slug)">
-                <t-icon name="edit" />
-              </t-button>
-            </t-tooltip>
-            <t-tooltip :content="t('memory.list.forget')">
-              <t-button size="small" variant="text" shape="square" theme="danger" @click="confirmDelete(page)">
-                <t-icon name="delete" />
-              </t-button>
-            </t-tooltip>
-          </div>
+          <!-- One menu rather than a row of small targets, which is how every
+               other card in this product exposes its actions (see AgentList and
+               the shared styles in assets/dropdown-menu.less). -->
+          <t-popup :visible="openMenuId === page.id" trigger="click" overlay-class-name="card-more-popup"
+            destroy-on-close placement="bottom-right"
+            @update:visible="(v: boolean) => { if (!v && openMenuId === page.id) openMenuId = null }">
+            <div class="memory-item__more" :class="{ 'is-open': openMenuId === page.id }"
+              @click.stop="openMenuId = openMenuId === page.id ? null : page.id">
+              <t-icon name="more" />
+            </div>
+            <template #content>
+              <div class="popup-menu">
+                <div class="popup-menu-item" @click="runAction(page, 'edit')">
+                  <t-icon class="menu-icon" name="edit" /><span>{{ t('memory.list.edit') }}</span>
+                </div>
+                <div class="popup-menu-item" @click="runAction(page, 'pin')">
+                  <t-icon class="menu-icon" :name="page.pinned ? 'pin-filled' : 'pin'" />
+                  <span>{{ page.pinned ? t('memory.list.unpin') : t('memory.list.pin') }}</span>
+                </div>
+                <div class="popup-menu-item delete" @click="runAction(page, 'delete')">
+                  <t-icon class="menu-icon" name="delete" /><span>{{ t('memory.list.forget') }}</span>
+                </div>
+              </div>
+            </template>
+          </t-popup>
         </article>
       </div>
     </t-loading>
@@ -107,6 +115,15 @@ import {
 } from '@/api/memory'
 
 const { t } = useI18n()
+
+const openMenuId = ref<string | null>(null)
+
+function runAction(page: MemoryPage, action: 'edit' | 'pin' | 'delete') {
+  openMenuId.value = null
+  if (action === 'edit') emit('edit', page.slug)
+  else if (action === 'pin') togglePin(page)
+  else confirmDelete(page)
+}
 const emit = defineEmits<{ (e: 'edit', slug: string): void; (e: 'changed'): void }>()
 
 const pages = ref<MemoryPage[]>([])
@@ -328,10 +345,31 @@ onMounted(load)
     cursor: help;
   }
 
-  &__actions {
+  /* Mirrors .more-wrap on the agent and knowledge-base cards: hidden until the
+     row is hovered, so a list of memories reads as text rather than as a wall
+     of controls. */
+  &__more {
     display: flex;
-    gap: 2px;
+    width: 28px;
+    height: 28px;
+    justify-content: center;
+    align-items: center;
+    border-radius: 8px;
+    cursor: pointer;
     flex-shrink: 0;
+    color: var(--td-text-color-secondary);
+    transition: all 0.2s ease;
+    opacity: 0;
+
+    .memory-item:hover & {
+      opacity: 0.6;
+    }
+
+    &:hover,
+    &.is-open {
+      background: var(--td-bg-color-container-hover);
+      opacity: 1 !important;
+    }
   }
 }
 </style>

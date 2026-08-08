@@ -19,6 +19,9 @@
     <div v-if="advancedAvailable" class="settings-more">
       <t-link theme="primary" hover="color" @click="showAdvanced = !showAdvanced">
         {{ showAdvanced ? t('memory.settings.hideAdvanced') : t('memory.settings.showAdvanced') }}
+        <template #suffix-icon>
+          <t-icon :name="showAdvanced ? 'chevron-up' : 'chevron-down'" />
+        </template>
       </t-link>
     </div>
   </t-loading>
