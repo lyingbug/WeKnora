@@ -180,6 +180,9 @@ func (s *sessionService) considerMemoryExtraction(
 		// The agent took part in resolving these settings, so it has to take
 		// part again when the background task re-resolves them.
 		AgentID: chatManage.MemoryAgentID,
+		// Only knowable here: the mapping from principal to session scope
+		// differs per channel, and the task has no principal.
+		SessionOwnerID: types.SessionOwnerIDFromContext(ctx),
 		// The turn's retrieval scope travels with the trigger so consolidation
 		// can resolve entity names the extractor proposed against the right
 		// wikis. Without it the candidates are collected and never used.
@@ -290,6 +293,7 @@ func (s *sessionService) considerAgentMemoryExtraction(
 		TurnIndex:        turnIndex,
 		ChatModelID:      modelID,
 		AgentID:          agentID,
+		SessionOwnerID:   types.SessionOwnerIDFromContext(ctx),
 		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
 	})
 }

@@ -527,6 +527,9 @@ type MemoryExtractPayload struct {
 	ChatModelID string `json:"chat_model_id,omitempty"`
 	// AgentID lets the worker rebuild the same settings layers the gate used.
 	AgentID string `json:"agent_id,omitempty"`
+	// SessionOwnerID is the sessions.user_id scope the request had, which is the
+	// only scope the extraction is permitted to read a transcript under.
+	SessionOwnerID string `json:"session_owner_id,omitempty"`
 }
 
 // MemoryConsolidatePayload asks the writer to fold a space's pending

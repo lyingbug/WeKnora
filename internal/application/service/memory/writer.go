@@ -37,7 +37,8 @@ type writerService struct {
 	spaces   interfaces.MemorySpaceRepository
 	pages    interfaces.MemoryPageRepository
 	notes    interfaces.MemoryNoteRepository
-	messages interfaces.MessageService
+	sessions interfaces.SessionRepository
+	messages interfaces.MessageRepository
 	models   interfaces.ModelService
 	enqueuer interfaces.TaskEnqueuer
 	settings interfaces.MemorySettingsService
@@ -58,7 +59,8 @@ func NewWriterService(
 	spaces interfaces.MemorySpaceRepository,
 	pages interfaces.MemoryPageRepository,
 	notes interfaces.MemoryNoteRepository,
-	messages interfaces.MessageService,
+	sessions interfaces.SessionRepository,
+	messages interfaces.MessageRepository,
 	models interfaces.ModelService,
 	enqueuer interfaces.TaskEnqueuer,
 	settings interfaces.MemorySettingsService,
@@ -71,6 +73,7 @@ func NewWriterService(
 		spaces:   spaces,
 		pages:    pages,
 		notes:    notes,
+		sessions: sessions,
 		messages: messages,
 		models:   models,
 		enqueuer: enqueuer,
@@ -162,6 +165,7 @@ func (w *writerService) ConsiderSession(ctx context.Context, req types.MemoryExt
 		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
 		ChatModelID:      req.ChatModelID,
 		AgentID:          req.AgentID,
+		SessionOwnerID:   req.SessionOwnerID,
 	}
 	// Stamp the conversation's traceparent so the extraction shows up under the
 	// turn that caused it instead of as an orphan trace with no context.
@@ -253,6 +257,23 @@ func (w *writerService) Extract(ctx context.Context, req types.MemoryExtractPayl
 		logger.Infof(ctx,
 			"memory: extraction no longer permitted for space %s (mode=%s), dropping the queued work",
 			spaceID, settings.WriteMode)
+		return nil
+	}
+
+	// Read the session under the scope the requester had, rather than through the
+	// owner-scoped service helper. That helper decides from the caller's
+	// principal and tenant role, and a background task has neither: for web
+	// sessions it happened to fall through, and for every channel-managed
+	// session (IM, tenant API key, embed) it refused, so extraction could never
+	// write a memory for those channels however memory.channels was configured.
+	if req.SessionOwnerID == "" {
+		logger.Warnf(ctx, "memory: extraction for session %s has no owner scope, dropping", sessionID)
+		return nil
+	}
+	if _, err := w.sessions.Get(ctx, tenantID, req.SessionOwnerID, sessionID); err != nil {
+		// Gone, or not this owner's. Either way there is nothing to extract and
+		// retrying will not change that.
+		logger.Warnf(ctx, "memory: session %s unavailable for extraction: %v", sessionID, err)
 		return nil
 	}
 

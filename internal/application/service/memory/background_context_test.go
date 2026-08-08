@@ -46,12 +46,30 @@ func (s *settingsSpy) Resolve(
 	return types.MemorySettingsResolution{Settings: settings}, nil
 }
 
-// messagesSpy stands in for the message service, which reads the workspace id
-// from the context exactly as the real repository does.
+// messagesSpy stands in for the message repository, which reads the workspace id
+// from the context exactly as the real one does.
 type messagesSpy struct {
-	interfaces.MessageService
+	interfaces.MessageRepository
 	called bool
 }
+
+// sessionsSpy answers the ownership check the extraction performs before it
+// reads a transcript, and records the scope it was asked for.
+type sessionsSpy struct {
+	interfaces.SessionRepository
+	askedOwner string
+	missing    bool
+}
+
+func (s *sessionsSpy) Get(_ context.Context, _ uint64, ownerID, id string) (*types.Session, error) {
+	s.askedOwner = ownerID
+	if s.missing {
+		return nil, errNoSession
+	}
+	return &types.Session{ID: id}, nil
+}
+
+var errNoSession = errors.New("session not found")
 
 var errNoWorkspace = errors.New("workspace id not found in context")
 
@@ -80,6 +98,7 @@ func newBackgroundFixture(userLayerMode string) (*writerService, *settingsSpy, *
 		spaces:   &spaceStub{space: space},
 		pages:    emptyPages{},
 		notes:    emptyNotes{},
+		sessions: &sessionsSpy{},
 		messages: messages,
 		settings: settings,
 	}
@@ -122,10 +141,11 @@ func TestExtractResolvesSettingsWithTheSpaceOwnersUserLayer(t *testing.T) {
 	writer, settings, messages, space := newBackgroundFixture(types.MemoryWriteModeAlwaysAuto)
 
 	err := writer.Extract(context.Background(), types.MemoryExtractPayload{
-		TenantID:  7,
-		SpaceID:   space.ID,
-		SessionID: "session-1",
-		AgentID:   "agent-9",
+		TenantID:       7,
+		SpaceID:        space.ID,
+		SessionID:      "session-1",
+		AgentID:        "agent-9",
+		SessionOwnerID: "u-wizard",
 	})
 	if err != nil {
 		t.Fatalf("Extract returned %v", err)
@@ -150,9 +170,10 @@ func TestExtractPutsTheWorkspaceBackOnTheContext(t *testing.T) {
 
 	// A bare context, which is what asynq and the decay ticker both hand over.
 	if err := writer.Extract(context.Background(), types.MemoryExtractPayload{
-		TenantID:  7,
-		SpaceID:   space.ID,
-		SessionID: "session-1",
+		TenantID:       7,
+		SpaceID:        space.ID,
+		SessionID:      "session-1",
+		SessionOwnerID: "u-wizard",
 	}); err != nil {
 		t.Fatalf("Extract returned %v", err)
 	}
@@ -167,9 +188,10 @@ func TestExtractDropsWorkWhenAutomaticWritesWereTurnedOff(t *testing.T) {
 	writer, _, messages, space := newBackgroundFixture("")
 
 	if err := writer.Extract(context.Background(), types.MemoryExtractPayload{
-		TenantID:  7,
-		SpaceID:   space.ID,
-		SessionID: "session-1",
+		TenantID:       7,
+		SpaceID:        space.ID,
+		SessionID:      "session-1",
+		SessionOwnerID: "u-wizard",
 	}); err != nil {
 		t.Fatalf("Extract returned %v", err)
 	}
@@ -192,5 +214,69 @@ func TestDecayPutsTheWorkspaceBackOnTheContext(t *testing.T) {
 	}
 	if settings.lastOpts.AgentID != "" {
 		t.Fatalf("sweep resolved with agent id %q, want none", settings.lastOpts.AgentID)
+	}
+}
+
+// Extraction reads the transcript under the scope the request had, which is what
+// makes it work for channel-managed sessions. It used to go through the
+// owner-scoped service helper, which decides from the caller's principal and
+// tenant role — a background task has neither, so every IM, tenant API-key and
+// embed session was refused and no memory could ever be written for those
+// channels, whatever memory.channels said.
+func TestExtractReadsTheTranscriptUnderTheRequestersScope(t *testing.T) {
+	writer, _, messages, space := newBackgroundFixture(types.MemoryWriteModeAlwaysAuto)
+	sessions := &sessionsSpy{}
+	writer.sessions = sessions
+
+	const channelOwner = "embed_session:visitor-42"
+	if err := writer.Extract(context.Background(), types.MemoryExtractPayload{
+		TenantID:       7,
+		SpaceID:        space.ID,
+		SessionID:      "session-embed",
+		SessionOwnerID: channelOwner,
+	}); err != nil {
+		t.Fatalf("Extract returned %v", err)
+	}
+	if sessions.askedOwner != channelOwner {
+		t.Fatalf("session read scoped to %q, want the requester's scope %q", sessions.askedOwner, channelOwner)
+	}
+	if !messages.called {
+		t.Fatal("the transcript was never read, so a channel session still cannot be extracted")
+	}
+}
+
+func TestExtractDropsWorkWhenTheSessionIsNotTheOwners(t *testing.T) {
+	writer, _, messages, space := newBackgroundFixture(types.MemoryWriteModeAlwaysAuto)
+	writer.sessions = &sessionsSpy{missing: true}
+
+	if err := writer.Extract(context.Background(), types.MemoryExtractPayload{
+		TenantID:       7,
+		SpaceID:        space.ID,
+		SessionID:      "someone-elses",
+		SessionOwnerID: "u-wizard",
+	}); err != nil {
+		t.Fatalf("Extract returned %v, want the work dropped quietly", err)
+	}
+	if messages.called {
+		t.Fatal("the transcript was read for a session the owner does not own")
+	}
+}
+
+// No scope means the trigger came from somewhere that could not establish one;
+// reading with an empty scope would match by the legacy empty-owner rule.
+func TestExtractRefusesToReadWithoutAnOwnerScope(t *testing.T) {
+	writer, _, messages, space := newBackgroundFixture(types.MemoryWriteModeAlwaysAuto)
+	sessions := &sessionsSpy{}
+	writer.sessions = sessions
+
+	if err := writer.Extract(context.Background(), types.MemoryExtractPayload{
+		TenantID:  7,
+		SpaceID:   space.ID,
+		SessionID: "session-1",
+	}); err != nil {
+		t.Fatalf("Extract returned %v", err)
+	}
+	if sessions.askedOwner != "" || messages.called {
+		t.Fatal("extraction read a session without knowing whose it was")
 	}
 }

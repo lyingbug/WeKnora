@@ -489,6 +489,11 @@ type MemoryExtractTrigger struct {
 	// AgentID is the agent that served the turn, if any. The background task
 	// re-resolves settings and needs the same layers to reach the same verdict.
 	AgentID string
+	// SessionOwnerID is the sessions.user_id scope of whoever asked. Captured
+	// here because it is only knowable inside the request: the mapping from a
+	// principal to its session scope differs per channel and, for tenant API
+	// keys, depends on the key id, none of which a background task can recover.
+	SessionOwnerID string
 }
 
 // MemoryExplicitWriteRequest stores a memory the user asked for by hand.
