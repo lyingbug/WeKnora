@@ -113,6 +113,17 @@ const (
 	MemoryGroupInsights  = "insights"
 )
 
+var memoryGroupOrder = []string{
+	MemoryGroupGeneral,
+	MemoryGroupWrite,
+	MemoryGroupRecall,
+	MemoryGroupBoost,
+	MemoryGroupAnchor,
+	MemoryGroupLifecycle,
+	MemoryGroupPrivacy,
+	MemoryGroupInsights,
+}
+
 // Setting keys. Referenced by code, the API and the UI.
 const (
 	SettingMemoryEnabled            = "memory.enabled"
@@ -508,18 +519,24 @@ var memorySettingIndex = func() map[string]MemorySettingDescriptor {
 	return m
 }()
 
-// MemorySettingDescriptors returns the catalogue, sorted by group then key, so
-// the settings UI can be rendered directly from the API response.
+// MemorySettingDescriptors returns the catalogue sorted by group (declaration order
+// within each group) so the settings UI matches the intended reading order.
 func MemorySettingDescriptors() []MemorySettingDescriptor {
 	out := make([]MemorySettingDescriptor, len(memorySettingDescriptors))
 	copy(out, memorySettingDescriptors)
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Group != out[j].Group {
-			return out[i].Group < out[j].Group
-		}
-		return out[i].Key < out[j].Key
+		return memoryGroupRank(out[i].Group) < memoryGroupRank(out[j].Group)
 	})
 	return out
+}
+
+func memoryGroupRank(group string) int {
+	for i, g := range memoryGroupOrder {
+		if g == group {
+			return i
+		}
+	}
+	return len(memoryGroupOrder)
 }
 
 // LookupMemorySetting returns the descriptor for key.

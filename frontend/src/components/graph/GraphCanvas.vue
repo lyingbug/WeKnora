@@ -5,39 +5,18 @@
     </div>
     <svg v-else ref="svgRef" class="graph-canvas__svg" @wheel.prevent="onWheel" @mousedown="onCanvasDown">
       <g :transform="`translate(${transform.x} ${transform.y}) scale(${transform.k})`">
-        <line
-          v-for="(edge, index) in renderedEdges"
-          :key="`e-${index}`"
-          class="graph-canvas__edge"
-          :class="[`is-${edge.kind}`, { 'is-dimmed': isDimmed(edge) }]"
-          :x1="edge.x1"
-          :y1="edge.y1"
-          :x2="edge.x2"
-          :y2="edge.y2"
-        />
-        <g
-          v-for="node in layoutNodes"
-          :key="node.id"
-          class="graph-canvas__node"
+        <line v-for="(edge, index) in renderedEdges" :key="`e-${index}`" class="graph-canvas__edge"
+          :class="[`is-${edge.kind}`, { 'is-dimmed': isDimmed(edge) }]" :x1="edge.x1" :y1="edge.y1" :x2="edge.x2"
+          :y2="edge.y2" />
+        <g v-for="node in layoutNodes" :key="node.id" class="graph-canvas__node"
           :class="{ 'is-dimmed': isNodeDimmed(node.id), 'is-active': node.id === activeId }"
-          :transform="`translate(${node.x} ${node.y})`"
-          @mousedown.stop="onNodeDown(node, $event)"
-          @mouseenter="hoveredId = node.id"
-          @mouseleave="hoveredId = ''"
-          @click.stop="$emit('select', node.id)"
-        >
-          <circle
-            :r="styleFor(node).radius"
-            :fill="styleFor(node).fill"
-            :stroke="styleFor(node).stroke"
-            :stroke-width="styleFor(node).strokeWidth"
-            :stroke-dasharray="styleFor(node).dashed ? '3 2' : undefined"
-          />
-          <text
-            class="graph-canvas__label"
-            :y="styleFor(node).radius + 12"
-            text-anchor="middle"
-          >{{ truncate(node.title || node.id) }}<title>{{ node.title || node.id }}</title></text>
+          :transform="`translate(${node.x} ${node.y})`" @mousedown.stop="onNodeDown(node, $event)"
+          @mouseenter="hoveredId = node.id" @mouseleave="hoveredId = ''" @click.stop="$emit('select', node.id)"
+          @dblclick.stop="$emit('center', node.id)">
+          <circle :r="styleFor(node).radius" :fill="styleFor(node).fill" :stroke="styleFor(node).stroke"
+            :stroke-width="styleFor(node).strokeWidth" :stroke-dasharray="styleFor(node).dashed ? '3 2' : undefined" />
+          <text class="graph-canvas__label" :y="styleFor(node).radius + 12" text-anchor="middle">{{ truncate(node.title
+            || node.id) }}<title>{{ node.title || node.id }}</title></text>
         </g>
       </g>
     </svg>
@@ -104,7 +83,7 @@ const props = withDefaults(
   },
 )
 
-defineEmits<{ (e: 'select', id: string): void }>()
+defineEmits<{ (e: 'select', id: string): void; (e: 'center', id: string): void }>()
 
 interface SimNode {
   id: string
@@ -178,7 +157,7 @@ function isDimmed(edge: { source: string; target: string }): boolean {
 }
 
 function truncate(text: string): string {
-  return text.length > 14 ? `${text.slice(0, 13)}…` : text
+  return text.length > 20 ? `${text.slice(0, 19)}…` : text
 }
 
 // Approximate rendered label width at 11px. CJK glyphs are full-width and latin
@@ -369,6 +348,21 @@ function resetView() {
   buildLayout()
 }
 
+/** Pan so a node sits near the viewport centre, with optional left offset for a drawer. */
+function panToNode(nodeId: string, offsetX = 0) {
+  const node = layoutNodes.value.find((n) => n.id === nodeId)
+  if (!node) return
+  const targetCx = width / 2 - offsetX
+  const targetCy = height / 2
+  transform.value = {
+    ...transform.value,
+    x: targetCx - node.x * transform.value.k,
+    y: targetCy - node.y * transform.value.k,
+  }
+}
+
+defineExpose({ panToNode, resetView })
+
 function onCanvasDown(event: MouseEvent) {
   panning = { x: event.clientX - transform.value.x, y: event.clientY - transform.value.y }
   window.addEventListener('mousemove', onMove)
@@ -506,7 +500,7 @@ watch(
   }
 
   &__label {
-    font-size: 11px;
+    font-size: 12px;
     fill: var(--td-text-color-secondary);
     pointer-events: none;
     user-select: none;

@@ -1,17 +1,21 @@
 <template>
-  <t-dialog
+  <SettingDrawer
     :visible="visible"
-    :header="slug ? t('memory.editor.editHeader') : t('memory.editor.createHeader')"
-    :confirm-btn="{ content: t('memory.editor.save'), loading: saving }"
-    :cancel-btn="t('memory.editor.cancel')"
-    width="720px"
-    @close="close"
-    @cancel="close"
+    :title="slug ? t('memory.editor.editHeader') : t('memory.editor.createHeader')"
+    icon="bookmark"
+    width="640px"
+    :min-width="520"
+    :max-width="960"
+    storage-key="setting-drawer:width:memory-editor"
+    :confirm-loading="saving"
+    @update:visible="(v: boolean) => emit('update:visible', v)"
     @confirm="save"
+    @cancel="close"
   >
     <t-loading :loading="loading" :show-overlay="false">
-      <t-form label-align="top" class="memory-editor">
-        <t-form-item :label="t('memory.editor.type')">
+      <section class="setting-drawer__section">
+        <div class="form-item">
+          <label class="form-label">{{ t('memory.editor.type') }}</label>
           <t-select v-model="form.page_type" :disabled="Boolean(slug)">
             <t-option
               v-for="type in MEMORY_TYPES"
@@ -20,67 +24,87 @@
               :label="t(`memory.types.${type}`)"
             />
           </t-select>
-          <!-- The type is fixed after creation because it is part of the slug,
-               and silently re-addressing a memory would orphan its links. -->
-          <p v-if="slug" class="memory-editor__hint">{{ t('memory.editor.typeLocked') }}</p>
-        </t-form-item>
+          <p v-if="slug" class="form-desc">{{ t('memory.editor.typeLocked') }}</p>
+        </div>
 
-        <t-form-item :label="t('memory.editor.title')">
+        <div class="form-item">
+          <label class="form-label">{{ t('memory.editor.title') }}</label>
           <t-input v-model="form.title" :placeholder="t('memory.editor.titlePlaceholder')" />
-        </t-form-item>
+        </div>
 
-        <t-form-item :label="t('memory.editor.summary')">
+        <div class="form-item">
+          <label class="form-label">{{ t('memory.editor.summary') }}</label>
           <t-input v-model="form.summary" :placeholder="t('memory.editor.summaryPlaceholder')" />
-          <p class="memory-editor__hint">{{ t('memory.editor.summaryHint') }}</p>
-        </t-form-item>
+          <p class="form-desc">{{ t('memory.editor.summaryHint') }}</p>
+        </div>
 
-        <t-form-item :label="t('memory.editor.content')">
+        <div class="form-item">
+          <label class="form-label">{{ t('memory.editor.content') }}</label>
           <t-textarea
             v-model="form.content"
             :autosize="{ minRows: 6, maxRows: 16 }"
             :placeholder="t('memory.editor.contentPlaceholder')"
           />
-          <p class="memory-editor__hint">{{ t('memory.editor.linkHint') }}</p>
-        </t-form-item>
+          <p class="form-desc">{{ t('memory.editor.linkHint') }}</p>
+        </div>
+      </section>
 
-        <!-- Structured preferences are the only memory that steers generation,
-             so they get typed controls rather than free text. -->
-        <template v-if="form.page_type === 'preference'">
-          <div class="memory-editor__preferences">
-            <t-form-item :label="t('memory.editor.language')">
-              <t-input v-model="form.structured.language" placeholder="zh / en / ja" />
-            </t-form-item>
-            <t-form-item :label="t('memory.editor.verbosity')">
-              <t-select v-model="form.structured.verbosity" clearable>
-                <t-option v-for="v in ['concise', 'balanced', 'detailed']" :key="v" :value="v"
-                  :label="t(`memory.settings.options.${v}`)" />
-              </t-select>
-            </t-form-item>
-            <t-form-item :label="t('memory.editor.format')">
-              <t-select v-model="form.structured.format" clearable>
-                <t-option v-for="v in ['prose', 'bullets', 'markdown']" :key="v" :value="v"
-                  :label="t(`memory.settings.options.${v}`)" />
-              </t-select>
-            </t-form-item>
-            <t-form-item :label="t('memory.editor.codeStyle')">
-              <t-select v-model="form.structured.code_style" clearable>
-                <t-option v-for="v in ['always', 'minimal', 'when_asked']" :key="v" :value="v"
-                  :label="t(`memory.settings.options.${v}`)" />
-              </t-select>
-            </t-form-item>
+      <section v-if="form.page_type === 'preference'" class="setting-drawer__section">
+        <h4 class="setting-drawer__section-title">{{ t('memory.editor.preferenceSection') }}</h4>
+        <div class="preference-grid">
+          <div class="form-item">
+            <label class="form-label">{{ t('memory.editor.language') }}</label>
+            <t-input v-model="form.structured.language" placeholder="zh / en / ja" />
           </div>
-        </template>
+          <div class="form-item">
+            <label class="form-label">{{ t('memory.editor.verbosity') }}</label>
+            <t-select v-model="form.structured.verbosity" clearable>
+              <t-option
+                v-for="v in ['concise', 'balanced', 'detailed']"
+                :key="v"
+                :value="v"
+                :label="t(`memory.settings.options.${v}`)"
+              />
+            </t-select>
+          </div>
+          <div class="form-item">
+            <label class="form-label">{{ t('memory.editor.format') }}</label>
+            <t-select v-model="form.structured.format" clearable>
+              <t-option
+                v-for="v in ['prose', 'bullets', 'markdown']"
+                :key="v"
+                :value="v"
+                :label="t(`memory.settings.options.${v}`)"
+              />
+            </t-select>
+          </div>
+          <div class="form-item">
+            <label class="form-label">{{ t('memory.editor.codeStyle') }}</label>
+            <t-select v-model="form.structured.code_style" clearable>
+              <t-option
+                v-for="v in ['always', 'minimal', 'when_asked']"
+                :key="v"
+                :value="v"
+                :label="t(`memory.settings.options.${v}`)"
+              />
+            </t-select>
+          </div>
+        </div>
+      </section>
 
-        <t-form-item>
+      <section class="setting-drawer__section">
+        <div class="form-item form-item--inline">
           <t-checkbox v-model="form.pinned">{{ t('memory.editor.pinned') }}</t-checkbox>
-          <span class="memory-editor__hint">{{ t('memory.editor.pinnedHint') }}</span>
-        </t-form-item>
+          <span class="form-desc form-desc--inline">{{ t('memory.editor.pinnedHint') }}</span>
+        </div>
 
-        <t-form-item v-if="revisions.length" :label="t('memory.editor.history')">
+        <div v-if="revisions.length" class="form-item">
+          <label class="form-label">{{ t('memory.editor.history') }}</label>
           <div class="memory-editor__revisions">
             <div v-for="revision in revisions" :key="revision.id" class="revision-row">
               <span class="revision-row__meta">
-                v{{ revision.version }} · {{ t(`memory.editSource.${revision.edit_source || 'pipeline'}`) }} ·
+                v{{ revision.version }} ·
+                {{ t(`memory.editSource.${revision.edit_source || 'pipeline'}`) }} ·
                 {{ formatDate(revision.edited_at) }}
               </span>
               <t-link theme="primary" size="small" hover="color" @click="revert(revision.version)">
@@ -88,10 +112,10 @@
               </t-link>
             </div>
           </div>
-        </t-form-item>
-      </t-form>
+        </div>
+      </section>
     </t-loading>
-  </t-dialog>
+  </SettingDrawer>
 </template>
 
 <script setup lang="ts">
@@ -99,6 +123,7 @@ import { reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 
+import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import {
   MEMORY_TYPES,
   createMemoryPage,
@@ -119,8 +144,6 @@ const loading = ref(false)
 const saving = ref(false)
 const revisions = ref<MemoryPageRevision[]>([])
 const version = ref(0)
-// Held so a save can send it back: the server reads an absent status as
-// "active", which would un-archive whatever is being edited.
 const status = ref('')
 
 const form = reactive<{
@@ -196,8 +219,6 @@ async function save() {
       content: form.content,
       pinned: form.pinned,
     }
-    // The server reads an absent status as "active", so editing an archived
-    // memory without saying so silently brings it back.
     if (status.value) {
       body.status = status.value
     }
@@ -213,8 +234,6 @@ async function save() {
     MessagePlugin.success(t('memory.editor.saved'))
     emit('saved')
   } catch (error: any) {
-    // A version conflict means someone (or an agent) changed the memory while
-    // this dialog was open; reloading is more useful than a generic error.
     if (error?.response?.status === 409) {
       MessagePlugin.warning(t('memory.editor.conflict'))
       load()
@@ -233,8 +252,6 @@ async function revert(targetVersion: number) {
     await load()
     emit('saved')
   } catch (error: any) {
-    // Same treatment as save: a conflict means the memory moved under us, and
-    // reloading is more useful than a generic failure.
     if (error?.response?.status === 409) {
       MessagePlugin.warning(t('memory.editor.conflict'))
       await load()
@@ -257,29 +274,52 @@ watch(
 </script>
 
 <style scoped lang="less">
-.memory-editor {
-  &__hint {
-    margin: 4px 0 0;
-    font-size: 12px;
-    color: var(--td-text-color-placeholder);
-  }
+.form-item {
+  margin-bottom: 0;
+}
 
-  &__preferences {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0 16px;
-    padding: 12px 16px;
-    background: var(--td-bg-color-secondarycontainer);
-    border-radius: 8px;
-    margin-bottom: 8px;
-  }
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--td-text-color-primary);
+  line-height: 1.4;
+}
 
-  &__revisions {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    width: 100%;
+.form-desc {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--td-text-color-placeholder);
+
+  &--inline {
+    margin: 0;
   }
+}
+
+.form-item--inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.preference-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+
+.memory-editor__revisions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  background: var(--td-bg-color-secondarycontainer);
 }
 
 .revision-row {
@@ -294,6 +334,12 @@ watch(
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+}
+
+@media (max-width: 560px) {
+  .preference-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

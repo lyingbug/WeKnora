@@ -10,40 +10,38 @@
       </div>
     </div>
 
-    <MemorySettingsPanel level="tenant" :primary-keys="primaryKeys" />
+    <t-tabs v-model="activeTab" class="policy-tabs">
+      <t-tab-panel v-for="group in policyGroups" :key="group" :value="group"
+        :label="t(`memory.settings.groups.${group}.title`)" />
+    </t-tabs>
+
+    <div class="policy-panel">
+      <MemorySettingsPanel level="tenant" :group-filter="[activeTab]" show-all :show-group-titles="false"
+        row-layout="inline" density="comfortable" panel-variant="policy" />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-/**
- * The workspace-level memory policy.
- *
- * Deliberately not the same form as personal settings, even though it is
- * generated from the same catalogue. What an administrator sets here is a
- * ceiling for everyone: members can be stricter with themselves but never more
- * permissive, so each value reads as "the most this workspace allows". Showing
- * the two screens as interchangeable copies of one form was what made it
- * impossible to tell which one was in charge.
- *
- * The primary set is therefore the policy questions — is memory available at
- * all, how far may capture go, must candidates be reviewed, what may be
- * recorded, and what happens to personal data — with the operational knobs
- * behind "more settings".
- */
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import MemorySettingsPanel from '../memory/components/MemorySettingsPanel.vue'
 
 const { t } = useI18n()
 
-const primaryKeys = [
-  'memory.enabled',
-  'memory.write.mode',
-  'memory.write.require_review',
-  'memory.write.allowed_types',
-  'memory.privacy.pii_redaction',
-  'memory.retention.days',
+const policyGroups = [
+  'general',
+  'write',
+  'recall',
+  'boost',
+  'anchor',
+  'lifecycle',
+  'privacy',
+  'insights',
 ]
+
+const activeTab = ref(policyGroups[0])
 </script>
 
 <style scoped lang="less">
@@ -52,13 +50,13 @@ const primaryKeys = [
 }
 
 .section-header {
-  margin-bottom: 4px;
+  margin-bottom: 28px;
 
   h2 {
     font-size: 20px;
     font-weight: 600;
     color: var(--td-text-color-primary);
-    margin: 0 0 8px 0;
+    margin: 0 0 8px;
   }
 
   .section-description {
@@ -77,8 +75,8 @@ const primaryKeys = [
   border-radius: 6px;
 
   &__label {
-    margin: 0 0 4px 0;
-    font-size: 12px;
+    margin: 0 0 4px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--td-text-color-placeholder);
     letter-spacing: 0.02em;
@@ -86,9 +84,43 @@ const primaryKeys = [
 
   &__text {
     margin: 0;
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.55;
     color: var(--td-text-color-secondary);
   }
+}
+
+.policy-tabs {
+  margin-bottom: 24px;
+
+  :deep(.t-tabs__nav-item) {
+    font-size: 14px;
+  }
+
+  :deep(.t-tabs__nav-item-wrapper) {
+    padding: 0 14px;
+    margin: 0;
+  }
+
+  :deep(.t-tabs__operations) {
+    display: none;
+  }
+
+  :deep(.t-tabs__nav-scroll) {
+    overflow-x: auto;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+
+  :deep(.t-tabs__content) {
+    display: none;
+  }
+}
+
+.policy-panel {
+  margin-top: 4px;
 }
 </style>

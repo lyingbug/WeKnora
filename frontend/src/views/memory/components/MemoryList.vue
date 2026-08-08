@@ -1,101 +1,62 @@
 <template>
   <div class="memory-list">
-    <div class="memory-list__filters">
-      <t-input
-        v-model="query"
-        class="memory-list__search"
-        :placeholder="t('memory.list.searchPlaceholder')"
-        clearable
-      >
+    <div class="memory-list__toolbar">
+      <t-input v-model="query" class="memory-list__search" :placeholder="t('memory.list.searchPlaceholder')" clearable
+        size="medium">
         <template #prefix-icon><t-icon name="search" /></template>
       </t-input>
 
-      <t-select
-        v-model="typeFilter"
-        class="memory-list__select"
-        :placeholder="t('memory.list.allTypes')"
-        multiple
-        clearable
-        :min-collapsed-num="2"
-      >
+      <t-select v-model="typeFilter" class="memory-list__type" :placeholder="t('memory.list.allTypes')" multiple
+        clearable size="medium" :min-collapsed-num="2">
         <t-option v-for="type in MEMORY_TYPES" :key="type" :value="type" :label="typeLabel(type)" />
       </t-select>
 
-      <t-radio-group v-model="statusFilter" variant="default-filled">
+      <t-radio-group v-model="statusFilter" variant="default-filled" size="medium" class="memory-list__status">
         <t-radio-button value="active">{{ t('memory.list.statusActive') }}</t-radio-button>
         <t-radio-button value="archived">{{ t('memory.list.statusArchived') }}</t-radio-button>
       </t-radio-group>
     </div>
 
-    <t-loading :loading="loading" :show-overlay="false">
+    <t-loading :loading="loading" size="small" class="memory-list__body">
       <div v-if="!pages.length && !loading" class="memory-list__empty">
         <t-empty :description="t('memory.list.empty')" />
       </div>
 
-      <div v-else class="memory-list__items">
-        <article
-          v-for="page in pages"
-          :key="page.id"
-          class="memory-item"
-          :class="{ 'is-archived': page.status === 'archived' }"
-        >
-          <div class="memory-item__main" @click="$emit('edit', page.slug)">
+      <ul v-else class="memory-list__rows" role="list">
+        <li v-for="page in pages" :key="page.id" class="memory-item"
+          :class="{ 'memory-item--archived': page.status === 'archived' }" role="button" tabindex="0"
+          @click="emit('edit', page.slug)" @keydown.enter="emit('edit', page.slug)">
+          <div class="memory-item__content">
             <div class="memory-item__head">
-              <t-tag size="small" variant="light" :theme="typeTheme(page.page_type)">
-                {{ typeLabel(page.page_type) }}
-              </t-tag>
+              <span class="memory-item__type">{{ typeLabel(page.page_type) }}</span>
               <h3 class="memory-item__title">{{ page.title }}</h3>
               <t-icon v-if="page.pinned" name="pin-filled" class="memory-item__pin" />
             </div>
-            <p class="memory-item__summary">{{ page.summary || firstLine(page.content) }}</p>
+
+            <p v-if="displaySummary(page)" class="memory-item__summary">{{ displaySummary(page) }}</p>
+
             <div class="memory-item__meta">
               <span>{{ t('memory.list.updated', { date: formatDate(page.updated_at) }) }}</span>
-              <span v-if="page.hit_count > 0">{{ t('memory.list.used', { count: page.hit_count }) }}</span>
-              <!-- Strength is how close a memory is to being archived, which is
-                   the one internal number a user genuinely benefits from seeing. -->
-              <span class="memory-item__strength" :title="t('memory.list.strengthHint')">
-                {{ t('memory.list.strength', { value: Math.round(page.strength * 100) }) }}
+              <span v-if="page.hit_count > 0" class="memory-item__meta-dot">
+                {{ t('memory.list.used', { count: page.hit_count }) }}
               </span>
             </div>
           </div>
 
-          <!-- One menu rather than a row of small targets, which is how every
-               other card in this product exposes its actions (see AgentList and
-               the shared styles in assets/dropdown-menu.less). -->
-          <t-popup trigger="click" overlay-class-name="card-more-popup in-settings-dialog" destroy-on-close
-            placement="bottom-right" @visible-change="(v: boolean) => (openMenuId = v ? page.id : null)">
-            <div class="memory-item__more" :class="{ 'is-open': openMenuId === page.id }">
-              <img class="memory-item__more-icon" src="@/assets/img/more.png" alt="" />
-            </div>
-            <template #content>
-              <div class="popup-menu">
-                <div class="popup-menu-item" @click="runAction(page, 'edit')">
-                  <t-icon class="menu-icon" name="edit" /><span>{{ t('memory.list.edit') }}</span>
-                </div>
-                <div class="popup-menu-item" @click="runAction(page, 'pin')">
-                  <t-icon class="menu-icon" :name="page.pinned ? 'pin-filled' : 'pin'" />
-                  <span>{{ page.pinned ? t('memory.list.unpin') : t('memory.list.pin') }}</span>
-                </div>
-                <div class="popup-menu-item delete" @click="runAction(page, 'delete')">
-                  <t-icon class="menu-icon" name="delete" /><span>{{ t('memory.list.forget') }}</span>
-                </div>
-              </div>
-            </template>
-          </t-popup>
-        </article>
-      </div>
+          <div class="memory-item__actions" @click.stop>
+            <t-dropdown :options="menuOptions(page)" placement="bottom-right" attach="body" trigger="click"
+              @click="(data: any) => runAction(page, data.value)">
+              <t-button variant="text" shape="square" size="small" class="memory-item__more">
+                <t-icon name="ellipsis" />
+              </t-button>
+            </t-dropdown>
+          </div>
+        </li>
+      </ul>
     </t-loading>
 
-    <t-pagination
-      v-if="total > pageSize"
-      v-model="currentPage"
-      class="memory-list__pagination"
-      :total="total"
-      :page-size="pageSize"
-      :show-jumper="false"
-      :show-page-size="false"
-      @current-change="load"
-    />
+    <t-pagination v-if="total > pageSize" v-model="currentPage" class="memory-list__pagination" :total="total"
+      :page-size="pageSize" :show-jumper="false" :show-page-size="false" @current-change="load" />
   </div>
 </template>
 
@@ -113,15 +74,6 @@ import {
 } from '@/api/memory'
 
 const { t } = useI18n()
-
-const openMenuId = ref<string | null>(null)
-
-function runAction(page: MemoryPage, action: 'edit' | 'pin' | 'delete') {
-  openMenuId.value = null
-  if (action === 'edit') emit('edit', page.slug)
-  else if (action === 'pin') togglePin(page)
-  else confirmDelete(page)
-}
 const emit = defineEmits<{ (e: 'edit', slug: string): void; (e: 'changed'): void }>()
 
 const pages = ref<MemoryPage[]>([])
@@ -137,30 +89,43 @@ function typeLabel(type: string): string {
   return t(`memory.types.${type}`)
 }
 
-// Colour carries meaning here rather than decoration: the memories that shape
-// answers most (who you are, how you want to be answered) read as neutral and
-// stable, while the ones that need attention (open questions) stand out.
-function typeTheme(type: string): string {
-  switch (type) {
-    case 'preference':
-    case 'profile':
-      return 'primary'
-    case 'open_question':
-      return 'warning'
-    case 'project':
-      return 'success'
-    default:
-      return 'default'
-  }
+function menuOptions(page: MemoryPage) {
+  return [
+    { content: t('memory.list.edit'), value: 'edit' },
+    {
+      content: page.pinned ? t('memory.list.unpin') : t('memory.list.pin'),
+      value: 'pin',
+    },
+    { content: t('memory.list.forget'), value: 'delete', theme: 'error' },
+  ]
+}
+
+function runAction(page: MemoryPage, action: string) {
+  if (action === 'edit') emit('edit', page.slug)
+  else if (action === 'pin') togglePin(page)
+  else if (action === 'delete') confirmDelete(page)
 }
 
 function firstLine(content: string): string {
   return (content || '').split('\n').find((line) => line.trim()) || ''
 }
 
+function displaySummary(page: MemoryPage): string {
+  const title = (page.title || '').trim()
+  const summary = (page.summary || firstLine(page.content)).trim()
+  if (!summary || summary === title) return ''
+  return summary
+}
+
 function formatDate(value: string): string {
   if (!value) return '-'
-  return new Date(value).toLocaleDateString()
+  return new Date(value).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 async function load() {
@@ -193,10 +158,6 @@ function reload() {
 
 async function togglePin(page: MemoryPage) {
   try {
-    // status has to travel with the write: the server treats an absent status
-    // as "active", so pinning from the Archived tab used to quietly bring the
-    // memory back. version has to come back from the response, or pinning and
-    // immediately unpinning the same row sends a stale one and 409s.
     const res = await updateMemoryPage(page.slug, {
       title: page.title,
       page_type: page.page_type,
@@ -236,11 +197,6 @@ function confirmDelete(page: MemoryPage) {
   })
 }
 
-// Watching the filters is both simpler and safer than per-control @change
-// handlers: TDesign fires those around the v-model write, so a handler could
-// read the previous value and filter by it.
-// Typing in the search box fired a request per keystroke. The filters are
-// discrete choices and can reload at once; the query waits for a pause.
 let searchTimer: number | null = null
 watch([typeFilter, statusFilter], reload)
 watch(query, () => {
@@ -253,79 +209,102 @@ onMounted(load)
 
 <style scoped lang="less">
 .memory-list {
+  min-height: 0;
+}
 
-  &__filters {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-bottom: 16px;
-  }
+.memory-list__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
 
-  /* The search box carries the row; the type filter is a refinement and should
-     not compete with it for width. */
-  &__search {
-    flex: 1;
-    min-width: 200px;
-    max-width: 320px;
-  }
+.memory-list__search {
+  flex: 1;
+  min-width: 200px;
+  max-width: 360px;
+}
 
-  &__select {
-    width: 180px;
-    flex-shrink: 0;
-  }
+.memory-list__type {
+  width: 168px;
+  flex-shrink: 0;
+}
 
-  &__empty {
-    padding: 64px 0;
-  }
+.memory-list__status {
+  flex-shrink: 0;
+}
 
-  &__items {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
+.memory-list__body {
+  min-height: 200px;
+}
 
-  &__pagination {
-    margin-top: 16px;
-  }
+.memory-list__empty {
+  padding: 56px 16px;
+}
+
+.memory-list__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--td-component-stroke);
 }
 
 .memory-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 10px;
-  background: var(--td-bg-color-container);
-  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 20px;
+  align-items: start;
+  padding: 18px 2px;
+  border-bottom: 1px solid var(--td-component-stroke);
+  cursor: pointer;
+  transition: background 0.15s ease;
 
   &:hover {
-    border-color: var(--td-brand-color-3, var(--td-brand-color));
-    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+    background: var(--td-bg-color-container-hover);
+
+    .memory-item__more {
+      opacity: 1;
+    }
   }
 
-  &.is-archived {
-    opacity: 0.6;
+  &:focus-visible {
+    outline: 2px solid var(--td-brand-color);
+    outline-offset: -2px;
   }
 
-  &__main {
-    flex: 1;
+  &--archived {
+    opacity: 0.76;
+  }
+
+  &__content {
     min-width: 0;
-    cursor: pointer;
   }
 
   &__head {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  &__type {
+    flex-shrink: 0;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.35;
+    color: var(--td-text-color-secondary);
+    background: var(--td-bg-color-secondarycontainer);
+    border-radius: 4px;
   }
 
   &__title {
     margin: 0;
-    font-size: 14px;
-    font-weight: 600;
+    min-width: 0;
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.4;
     color: var(--td-text-color-primary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -333,13 +312,15 @@ onMounted(load)
   }
 
   &__pin {
+    flex-shrink: 0;
     color: var(--td-warning-color);
+    font-size: 14px;
   }
 
   &__summary {
-    margin: 0 0 8px;
+    margin: 6px 0 0;
     font-size: 13px;
-    line-height: 1.6;
+    line-height: 1.55;
     color: var(--td-text-color-secondary);
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -348,47 +329,36 @@ onMounted(load)
   }
 
   &__meta {
+    margin-top: 8px;
     display: flex;
-    gap: 14px;
-    flex-wrap: wrap;
-    font-size: 12px;
-    color: var(--td-text-color-placeholder);
-  }
-
-  &__strength {
-    cursor: help;
-  }
-
-  /* Mirrors .more-wrap on the agent and knowledge-base cards: hidden until the
-     row is hovered, so a list of memories reads as text rather than as a wall
-     of controls. */
-  &__more {
-    display: flex;
-    width: 28px;
-    height: 28px;
-    justify-content: center;
     align-items: center;
-    border-radius: 8px;
-    cursor: pointer;
-    flex-shrink: 0;
-    color: var(--td-text-color-secondary);
-    transition: all 0.2s ease;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--td-text-color-placeholder);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__meta-dot::before {
+    content: '·';
+    margin-right: 10px;
+    color: var(--td-text-color-disabled);
+  }
+
+  &__actions {
+    padding-top: 2px;
+  }
+
+  &__more {
     opacity: 0;
-
-    .memory-item:hover & {
-      opacity: 0.6;
-    }
-
-    &:hover,
-    &.is-open {
-      background: var(--td-bg-color-container-hover);
-      opacity: 1 !important;
-    }
+    color: var(--td-text-color-secondary);
+    transition: opacity 0.15s ease;
   }
+}
 
-  &__more-icon {
-    width: 16px;
-    height: 16px;
-  }
+.memory-list__pagination {
+  margin-top: 16px;
+  padding-top: 4px;
 }
 </style>
