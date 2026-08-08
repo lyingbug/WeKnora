@@ -4,6 +4,19 @@ import { useI18n } from 'vue-i18n';
 import { formatFileSize, getFileIcon } from '@/utils/files';
 import { useTagChipsOverflow } from '@/composables/useTagChipsOverflow';
 import DocumentActionMenu from './DocumentActionMenu.vue';
+import MemoryStateDot from '@/components/memory/MemoryStateDot.vue';
+
+/** Per-item illumination, keyed by document id. Empty when the reader has
+ *  switched it off, or has no memory space. */
+export interface MemoryOverlayEntry {
+  state: string
+  heat: number
+  anchor_count: number
+  memory_count: number
+  relations: string[]
+  last_seen_at?: string
+}
+
 import FolderPickerMenu, { type FolderOption } from './FolderPickerMenu.vue';
 
 interface Tag {
@@ -47,6 +60,8 @@ const props = defineProps<{
    * identical on every row.
    */
   showFolderPath?: boolean;
+  /** Illumination state per document id; absent ids are simply not lit. */
+  memoryOverlay?: Record<string, MemoryOverlayEntry>;
   // Move sub-flow state
   moveMenuMode: 'normal' | 'targets' | 'confirm';
   moveTargetKbs: any[];
@@ -55,6 +70,11 @@ const props = defineProps<{
   moveMode: 'reuse_vectors' | 'reparse';
   moveSubmitting: boolean;
 }>();
+
+/** Illumination for one document, or undefined when it is not lit. */
+function litState(id: string): MemoryOverlayEntry | undefined {
+  return props.memoryOverlay?.[id]
+}
 
 const emit = defineEmits<{
   (e: 'open', item: KnowledgeItem): void;
@@ -311,6 +331,9 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
             <t-icon :name="getFileIcon(item)" />
           </span>
           <div class="row-file-text">
+            <MemoryStateDot v-if="litState(item.id)" :state="litState(item.id)!.state"
+              :anchor-count="litState(item.id)!.anchor_count"
+              :last-seen-at="litState(item.id)!.last_seen_at" class="row-memory-dot" />
             <span class="row-file-name" :title="item.file_name">{{ item.file_name }}</span>
             <button v-if="showFolderPath && item.folder_path" type="button" class="row-file-folder"
               :title="item.folder_path" @click.stop="emit('open-folder', item.folder_path)">
@@ -660,6 +683,13 @@ const handleAction = (action: 'edit' | 'reparse' | 'cancel-parse' | 'move' | 'mo
   flex-direction: column;
   gap: 2px;
 }
+
+.row-memory-dot {
+
+  margin-right: 6px;
+
+}
+
 
 .row-file-name {
   min-width: 0;

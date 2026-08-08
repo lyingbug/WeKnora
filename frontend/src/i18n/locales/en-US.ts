@@ -6033,6 +6033,11 @@ export default {
       done: 'All memories deleted',
     },
     illuminate: {
+      touched: 'Touched',
+      documentsHint: 'Illuminate: show how much you have engaged with each document',
+      interactions: '{count} interactions',
+      seenToday: 'today',
+      seenDaysAgo: '{days} days ago',
       toggle: 'Light up what I know',
       familiar: 'Familiar',
       mastered: 'Mastered',

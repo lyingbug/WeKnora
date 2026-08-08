@@ -61,6 +61,13 @@ import {
 } from './wikiStatusRefresh';
 import { listMoveTargets, moveKnowledge, getKnowledgeMoveProgress } from '@/api/knowledge-base';
 import {
+  getDocumentMemoryOverlay,
+  getDocumentMemoryCoverage,
+  getMemorySettings,
+  type MemoryOverlayEntry,
+  type MemoryCoverage,
+} from '@/api/memory';
+import {
   buildUploadFileName,
   canMoveFolderTo,
   childFolders,
@@ -657,6 +664,67 @@ const currentChildFolders = computed(() => {
 });
 // A row's folder is worth showing only when the list can span folders.
 const showDocumentFolderPath = computed(() => hasFolders.value && isFiltering.value);
+
+// ---------------------------------------------------------------------------
+// Illumination
+//
+// The same idea the wiki graph shades its nodes with, applied to a list of
+// documents: which of these has this reader actually engaged with. It is a lens
+// the reader turns on, not a permanent column, and the choice is remembered
+// because someone who wants it usually wants it every time.
+// ---------------------------------------------------------------------------
+
+const DOC_ILLUMINATE_KEY = 'weknora.kb.illuminate';
+
+const documentIlluminate = ref(localStorage.getItem(DOC_ILLUMINATE_KEY) === '1');
+const documentOverlay = ref<Record<string, MemoryOverlayEntry>>({});
+const documentCoverage = ref<MemoryCoverage | null>(null);
+// Hidden entirely when memory is off or the reader has switched illumination
+// off for themselves, rather than shown as a control that does nothing.
+const memoryIlluminateAvailable = ref(false);
+
+async function loadDocumentIllumination() {
+  if (!kbId.value || !documentIlluminate.value) {
+    documentOverlay.value = {};
+    documentCoverage.value = null;
+    return;
+  }
+  try {
+    const [overlay, coverage] = await Promise.all([
+      getDocumentMemoryOverlay(kbId.value),
+      getDocumentMemoryCoverage(kbId.value),
+    ]);
+    documentOverlay.value = overlay?.data || {};
+    documentCoverage.value = coverage?.data || null;
+  } catch {
+    // A lens that fails to load is not worth an error toast; the list is still
+    // the list.
+    documentOverlay.value = {};
+    documentCoverage.value = null;
+  }
+}
+
+function toggleDocumentIlluminate() {
+  documentIlluminate.value = !documentIlluminate.value;
+  localStorage.setItem(DOC_ILLUMINATE_KEY, documentIlluminate.value ? '1' : '0');
+  loadDocumentIllumination();
+}
+
+async function refreshMemoryIlluminateAvailability() {
+  try {
+    const res = await getMemorySettings();
+    const values = res?.data?.values || {};
+    memoryIlluminateAvailable.value = Boolean(
+      values['memory.enabled']?.value && values['memory.overlay.enabled']?.value,
+    );
+  } catch {
+    memoryIlluminateAvailable.value = false;
+  }
+  if (memoryIlluminateAvailable.value) {
+    loadDocumentIllumination();
+  }
+}
+
 const folderBreadcrumbs = computed(() => buildFolderBreadcrumbs(selectedFolderPath.value));
 
 const filterParams = computed(() => {
@@ -1258,6 +1326,7 @@ const handleOpenKnowledgeEvent = (e: Event) => {
 };
 
 onMounted(() => {
+  refreshMemoryIlluminateAvailability();
   loadKnowledgeList();
   editorResources.ensureParserEngines();
 
@@ -2514,6 +2583,31 @@ async function createNewSession(value: string): Promise<void> {
                 </div>
                 </div>
                 <div class="doc-filter-bar__trailing">
+                  <!-- Illumination: how much of this knowledge base the reader
+                       has actually engaged with. Off by default — it is a lens,
+                       not a permanent part of the list. -->
+                  <div v-if="memoryIlluminateAvailable" class="doc-illuminate">
+                    <t-tooltip :content="$t('memory.illuminate.documentsHint')" placement="top">
+                      <button type="button" class="doc-view-toggle-btn doc-illuminate-btn"
+                        :class="{ active: documentIlluminate }" :aria-pressed="documentIlluminate"
+                        @click="toggleDocumentIlluminate">
+                        <t-icon name="lightbulb" size="16px" />
+                      </button>
+                    </t-tooltip>
+                    <div v-if="documentIlluminate && documentCoverage" class="doc-illuminate-coverage"
+                      :title="$t('memory.illuminate.coverageHint')">
+                      <div class="doc-illuminate-bar">
+                        <div class="doc-illuminate-fill" :style="{ width: documentCoverage.percent + '%' }" />
+                      </div>
+                      <span class="doc-illuminate-text">
+                        {{ $t('memory.illuminate.coverage', {
+                          lit: documentCoverage.lit_pages,
+                          total: documentCoverage.total_pages,
+                          percent: documentCoverage.percent,
+                        }) }}
+                      </span>
+                    </div>
+                  </div>
                   <div class="doc-view-toggle" role="group" :aria-label="$t('knowledgeBase.viewModeToggle')">
                     <t-tooltip :content="$t('knowledgeBase.viewModeGrid')" placement="top">
                       <button type="button" class="doc-view-toggle-btn" :class="{ active: viewMode === 'grid' }"
@@ -2579,6 +2673,7 @@ async function createNewSession(value: string): Promise<void> {
                     :move-mode="moveMode"
                     :move-submitting="moveSubmitting"
                     :show-folder-path="showDocumentFolderPath"
+                    :memory-overlay="documentOverlay"
                     @open="(item: any) => openKnowledgeItem(item)"
                     @open-folder="handleFolderSelect"
                     @move-to-folder="(item: any, path: string) => moveKnowledgeIntoFolder([item.id], path)"
@@ -2604,6 +2699,7 @@ async function createNewSession(value: string): Promise<void> {
                     :move-mode="moveMode"
                     :move-submitting="moveSubmitting"
                     :show-folder-path="showDocumentFolderPath"
+                    :memory-overlay="documentOverlay"
                     @open-folder="handleFolderSelect"
                     @move-to-folder="(item: any, path: string) => moveKnowledgeIntoFolder([item.id], path)"
                     @open="(item: any) => openKnowledgeItem(item)" @toggle-row="toggleSelectRow"
@@ -3263,6 +3359,56 @@ async function createNewSession(value: string): Promise<void> {
     :deep(.t-is-focused) {
       box-shadow: none;
     }
+  }
+
+  /* Illumination sits beside the view switch and borrows its button shape, so
+     the two read as one row of lenses over the same list. */
+  .doc-illuminate {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .doc-illuminate-btn {
+    padding: 2px;
+    background: var(--td-bg-color-secondarycontainer);
+    border-radius: 6px;
+    width: 32px;
+    height: 28px;
+
+    &.active {
+      background: var(--td-brand-color-1, #e9f8ec);
+      color: var(--td-brand-color);
+      box-shadow: none;
+    }
+  }
+
+  .doc-illuminate-coverage {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .doc-illuminate-bar {
+    width: 72px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--td-bg-color-component, #e7e7e7);
+    overflow: hidden;
+  }
+
+  .doc-illuminate-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--td-brand-color-3, #08dd6e), var(--td-brand-color));
+    transition: width 0.3s ease;
+  }
+
+  .doc-illuminate-text {
+    font-size: 11px;
+    color: var(--td-text-color-secondary);
+    white-space: nowrap;
   }
 
   .doc-view-toggle {

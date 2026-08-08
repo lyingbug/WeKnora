@@ -380,6 +380,37 @@ export async function exportMemories(): Promise<Blob> {
   return response as unknown as Blob;
 }
 
+export interface MemoryOverlayEntry {
+  state: "unlit" | "touched" | "familiar" | "mastered" | "flagged";
+  heat: number;
+  anchor_count: number;
+  memory_count: number;
+  relations: string[];
+  last_seen_at?: string;
+}
+
+/** Per-document illumination for an ordinary knowledge base, keyed by document id.
+ *
+ * The wiki graph receives the same information folded into its graph response,
+ * because it is drawing nodes anyway. A document list has no such carrier.
+ */
+export function getDocumentMemoryOverlay(
+  kbID: string,
+): Promise<{ data: Record<string, MemoryOverlayEntry> }> {
+  return get(
+    `/api/v1/knowledgebase/${kbID}/memory/overlay`,
+    query({ target: "knowledge" }),
+  );
+}
+
+/** How much of a knowledge base the caller has lit up, counted in documents. */
+export function getDocumentMemoryCoverage(kbID: string): Promise<{ data: MemoryCoverage }> {
+  return get(
+    `/api/v1/knowledgebase/${kbID}/memory/coverage`,
+    query({ target: "knowledge" }),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Knowledge-base scoped
 // ---------------------------------------------------------------------------

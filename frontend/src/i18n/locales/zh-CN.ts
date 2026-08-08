@@ -6053,6 +6053,11 @@ export default {
       done: '已清空全部记忆',
     },
     illuminate: {
+      touched: '接触过',
+      documentsHint: '点亮：显示你和每篇文档打过多少交道',
+      interactions: '{count} 次交互',
+      seenToday: '今天',
+      seenDaysAgo: '{days} 天前',
       toggle: '点亮我走过的',
       familiar: '熟悉',
       mastered: '已掌握',
