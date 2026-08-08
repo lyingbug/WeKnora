@@ -73,6 +73,7 @@ func (s *sessionService) prepareMemory(
 
 	chatManage.MemorySpaceID = space.ID
 	chatManage.MemorySettings = settings
+	chatManage.MemoryAgentID = opts.AgentID
 	return settings.RecallEnabled
 }
 
@@ -176,6 +177,9 @@ func (s *sessionService) considerMemoryExtraction(
 		// Extraction falls back to the conversation's model when no dedicated
 		// one is configured, so the turn's model travels with the trigger.
 		ChatModelID: chatManage.ChatModelID,
+		// The agent took part in resolving these settings, so it has to take
+		// part again when the background task re-resolves them.
+		AgentID: chatManage.MemoryAgentID,
 		// The turn's retrieval scope travels with the trigger so consolidation
 		// can resolve entity names the extractor proposed against the right
 		// wikis. Without it the candidates are collected and never used.
@@ -272,6 +276,10 @@ func (s *sessionService) considerAgentMemoryExtraction(
 	if !ok {
 		return
 	}
+	agentID := ""
+	if req.CustomAgent != nil {
+		agentID = req.CustomAgent.ID
+	}
 	s.memoryWriter.ConsiderSession(ctx, types.MemoryExtractTrigger{
 		TenantID:         req.Session.TenantID,
 		SpaceID:          space.ID,
@@ -281,6 +289,7 @@ func (s *sessionService) considerAgentMemoryExtraction(
 		MessageID:        req.UserMessageID,
 		TurnIndex:        turnIndex,
 		ChatModelID:      modelID,
+		AgentID:          agentID,
 		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
 	})
 }

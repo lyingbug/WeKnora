@@ -486,6 +486,9 @@ type MemoryExtractTrigger struct {
 	// MessageID is the user message the trigger came from, kept so an explicit
 	// "remember this" has the same evidence trail as an extracted memory.
 	MessageID string
+	// AgentID is the agent that served the turn, if any. The background task
+	// re-resolves settings and needs the same layers to reach the same verdict.
+	AgentID string
 }
 
 // MemoryExplicitWriteRequest stores a memory the user asked for by hand.

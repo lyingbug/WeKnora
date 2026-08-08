@@ -525,6 +525,8 @@ type MemoryExtractPayload struct {
 	// ChatModelID is the model the conversation used, and the fallback when no
 	// dedicated extraction model is configured.
 	ChatModelID string `json:"chat_model_id,omitempty"`
+	// AgentID lets the worker rebuild the same settings layers the gate used.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // MemoryConsolidatePayload asks the writer to fold a space's pending
@@ -534,6 +536,8 @@ type MemoryConsolidatePayload struct {
 	TenantID         uint64   `json:"tenant_id"`
 	SpaceID          string   `json:"space_id"`
 	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty"`
+	// AgentID lets the worker rebuild the same settings layers the gate used.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // MemoryDecayPayload sweeps one space, or every space when SpaceID is empty.

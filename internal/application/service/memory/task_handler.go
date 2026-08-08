@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -52,6 +53,8 @@ func (h *TaskHandler) handleExtract(ctx context.Context, task *asynq.Task) error
 	if payload.SpaceID == "" || payload.SessionID == "" {
 		return nil
 	}
+	ctx = logger.WithRequestID(ctx, uuid.New().String())
+	ctx = logger.WithField(ctx, "memory_space", payload.SpaceID)
 	logger.Infof(ctx, "memory: extracting for space %s session %s", payload.SpaceID, payload.SessionID)
 	return h.writer.Extract(ctx, payload)
 }
@@ -64,6 +67,8 @@ func (h *TaskHandler) handleConsolidate(ctx context.Context, task *asynq.Task) e
 	if payload.SpaceID == "" {
 		return nil
 	}
+	ctx = logger.WithRequestID(ctx, uuid.New().String())
+	ctx = logger.WithField(ctx, "memory_space", payload.SpaceID)
 	return h.writer.Consolidate(ctx, payload)
 }
 

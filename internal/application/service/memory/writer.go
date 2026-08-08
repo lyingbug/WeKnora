@@ -12,6 +12,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
+	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/Tencent/WeKnora/internal/utils"
@@ -160,13 +161,18 @@ func (w *writerService) ConsiderSession(ctx context.Context, req types.MemoryExt
 	if debounce <= 0 {
 		debounce = 60 * time.Second
 	}
-	payload, err := json.Marshal(types.MemoryExtractPayload{
+	extract := types.MemoryExtractPayload{
 		TenantID:         req.TenantID,
 		SpaceID:          req.SpaceID,
 		SessionID:        req.SessionID,
 		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
 		ChatModelID:      req.ChatModelID,
-	})
+		AgentID:          req.AgentID,
+	}
+	// Stamp the conversation's traceparent so the extraction shows up under the
+	// turn that caused it instead of as an orphan trace with no context.
+	langfuse.InjectTracing(ctx, &extract)
+	payload, err := json.Marshal(extract)
 	if err != nil {
 		return
 	}
@@ -240,15 +246,19 @@ User messages from this conversation:
 // Extract runs one extraction window.
 func (w *writerService) Extract(ctx context.Context, req types.MemoryExtractPayload) error {
 	tenantID, spaceID, sessionID := req.TenantID, req.SpaceID, req.SessionID
+	ctx = taskContext(ctx, tenantID)
 	space, err := w.spaces.GetByID(ctx, tenantID, spaceID)
 	if err != nil {
 		return err
 	}
-	settings, err := w.settingsFor(ctx, tenantID, space)
+	settings, err := w.settingsFor(ctx, tenantID, space, req.AgentID)
 	if err != nil {
 		return err
 	}
 	if !settings.WritesAllowed() || !settings.AutoExtractEnabled() {
+		logger.Infof(ctx,
+			"memory: extraction no longer permitted for space %s (mode=%s), dropping the queued work",
+			spaceID, settings.WriteMode)
 		return nil
 	}
 
@@ -277,7 +287,7 @@ func (w *writerService) Extract(ctx context.Context, req types.MemoryExtractPayl
 
 	// Consolidation is a separate job so a slow merge cannot make the
 	// extraction task time out and retry the model call.
-	w.scheduleConsolidation(ctx, tenantID, spaceID, req.KnowledgeBaseIDs)
+	w.scheduleConsolidation(ctx, tenantID, spaceID, req.KnowledgeBaseIDs, req.AgentID)
 	return nil
 }
 
@@ -470,11 +480,13 @@ func trimStrings(values []string, maxItems, maxRunes int) []string {
 // ---------------------------------------------------------------------------
 
 func (w *writerService) scheduleConsolidation(
-	ctx context.Context, tenantID uint64, spaceID string, knowledgeBaseIDs []string,
+	ctx context.Context, tenantID uint64, spaceID string, knowledgeBaseIDs []string, agentID string,
 ) {
-	payload, err := json.Marshal(types.MemoryConsolidatePayload{
-		TenantID: tenantID, SpaceID: spaceID, KnowledgeBaseIDs: knowledgeBaseIDs,
-	})
+	consolidate := types.MemoryConsolidatePayload{
+		TenantID: tenantID, SpaceID: spaceID, KnowledgeBaseIDs: knowledgeBaseIDs, AgentID: agentID,
+	}
+	langfuse.InjectTracing(ctx, &consolidate)
+	payload, err := json.Marshal(consolidate)
 	if err != nil {
 		return
 	}
@@ -496,6 +508,7 @@ func (w *writerService) scheduleConsolidation(
 // because trust in this feature is built by asking first.
 func (w *writerService) Consolidate(ctx context.Context, req types.MemoryConsolidatePayload) error {
 	tenantID, spaceID := req.TenantID, req.SpaceID
+	ctx = taskContext(ctx, tenantID)
 	unlock := w.lockSpace(spaceID)
 	defer unlock()
 
@@ -503,7 +516,7 @@ func (w *writerService) Consolidate(ctx context.Context, req types.MemoryConsoli
 	if err != nil {
 		return err
 	}
-	settings, err := w.settingsFor(ctx, tenantID, space)
+	settings, err := w.settingsFor(ctx, tenantID, space, req.AgentID)
 	if err != nil {
 		return err
 	}
@@ -727,11 +740,13 @@ func (w *writerService) RememberExplicit(
 // bearing, not housekeeping. Nothing is deleted here: pages fade to archived,
 // where the user can still see and restore them.
 func (w *writerService) Decay(ctx context.Context, tenantID uint64, spaceID string) error {
+	ctx = taskContext(ctx, tenantID)
 	space, err := w.spaces.GetByID(ctx, tenantID, spaceID)
 	if err != nil {
 		return err
 	}
-	settings, err := w.settingsFor(ctx, tenantID, space)
+	// No agent governs a sweep: it ages a whole space, not one conversation.
+	settings, err := w.settingsFor(ctx, tenantID, space, "")
 	if err != nil {
 		return err
 	}
@@ -867,18 +882,53 @@ func (w *writerService) DecayAll(ctx context.Context) error {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// settingsFor resolves the settings a background task must honour.
+//
+// The layers have to match what the request that queued the work saw, or the
+// task reaches a different verdict than the gate did. A background task has no
+// caller on its context, so both narrow layers are recovered explicitly: the
+// user from the space's owner, and the agent from the id carried in the payload.
+//
+// Getting this wrong is silent. Omitting the user layer made every write mode
+// set in personal settings invisible out here, so "always automatic" queued a
+// task that then read the built-in default, decided extraction was not allowed,
+// and returned success having done nothing.
 func (w *writerService) settingsFor(
-	ctx context.Context, tenantID uint64, space *types.MemorySpace,
+	ctx context.Context, tenantID uint64, space *types.MemorySpace, agentID string,
 ) (types.MemorySettings, error) {
-	resolution, err := w.settings.Resolve(ctx, types.MemorySettingsResolveOptions{
+	opts := types.MemorySettingsResolveOptions{
 		TenantID:   tenantID,
 		SpaceID:    space.ID,
 		SpacePatch: space.Config,
-	})
+		AgentID:    agentID,
+	}
+	// Only a web user has a user record to read preferences from; API keys and
+	// IM identities own spaces too, and for them there is no user layer.
+	if space.OwnerPrincipalType == types.PrincipalWebUser {
+		opts.UserID = space.OwnerPrincipalID
+	}
+	resolution, err := w.settings.Resolve(ctx, opts)
 	if err != nil {
 		return types.MemorySettings{}, err
 	}
 	return resolution.Settings, nil
+}
+
+// taskContext restores what a request would have put on the context.
+//
+// Every tenant-scoped repository reads the workspace id from the context, so
+// without this the first such call fails with "workspace id not found" — which
+// is what extraction did the moment it got past the gate. It is applied inside
+// each writer entry point rather than in the task handler because the decay
+// sweep arrives from a ticker and never passes through a handler at all.
+func taskContext(ctx context.Context, tenantID uint64) context.Context {
+	if tenantID == 0 {
+		return ctx
+	}
+	if existing, ok := types.TenantIDFromContext(ctx); ok && existing == tenantID {
+		return ctx
+	}
+	return context.WithValue(ctx, types.TenantIDContextKey, tenantID)
 }
 
 func (w *writerService) lockSpace(spaceID string) func() {

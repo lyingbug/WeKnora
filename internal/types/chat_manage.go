@@ -132,6 +132,10 @@ type PipelineState struct {
 	// MemorySpaceID is the caller's long-term memory space for this turn.
 	// Empty when memory is off, which every memory stage treats as "skip".
 	MemorySpaceID string `json:"-"`
+	// MemoryAgentID is the agent whose overrides took part in resolving the
+	// settings above. Carried so a background task can rebuild the same layer
+	// stack; without it a write mode set on the agent is invisible out there.
+	MemoryAgentID string `json:"-"`
 	// MemorySettings are the settings resolved once at the start of the turn,
 	// so no stage has to re-derive them.
 	MemorySettings MemorySettings `json:"-"`
