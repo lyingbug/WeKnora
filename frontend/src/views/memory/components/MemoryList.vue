@@ -242,18 +242,23 @@ onMounted(load)
 
   &__filters {
     display: flex;
-    gap: 10px;
+    align-items: center;
+    gap: 8px;
     flex-wrap: wrap;
     margin-bottom: 16px;
   }
 
+  /* The search box carries the row; the type filter is a refinement and should
+     not compete with it for width. */
   &__search {
-    max-width: 280px;
+    flex: 1;
+    min-width: 200px;
+    max-width: 320px;
   }
 
   &__select {
-    min-width: 200px;
-    max-width: 280px;
+    width: 180px;
+    flex-shrink: 0;
   }
 
   &__empty {
