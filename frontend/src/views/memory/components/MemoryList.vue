@@ -62,10 +62,10 @@
           <!-- One menu rather than a row of small targets, which is how every
                other card in this product exposes its actions (see AgentList and
                the shared styles in assets/dropdown-menu.less). -->
-          <t-popup trigger="click" overlay-class-name="card-more-popup" destroy-on-close
+          <t-popup trigger="click" overlay-class-name="card-more-popup in-settings-dialog" destroy-on-close
             placement="bottom-right" @visible-change="(v: boolean) => (openMenuId = v ? page.id : null)">
-            <div class="memory-item__more" :class="{ 'is-open': openMenuId === page.id }" @click.stop>
-              <t-icon name="more" />
+            <div class="memory-item__more" :class="{ 'is-open': openMenuId === page.id }">
+              <img class="memory-item__more-icon" src="@/assets/img/more.png" alt="" />
             </div>
             <template #content>
               <div class="popup-menu">
@@ -368,6 +368,11 @@ onMounted(load)
       background: var(--td-bg-color-container-hover);
       opacity: 1 !important;
     }
+  }
+
+  &__more-icon {
+    width: 16px;
+    height: 16px;
   }
 }
 </style>

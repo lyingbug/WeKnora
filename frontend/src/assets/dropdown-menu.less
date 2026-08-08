@@ -59,6 +59,16 @@
   }
 }
 
+/* Card menus opened from inside the settings dialog.
+   The dialog overlay sits at z-index 1100, well above the 99 used for menus on
+   ordinary pages, so without this the menu opens behind the dialog and reads as
+   a button that does nothing. 3500 matches the anchored form popups below,
+   which are shown from the same dialog. */
+.card-more-popup.in-settings-dialog,
+.card-more.in-settings-dialog {
+  z-index: 3500 !important;
+}
+
 /* ============================================
    二、自定义菜单项统一样式（.popup-menu 模式）
    ============================================ */
