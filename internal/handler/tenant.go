@@ -1783,6 +1783,11 @@ func (h *TenantHandler) updateTenantMemoryConfigInternal(c *gin.Context) {
 			types.MaxMemoryExtractMinIntervalSeconds)))
 		return
 	}
+	if cfg.InterestThreshold < 0 || cfg.InterestThreshold > types.MaxMemoryInterestThreshold {
+		c.Error(errors.NewBadRequestError(fmt.Sprintf(
+			"interest_threshold must be between 1 and %d", types.MaxMemoryInterestThreshold)))
+		return
+	}
 	if len([]rune(cfg.ExtractInstructions)) > types.MaxMemoryExtractInstructionsRunes {
 		c.Error(errors.NewBadRequestError(fmt.Sprintf(
 			"extract_instructions must be at most %d characters",

@@ -37,6 +37,10 @@
         <div class="list-actions">
           <t-radio-group v-model="status" variant="default-filled" size="small" @change="reload">
             <t-radio-button value="active">{{ t('memorySettings.statusActive') }}</t-radio-button>
+            <t-radio-button value="pending">
+              {{ t('memorySettings.statusPending') }}
+              <span v-if="pendingCount > 0" class="pending-badge">{{ pendingCount }}</span>
+            </t-radio-button>
             <t-radio-button value="superseded">{{ t('memorySettings.statusSuperseded') }}</t-radio-button>
             <t-radio-button value="archived">{{ t('memorySettings.statusArchived') }}</t-radio-button>
           </t-radio-group>
@@ -79,10 +83,21 @@
 
       <t-loading :loading="loading">
         <div v-if="items.length === 0" class="empty">
-          <p class="empty-title">{{ t('memorySettings.emptyTitle') }}</p>
-          <p class="empty-desc">{{ t('memorySettings.emptyDescription') }}</p>
+          <p class="empty-title">
+            {{ status === 'pending' ? t('memorySettings.pendingEmptyTitle') : t('memorySettings.emptyTitle') }}
+          </p>
+          <p class="empty-desc">
+            {{
+              status === 'pending'
+                ? t('memorySettings.pendingEmptyDescription')
+                : t('memorySettings.emptyDescription')
+            }}
+          </p>
         </div>
-        <ul v-else class="memory-list">
+        <p v-if="status === 'pending' && items.length > 0" class="pending-hint">
+          {{ t('memorySettings.pendingHint') }}
+        </p>
+        <ul v-if="items.length > 0" class="memory-list">
           <li v-for="item in items" :key="item.id" class="memory-item">
             <div class="memory-main">
               <div class="memory-meta">
@@ -107,6 +122,20 @@
               </p>
             </div>
             <div class="memory-actions">
+              <template v-if="item.status === 'pending'">
+                <t-button
+                  size="small"
+                  theme="primary"
+                  variant="text"
+                  :disabled="!canWrite"
+                  @click="handleConfirm(item)"
+                >
+                  {{ t('memorySettings.confirmGuess') }}
+                </t-button>
+                <t-button size="small" theme="default" variant="text" @click="handleReject(item)">
+                  {{ t('memorySettings.rejectGuess') }}
+                </t-button>
+              </template>
               <t-button
                 v-if="item.status === 'active'"
                 size="small"
@@ -156,10 +185,12 @@ import { useI18n } from 'vue-i18n'
 import {
   clearMemoryItems,
   createMemoryItem,
+  confirmMemoryItem,
   deleteMemoryItem,
   exportMemoryItems,
   getMemorySettings,
   listMemoryItems,
+  rejectMemoryItem,
   updateMemoryEnabled,
   updateMemoryItem,
   type MemoryItem,
@@ -186,6 +217,7 @@ const editingContent = ref('')
 const editingImportance = ref(3)
 
 const kinds: MemoryKind[] = ['profile', 'preference', 'fact', 'task']
+const pendingCount = ref(0)
 
 // Writing requires both switches; the list itself stays readable either way so
 // a user who just turned memory off can still review and delete what is stored.
@@ -201,6 +233,8 @@ const kindTheme = (kind: MemoryKind) => {
       return 'success'
     case 'task':
       return 'warning'
+    case 'interest':
+      return 'primary'
     default:
       return 'default'
   }
@@ -244,9 +278,40 @@ const loadItems = async () => {
   }
 }
 
+// The count is loaded separately so the tab can advertise waiting inferences
+// while the user is looking at the active list.
+const loadPendingCount = async () => {
+  try {
+    const response = await listMemoryItems({ status: 'pending', limit: 1 })
+    pendingCount.value = response.total || 0
+  } catch (error: any) {
+    pendingCount.value = 0
+  }
+}
+
 const reload = async () => {
   page.value = 1
-  await loadItems()
+  await Promise.all([loadItems(), loadPendingCount()])
+}
+
+const handleConfirm = async (item: MemoryItem) => {
+  try {
+    await confirmMemoryItem(item.id)
+    MessagePlugin.success(t('memorySettings.confirmSuccess'))
+    await reload()
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('memorySettings.confirmFailed'))
+  }
+}
+
+const handleReject = async (item: MemoryItem) => {
+  try {
+    await rejectMemoryItem(item.id)
+    MessagePlugin.success(t('memorySettings.rejectSuccess'))
+    await reload()
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('memorySettings.rejectFailed'))
+  }
 }
 
 const handlePageChange = async (current: number) => {
@@ -343,11 +408,31 @@ const handleExport = async () => {
 
 onMounted(async () => {
   await loadSettings()
-  await loadItems()
+  await Promise.all([loadItems(), loadPendingCount()])
 })
 </script>
 
 <style lang="less" scoped>
+.pending-badge {
+  display: inline-block;
+  min-width: 16px;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--td-warning-color-1, #fff1e9);
+  color: var(--td-warning-color-6, #d4380d);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.pending-hint {
+  margin: 0 0 12px;
+  color: var(--td-text-color-secondary, #86909c);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .memory-settings {
   width: 100%;
 }

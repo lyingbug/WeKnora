@@ -3,8 +3,8 @@ import { get, put, post, del } from '@/utils/request'
 // Kinds mirror internal/types/memory.go. profile and preference make up the
 // block injected on every turn; fact and task are pulled in only when the
 // current question matches them.
-export type MemoryKind = 'profile' | 'preference' | 'fact' | 'task'
-export type MemoryStatus = 'active' | 'superseded' | 'archived'
+export type MemoryKind = 'profile' | 'preference' | 'fact' | 'task' | 'interest'
+export type MemoryStatus = 'active' | 'superseded' | 'archived' | 'pending'
 export type MemoryOrigin = 'explicit' | 'extracted' | 'manual'
 
 export interface MemoryItem {
@@ -48,6 +48,10 @@ export interface MemoryConfig {
   extract_min_interval_seconds: number
   /** Workspace-specific rules appended to the distillation prompt. */
   extract_instructions: string
+  /** How many conversations must touch a topic before it becomes an interest. */
+  interest_threshold: number
+  /** Whether memory may shape retrieval, not only the answer prompt. */
+  retrieval_conditioning: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -71,6 +75,16 @@ export function listMemoryItems(params: { status?: MemoryStatus; limit?: number;
   if (params.offset != null) query.set('offset', String(params.offset))
   const suffix = query.toString() ? `?${query.toString()}` : ''
   return get<{ success: boolean; data: MemoryItem[]; total: number }>(`/api/v1/memory/items${suffix}`)
+}
+
+/** Accept a memory the system inferred, so it starts being used. */
+export function confirmMemoryItem(id: string) {
+  return post<{ success: boolean; data: MemoryItem }>(`/api/v1/memory/items/${id}/confirm`, {})
+}
+
+/** Decline an inference. The refusal is remembered, so it is not re-proposed. */
+export function rejectMemoryItem(id: string) {
+  return post<{ success: boolean }>(`/api/v1/memory/items/${id}/reject`, {})
 }
 
 export function createMemoryItem(payload: { kind: MemoryKind; content: string; importance?: number }) {

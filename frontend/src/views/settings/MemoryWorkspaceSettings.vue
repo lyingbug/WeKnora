@@ -102,6 +102,37 @@
         </div>
       </div>
 
+      <div v-if="config.enabled" class="setting-row">
+        <div class="setting-info">
+          <label>{{ t('memoryWorkspaceSettings.conditioningLabel') }}</label>
+          <p class="desc">{{ t('memoryWorkspaceSettings.conditioningDescription') }}</p>
+        </div>
+        <div class="setting-control">
+          <t-switch
+            v-model="config.retrieval_conditioning"
+            :disabled="!canEdit"
+            @change="debouncedSave"
+          />
+        </div>
+      </div>
+
+      <div v-if="config.enabled && config.write_mode === 'auto'" class="setting-row">
+        <div class="setting-info">
+          <label>{{ t('memoryWorkspaceSettings.interestThresholdLabel') }}</label>
+          <p class="desc">{{ t('memoryWorkspaceSettings.interestThresholdDescription') }}</p>
+        </div>
+        <div class="setting-control">
+          <t-input-number
+            v-model="config.interest_threshold"
+            :min="1"
+            :max="20"
+            :step="1"
+            :disabled="!canEdit"
+            @change="debouncedSave"
+          />
+        </div>
+      </div>
+
       <div v-if="config.enabled && config.write_mode === 'auto'" class="setting-row instructions-row">
         <div class="setting-info">
           <label>{{ t('memoryWorkspaceSettings.instructionsLabel') }}</label>
@@ -158,6 +189,8 @@ const config = reactive<MemoryConfig>({
   extract_delay_seconds: 90,
   extract_min_interval_seconds: 300,
   extract_instructions: '',
+  interest_threshold: 3,
+  retrieval_conditioning: true,
 })
 const isInitializing = ref(true)
 
@@ -174,6 +207,8 @@ const loadConfig = async () => {
       config.extract_delay_seconds = response.data.extract_delay_seconds || 90
       config.extract_min_interval_seconds = response.data.extract_min_interval_seconds || 300
       config.extract_instructions = response.data.extract_instructions || ''
+      config.interest_threshold = response.data.interest_threshold || 3
+      config.retrieval_conditioning = response.data.retrieval_conditioning !== false
     }
   } catch (error: any) {
     console.error('Failed to load memory config:', error)
