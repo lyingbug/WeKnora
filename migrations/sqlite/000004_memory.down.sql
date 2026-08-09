@@ -1,3 +1,7 @@
+DROP INDEX IF EXISTS idx_mem_affinity_scope;
+DROP TABLE IF EXISTS memory_doc_affinity;
+DROP INDEX IF EXISTS idx_mem_topic_scope;
+DROP TABLE IF EXISTS memory_topic_stats;
 DROP INDEX IF EXISTS idx_memory_items_key;
 DROP INDEX IF EXISTS idx_memory_items_scope;
 DROP TABLE IF EXISTS memory_items;

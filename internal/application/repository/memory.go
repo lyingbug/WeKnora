@@ -520,6 +520,176 @@ func (r *memoryRepository) ExpireOverdue(
 	return result.RowsAffected, result.Error
 }
 
+func (r *memoryRepository) SetItemStatus(
+	ctx context.Context, scope interfaces.MemoryScope, id, status string,
+) error {
+	return r.scoped(ctx, scope).
+		Model(&types.MemoryItem{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{"status": status, "updated_at": time.Now()}).Error
+}
+
+// BumpTopic counts one more sighting. The insert-then-increment shape keeps two
+// concurrent turns from both deciding the topic is new.
+func (r *memoryRepository) BumpTopic(
+	ctx context.Context, scope interfaces.MemoryScope, topic, normalizedKey string,
+) (*types.MemoryTopicStat, error) {
+	if normalizedKey == "" {
+		return nil, nil
+	}
+	now := time.Now()
+	stat := &types.MemoryTopicStat{
+		ID:            uuid.New().String(),
+		TenantID:      scope.TenantID,
+		SubjectID:     scope.SubjectID,
+		NormalizedKey: normalizedKey,
+		Topic:         topic,
+		Hits:          0,
+		LastSeenAt:    now,
+	}
+	err := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "tenant_id"}, {Name: "subject_id"}, {Name: "normalized_key"},
+			},
+			DoNothing: true,
+		}).
+		Create(stat).Error
+	if err != nil {
+		return nil, err
+	}
+	err = r.scoped(ctx, scope).
+		Model(&types.MemoryTopicStat{}).
+		Where("normalized_key = ?", normalizedKey).
+		Updates(map[string]interface{}{
+			"hits":         gorm.Expr("hits + 1"),
+			"last_seen_at": now,
+			"updated_at":   now,
+		}).Error
+	if err != nil {
+		return nil, err
+	}
+	var updated types.MemoryTopicStat
+	if err := r.scoped(ctx, scope).
+		Where("normalized_key = ?", normalizedKey).
+		First(&updated).Error; err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+func (r *memoryRepository) MarkTopicPromoted(
+	ctx context.Context, scope interfaces.MemoryScope, normalizedKey string,
+) error {
+	now := time.Now()
+	return r.scoped(ctx, scope).
+		Model(&types.MemoryTopicStat{}).
+		Where("normalized_key = ?", normalizedKey).
+		Updates(map[string]interface{}{"promoted_at": now, "updated_at": now}).Error
+}
+
+func (r *memoryRepository) TopTopics(
+	ctx context.Context, scope interfaces.MemoryScope, limit int,
+) ([]*types.MemoryTopicStat, error) {
+	var stats []*types.MemoryTopicStat
+	query := r.scoped(ctx, scope).
+		Model(&types.MemoryTopicStat{}).
+		Order("hits DESC, last_seen_at DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Find(&stats).Error; err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
+func (r *memoryRepository) BumpDocAffinity(
+	ctx context.Context, scope interfaces.MemoryScope, docs []types.MemoryDocAffinity,
+) error {
+	now := time.Now()
+	for _, doc := range docs {
+		if doc.KnowledgeID == "" {
+			continue
+		}
+		row := &types.MemoryDocAffinity{
+			ID:              uuid.New().String(),
+			TenantID:        scope.TenantID,
+			SubjectID:       scope.SubjectID,
+			KnowledgeID:     doc.KnowledgeID,
+			KnowledgeBaseID: doc.KnowledgeBaseID,
+			Title:           doc.Title,
+			Hits:            0,
+			LastUsedAt:      now,
+		}
+		if err := r.db.WithContext(ctx).
+			Clauses(clause.OnConflict{
+				Columns: []clause.Column{
+					{Name: "tenant_id"}, {Name: "subject_id"}, {Name: "knowledge_id"},
+				},
+				DoNothing: true,
+			}).
+			Create(row).Error; err != nil {
+			return err
+		}
+		updates := map[string]interface{}{
+			"hits":         gorm.Expr("hits + 1"),
+			"last_used_at": now,
+			"updated_at":   now,
+		}
+		if doc.Title != "" {
+			updates["title"] = doc.Title
+		}
+		if doc.KnowledgeBaseID != "" {
+			updates["knowledge_base_id"] = doc.KnowledgeBaseID
+		}
+		if err := r.scoped(ctx, scope).
+			Model(&types.MemoryDocAffinity{}).
+			Where("knowledge_id = ?", doc.KnowledgeID).
+			Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *memoryRepository) DocAffinity(
+	ctx context.Context, scope interfaces.MemoryScope, knowledgeIDs []string,
+) (map[string]int, error) {
+	if len(knowledgeIDs) == 0 {
+		return nil, nil
+	}
+	var rows []*types.MemoryDocAffinity
+	err := r.scoped(ctx, scope).
+		Model(&types.MemoryDocAffinity{}).
+		Where("knowledge_id IN ?", knowledgeIDs).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	affinity := make(map[string]int, len(rows))
+	for _, row := range rows {
+		affinity[row.KnowledgeID] = row.Hits
+	}
+	return affinity, nil
+}
+
+func (r *memoryRepository) TopDocAffinity(
+	ctx context.Context, scope interfaces.MemoryScope, limit int,
+) ([]*types.MemoryDocAffinity, error) {
+	var rows []*types.MemoryDocAffinity
+	query := r.scoped(ctx, scope).
+		Model(&types.MemoryDocAffinity{}).
+		Order("hits DESC, last_used_at DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 func (r *memoryRepository) CountActive(
 	ctx context.Context, scope interfaces.MemoryScope,
 ) (int64, error) {

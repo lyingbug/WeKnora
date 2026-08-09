@@ -304,7 +304,7 @@ func (s *Service) write(
 		NormalizedKey:   normalizedKey,
 		Importance:      types.ClampMemoryImportance(item.Importance),
 		Origin:          item.Origin,
-		Status:          types.MemoryStatusActive,
+		Status:          statusForWrite(item),
 		SourceSessionID: item.SourceSessionID,
 		SourceMessageID: item.SourceMessageID,
 		ValidFrom:       time.Now(),
@@ -364,6 +364,21 @@ func (s *Service) findContainedDuplicate(
 		}
 	}
 	return nil, false, nil
+}
+
+// statusForWrite decides whether a memory takes effect immediately or waits
+// for the user.
+//
+// Something the user said takes effect at once. Something the system guessed
+// about them — their role, their domain, inferred from the questions they ask —
+// is proposed instead. Inference is where the value is and also where the harm
+// is: a wrong guess asserted silently is how a memory feature loses trust for
+// good, and unlike ChatGPT's background layer this one stays auditable.
+func statusForWrite(item types.MemoryItem) string {
+	if item.Inferred && item.Origin != types.MemoryOriginExplicit && item.Origin != types.MemoryOriginManual {
+		return types.MemoryStatusPending
+	}
+	return types.MemoryStatusActive
 }
 
 // enforceCapacity archives the lowest ranked items once the subject exceeds
@@ -569,4 +584,216 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
 		return err
 	}
 	return s.repo.UpdateSubjectEnabled(ctx, scope, enabled)
+}
+
+// ---------------------------------------------------------------------------
+// Retrieval conditioning
+// ---------------------------------------------------------------------------
+
+// retrievalBackgroundRuneBudget bounds what reaches the rewriter. The rewrite
+// prompt is small and latency-sensitive; a paragraph of background would both
+// slow it down and drown the actual question.
+const retrievalBackgroundRuneBudget = 240
+
+// RetrievalContextFor returns what memory contributes to retrieval.
+//
+// Like Recall this makes no model call: it is two indexed reads plus string
+// assembly, because it runs before the first token of every retrieval turn.
+func (s *Service) RetrievalContextFor(ctx context.Context) interfaces.RetrievalContext {
+	scope, cfg, ok := s.enabledScope(ctx)
+	if !ok || !cfg.RetrievalConditioningEnabled() {
+		return interfaces.RetrievalContext{}
+	}
+
+	items, err := s.repo.ListActiveByKinds(ctx, scope,
+		[]string{types.MemoryKindProfile, types.MemoryKindInterest}, 30)
+	if err != nil {
+		logger.Warnf(ctx, "memory: load retrieval context failed: %v", err)
+		return interfaces.RetrievalContext{}
+	}
+
+	var (
+		background []string
+		interests  []string
+		used       []*types.MemoryItem
+		budget     int
+	)
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		line := types.SanitizeMemoryContent(item.Content)
+		if line == "" {
+			continue
+		}
+		cost := len([]rune(line)) + 2
+		if budget+cost > retrievalBackgroundRuneBudget {
+			break
+		}
+		budget += cost
+		used = append(used, item)
+		if item.Kind == types.MemoryKindInterest {
+			interests = append(interests, line)
+			continue
+		}
+		background = append(background, line)
+	}
+
+	documents := s.topDocumentTitles(ctx, scope)
+
+	return interfaces.RetrievalContext{
+		Background: strings.Join(background, "；"),
+		Interests:  interests,
+		Documents:  documents,
+		Items:      used,
+	}
+}
+
+// topDocumentTitles gives the rewriter the vocabulary this person's answers
+// usually come from. Titles are used rather than ids because the rewriter's job
+// is to produce better search text, not to address documents.
+func (s *Service) topDocumentTitles(ctx context.Context, scope interfaces.MemoryScope) []string {
+	rows, err := s.repo.TopDocAffinity(ctx, scope, 5)
+	if err != nil {
+		logger.Warnf(ctx, "memory: load document affinity failed: %v", err)
+		return nil
+	}
+	titles := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row == nil || strings.TrimSpace(row.Title) == "" {
+			continue
+		}
+		// One sighting is not a habit.
+		if row.Hits < 2 {
+			continue
+		}
+		titles = append(titles, row.Title)
+	}
+	return titles
+}
+
+// DocumentAffinity scores documents by how much this person has relied on them.
+func (s *Service) DocumentAffinity(ctx context.Context, knowledgeIDs []string) map[string]int {
+	scope, cfg, ok := s.enabledScope(ctx)
+	if !ok || !cfg.RetrievalConditioningEnabled() || len(knowledgeIDs) == 0 {
+		return nil
+	}
+	affinity, err := s.repo.DocAffinity(ctx, scope, knowledgeIDs)
+	if err != nil {
+		logger.Warnf(ctx, "memory: read document affinity failed: %v", err)
+		return nil
+	}
+	return affinity
+}
+
+// RecordAnswerSources notes which documents an answer drew on.
+//
+// The references attached to an answer are a weaker signal than an explicit
+// thumbs-up, but they are the only one available without asking the user
+// anything, and they are what makes the reranker able to prefer the material
+// this person keeps coming back to.
+func (s *Service) RecordAnswerSources(ctx context.Context, refs []types.MemoryDocAffinity) {
+	if len(refs) == 0 {
+		return
+	}
+	scope, cfg, ok := s.enabledScope(ctx)
+	if !ok || !cfg.RetrievalConditioningEnabled() {
+		return
+	}
+	if _, err := s.repo.EnsureSubject(ctx, scope); err != nil {
+		logger.Warnf(ctx, "memory: ensure subject for affinity failed: %v", err)
+		return
+	}
+	if err := s.repo.BumpDocAffinity(ctx, scope, refs); err != nil {
+		logger.Warnf(ctx, "memory: record answer sources failed: %v", err)
+	}
+}
+
+// ObserveQuestionTopics counts what a person asked about and promotes a subject
+// into memory once it recurs.
+//
+// This is the answer to "a knowledge-base question is not about the user, so it
+// produces nothing". A single question really is noise — recording it would
+// fill the profile with every passing curiosity. But the same subject across
+// several conversations says something durable about the person, and counting
+// first is how MemoryOS separates the two without a rule that throws away every
+// question. Returns the interests promoted by this call.
+func (s *Service) ObserveQuestionTopics(ctx context.Context, topics []string) []string {
+	if len(topics) == 0 {
+		return nil
+	}
+	scope, cfg, ok := s.enabledScope(ctx)
+	if !ok || !cfg.AutoExtractEnabled() {
+		return nil
+	}
+	if _, err := s.repo.EnsureSubject(ctx, scope); err != nil {
+		logger.Warnf(ctx, "memory: ensure subject for topics failed: %v", err)
+		return nil
+	}
+
+	threshold := cfg.EffectiveInterestThreshold()
+	var promoted []string
+	for _, topic := range topics {
+		topic = types.SanitizeMemoryTopic(topic)
+		if topic == "" {
+			continue
+		}
+		key := types.NormalizeMemoryKey(topic, topic)
+		stat, err := s.repo.BumpTopic(ctx, scope, topic, key)
+		if err != nil {
+			logger.Warnf(ctx, "memory: count topic failed: %v", err)
+			continue
+		}
+		if stat == nil || stat.PromotedAt != nil || stat.Hits < threshold {
+			continue
+		}
+		if _, err := s.write(ctx, scope, cfg, types.MemoryItem{
+			Kind:       types.MemoryKindInterest,
+			Topic:      topic,
+			Content:    topic,
+			Importance: 3,
+			Origin:     types.MemoryOriginExtracted,
+		}); err != nil {
+			if !errors.Is(err, ErrPreviouslyForgotten) && !errors.Is(err, ErrSensitiveContent) {
+				logger.Warnf(ctx, "memory: promote interest failed: %v", err)
+			}
+			// Mark it promoted anyway: a topic the user has forgotten once
+			// should not re-propose itself on every subsequent question.
+		}
+		if err := s.repo.MarkTopicPromoted(ctx, scope, key); err != nil {
+			logger.Warnf(ctx, "memory: mark topic promoted failed: %v", err)
+		}
+		promoted = append(promoted, topic)
+	}
+	if len(promoted) > 0 {
+		logger.Infof(ctx, "memory: promoted %d recurring topics into interests", len(promoted))
+	}
+	return promoted
+}
+
+// ConfirmItem accepts something the system inferred, moving it out of the
+// pending inbox and into use.
+func (s *Service) ConfirmItem(ctx context.Context, id string) (*types.MemoryItem, error) {
+	scope, err := ResolveScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := s.repo.GetItem(ctx, scope, id)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, ErrItemNotFound
+	}
+	if err := s.repo.SetItemStatus(ctx, scope, id, types.MemoryStatusActive); err != nil {
+		return nil, err
+	}
+	s.rebuildBlock(ctx, scope)
+	return s.repo.GetItem(ctx, scope, id)
+}
+
+// RejectItem declines an inference. It deletes rather than archives, so the
+// tombstone stops the same guess from being proposed again next week.
+func (s *Service) RejectItem(ctx context.Context, id string) error {
+	return s.DeleteItem(ctx, id)
 }

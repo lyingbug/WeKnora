@@ -92,6 +92,24 @@ type MemoryRepository interface {
 	// ExpireOverdue archives items whose expires_at has passed and returns how
 	// many were archived.
 	ExpireOverdue(ctx context.Context, scope MemoryScope) (int64, error)
+	// SetItemStatus moves an item between statuses, used to confirm or reject
+	// something the system inferred.
+	SetItemStatus(ctx context.Context, scope MemoryScope, id, status string) error
+
+	// BumpTopic records one more sighting of a topic and returns the running
+	// total, so a caller can decide whether it has recurred enough to promote.
+	BumpTopic(ctx context.Context, scope MemoryScope, topic, normalizedKey string) (*types.MemoryTopicStat, error)
+	// MarkTopicPromoted stops a topic from being promoted again.
+	MarkTopicPromoted(ctx context.Context, scope MemoryScope, normalizedKey string) error
+	// TopTopics returns the most-asked topics, newest activity first.
+	TopTopics(ctx context.Context, scope MemoryScope, limit int) ([]*types.MemoryTopicStat, error)
+
+	// BumpDocAffinity records that an answer for this person drew on a document.
+	BumpDocAffinity(ctx context.Context, scope MemoryScope, docs []types.MemoryDocAffinity) error
+	// DocAffinity returns this person's affinity for the given documents.
+	DocAffinity(ctx context.Context, scope MemoryScope, knowledgeIDs []string) (map[string]int, error)
+	// TopDocAffinity returns the documents this person relies on most.
+	TopDocAffinity(ctx context.Context, scope MemoryScope, limit int) ([]*types.MemoryDocAffinity, error)
 	// ArchiveLowestRanked archives active items beyond the capacity cap and
 	// returns how many were archived.
 	ArchiveLowestRanked(ctx context.Context, scope MemoryScope, keep int) (int64, error)
@@ -109,12 +127,49 @@ type MemoryRecall struct {
 	Items []*types.MemoryItem
 }
 
+// RetrievalContext is what memory contributes to retrieval rather than to the
+// answer prompt: who this person is, what they keep asking about, and which
+// documents they rely on.
+//
+// This is the part of memory that earns its keep in a knowledge-base product.
+// The same question means different things to different people — "how do I tune
+// the segmentation" from someone working on medical imaging should not retrieve
+// the same passages as it would from someone working on autonomous driving —
+// and that difference has to be applied before retrieval, not after.
+type RetrievalContext struct {
+	// Background is a compact description of the person, for query rewriting.
+	Background string
+	// Interests are the topics they keep returning to.
+	Interests []string
+	// Documents are titles they rely on, as vocabulary for the rewriter.
+	Documents []string
+	// Items are the memories behind the above, so the UI can show what
+	// influenced retrieval instead of it happening invisibly.
+	Items []*types.MemoryItem
+}
+
+func (c RetrievalContext) Empty() bool {
+	return c.Background == "" && len(c.Interests) == 0 && len(c.Documents) == 0
+}
+
 // MemoryService is the read/write API for long-term memory.
 type MemoryService interface {
 	// Recall assembles the memory to inject for one turn. It performs no LLM
 	// calls and returns an empty recall (never an error) whenever memory is
 	// disabled at any level, so callers can use it unconditionally.
 	Recall(ctx context.Context, query string) MemoryRecall
+	// RetrievalContextFor returns what memory contributes to retrieval. Like
+	// Recall it makes no model call and degrades to an empty value.
+	RetrievalContextFor(ctx context.Context) RetrievalContext
+	// DocumentAffinity scores the given documents by how much this person has
+	// relied on them before. Absent documents simply have no entry.
+	DocumentAffinity(ctx context.Context, knowledgeIDs []string) map[string]int
+	// RecordAnswerSources notes which documents an answer drew on, which is the
+	// only per-person retrieval signal available without asking anything.
+	RecordAnswerSources(ctx context.Context, refs []types.MemoryDocAffinity)
+	// ObserveQuestionTopics counts what a person asked about so a recurring
+	// subject can become an interest. Returns any newly promoted interests.
+	ObserveQuestionTopics(ctx context.Context, topics []string) []string
 	// Remember stores a statement the user explicitly asked to keep.
 	Remember(ctx context.Context, item types.MemoryItem) (*types.MemoryItem, error)
 	// ScheduleExtraction debounces and enqueues background distillation for a

@@ -63,5 +63,6 @@ func runEvalExtraction(
 	if response == nil {
 		return nil, errors.New("empty response")
 	}
-	return parseExtractionResponse(response.Content)
+	parsed, err := parseExtractionResponse(response.Content)
+	return parsed.Memories, err
 }

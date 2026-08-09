@@ -22,6 +22,12 @@ const (
 	MemoryKindPreference = "preference"
 	MemoryKindFact       = "fact"
 	MemoryKindTask       = "task"
+	// MemoryKindInterest is what this person keeps asking about. It is derived
+	// from recurrence rather than from a single statement, and it exists to
+	// condition retrieval rather than to be quoted back at the user: knowing
+	// someone works on medical imaging is what turns "how do I tune the
+	// segmentation" into a query that finds the right documents.
+	MemoryKindInterest = "interest"
 )
 
 // Memory item origins.
@@ -37,6 +43,12 @@ const (
 	MemoryStatusActive     = "active"
 	MemoryStatusSuperseded = "superseded"
 	MemoryStatusArchived   = "archived"
+	// MemoryStatusPending is a memory the system inferred rather than was told.
+	// It is visible in the memory manager and waits for the user to confirm it;
+	// it is never injected into a prompt. Guessing someone's role from the
+	// questions they ask is valuable and often right, but asserting a wrong
+	// guess silently is how a memory feature loses trust for good.
+	MemoryStatusPending = "pending"
 )
 
 // Write modes for MemoryConfig.
@@ -75,6 +87,7 @@ var MemoryKinds = []string{
 	MemoryKindPreference,
 	MemoryKindFact,
 	MemoryKindTask,
+	MemoryKindInterest,
 }
 
 // IsResidentMemoryKind reports whether items of this kind belong in the
@@ -253,8 +266,11 @@ type MemoryItem struct {
 	SupersededBy string     `json:"superseded_by"      gorm:"column:superseded_by;type:varchar(36)"`
 	LastUsedAt   *time.Time `json:"last_used_at"       gorm:"column:last_used_at"`
 	UseCount     int        `json:"use_count"          gorm:"column:use_count;not null;default:0"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	// Inferred marks a memory the system deduced rather than was told. It is
+	// runtime-only: the durable record of that decision is the pending status.
+	Inferred  bool      `json:"-" gorm:"-"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (MemoryItem) TableName() string { return "memory_items" }
@@ -288,6 +304,41 @@ type MemoryConfig struct {
 	// distillation prompt, for policies the product cannot guess ("never record
 	// customer names", "always note the environment a question is about").
 	ExtractInstructions string `json:"extract_instructions"`
+	// InterestThreshold is how many separate conversations must touch a topic
+	// before it becomes a stored interest. 0 means the default. Setting it to 1
+	// records every topic on first sight, which is usually too noisy.
+	InterestThreshold int `json:"interest_threshold"`
+	// RetrievalConditioning lets memory shape retrieval — query rewriting and
+	// per-document ranking — rather than only being appended to the answer
+	// prompt. This is where memory earns its keep in a knowledge-base product.
+	RetrievalConditioning *bool `json:"retrieval_conditioning"`
+}
+
+// Interest promotion bounds.
+const (
+	DefaultMemoryInterestThreshold = 3
+	MaxMemoryInterestThreshold     = 20
+)
+
+// RetrievalConditioningEnabled reports whether memory may shape retrieval.
+// Nil means on: a memory feature that cannot improve retrieval is most of the
+// value left on the table in a knowledge-base product.
+func (c *MemoryConfig) RetrievalConditioningEnabled() bool {
+	if c == nil || !c.Enabled {
+		return false
+	}
+	return c.RetrievalConditioning == nil || *c.RetrievalConditioning
+}
+
+// EffectiveInterestThreshold returns the promotion threshold for a nil config.
+func (c *MemoryConfig) EffectiveInterestThreshold() int {
+	if c == nil || c.InterestThreshold <= 0 {
+		return DefaultMemoryInterestThreshold
+	}
+	if c.InterestThreshold > MaxMemoryInterestThreshold {
+		return MaxMemoryInterestThreshold
+	}
+	return c.InterestThreshold
 }
 
 // MaxMemoryExtractInstructionsRunes bounds the custom prompt so one workspace
@@ -338,6 +389,12 @@ func (c *MemoryConfig) Normalize() {
 		c.ExtractMinIntervalSeconds, DefaultMemoryExtractMinIntervalSeconds,
 		0, MaxMemoryExtractMinIntervalSeconds,
 	)
+	if c.InterestThreshold <= 0 {
+		c.InterestThreshold = DefaultMemoryInterestThreshold
+	}
+	if c.InterestThreshold > MaxMemoryInterestThreshold {
+		c.InterestThreshold = MaxMemoryInterestThreshold
+	}
 	c.ExtractInstructions = strings.TrimSpace(c.ExtractInstructions)
 	if runes := []rune(c.ExtractInstructions); len(runes) > MaxMemoryExtractInstructionsRunes {
 		c.ExtractInstructions = strings.TrimSpace(string(runes[:MaxMemoryExtractInstructionsRunes]))
@@ -541,6 +598,50 @@ func MemoryFingerprint(content string) string {
 	sum := sha256.Sum256([]byte(normalized))
 	return hex.EncodeToString(sum[:])
 }
+
+// MemoryTopicStat counts how often one person has asked about a topic.
+//
+// A single question is noise; the same subject across several conversations is
+// a signal. Counting first and promoting at a threshold is how MemoryOS keeps
+// interest tracking from filling a profile with every passing question, and it
+// is the reason a knowledge-base question can produce memory at all without
+// producing a memory every time.
+type MemoryTopicStat struct {
+	ID            string     `json:"id"         gorm:"primaryKey;type:varchar(36)"`
+	TenantID      uint64     `json:"tenant_id"  gorm:"not null;uniqueIndex:idx_mem_topic_scope,priority:1"`
+	SubjectID     string     `json:"subject_id" gorm:"type:varchar(512);not null;uniqueIndex:idx_mem_topic_scope,priority:2"`
+	NormalizedKey string     `json:"normalized_key" gorm:"type:varchar(255);not null;uniqueIndex:idx_mem_topic_scope,priority:3"`
+	Topic         string     `json:"topic"      gorm:"type:varchar(255);not null;default:''"`
+	Hits          int        `json:"hits"       gorm:"not null;default:0"`
+	LastSeenAt    time.Time  `json:"last_seen_at" gorm:"column:last_seen_at"`
+	PromotedAt    *time.Time `json:"promoted_at"  gorm:"column:promoted_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+func (MemoryTopicStat) TableName() string { return "memory_topic_stats" }
+
+// MemoryDocAffinity records how often one person's answers drew on a document.
+//
+// It is the only per-person retrieval signal we have that does not require
+// asking them anything, and it is deliberately a plain counter rather than a
+// graph: the previous attempt at this built an anchor table with four consumers
+// that all filtered it out, so the rule now is that this table ships with the
+// code that reads it or not at all.
+type MemoryDocAffinity struct {
+	ID              string    `json:"id"         gorm:"primaryKey;type:varchar(36)"`
+	TenantID        uint64    `json:"tenant_id"  gorm:"not null;uniqueIndex:idx_mem_affinity_scope,priority:1"`
+	SubjectID       string    `json:"subject_id" gorm:"type:varchar(512);not null;uniqueIndex:idx_mem_affinity_scope,priority:2"`
+	KnowledgeID     string    `json:"knowledge_id" gorm:"type:varchar(36);not null;uniqueIndex:idx_mem_affinity_scope,priority:3"`
+	KnowledgeBaseID string    `json:"knowledge_base_id" gorm:"type:varchar(36);not null;default:''"`
+	Title           string    `json:"title"      gorm:"type:varchar(512);not null;default:''"`
+	Hits            int       `json:"hits"       gorm:"not null;default:0"`
+	LastUsedAt      time.Time `json:"last_used_at" gorm:"column:last_used_at"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+func (MemoryDocAffinity) TableName() string { return "memory_doc_affinity" }
 
 // MemoryTombstone records that a statement was deliberately forgotten, so the
 // background distillation cannot quietly re-add it the next time it reads the
@@ -819,4 +920,29 @@ func DetectExplicitMemory(query string) (string, bool) {
 		return statement, true
 	}
 	return "", false
+}
+
+// MergeUsedMemories combines two lists of shown memories, keeping the first
+// occurrence of each id.
+//
+// A memory can influence a turn twice — once by shaping the search and once by
+// being quoted in the answer — and the user should see it listed once.
+func MergeUsedMemories(existing, additional []UsedMemory) []UsedMemory {
+	if len(additional) == 0 {
+		return existing
+	}
+	seen := make(map[string]struct{}, len(existing)+len(additional))
+	merged := make([]UsedMemory, 0, len(existing)+len(additional))
+	for _, list := range [][]UsedMemory{existing, additional} {
+		for _, item := range list {
+			if item.ID != "" {
+				if _, dup := seen[item.ID]; dup {
+					continue
+				}
+				seen[item.ID] = struct{}{}
+			}
+			merged = append(merged, item)
+		}
+	}
+	return merged
 }

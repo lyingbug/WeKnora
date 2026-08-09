@@ -1421,5 +1421,37 @@ func (h *Handler) recordTurnMemory(
 			logger.Warnf(ctx, "memory: explicit remember failed for message %s: %v", assistantMessage.ID, err)
 		}
 	}
+	h.recordAnswerSources(ctx, assistantMessage)
 	h.memoryService.ScheduleExtraction(ctx, assistantMessage.SessionID, assistantMessage.ID, assistantMessage.ModelID)
+}
+
+// recordAnswerSources notes which documents this answer drew on, so the
+// reranker can prefer the material this person keeps working from.
+//
+// The references attached to an answer are a weaker signal than an explicit
+// thumbs-up: they say the retriever kept picking a document, not that the user
+// found it useful. They are, however, the only per-person retrieval signal
+// available without asking for anything, and the boost they earn is capped
+// accordingly.
+func (h *Handler) recordAnswerSources(ctx context.Context, assistantMessage *types.Message) {
+	if len(assistantMessage.KnowledgeReferences) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(assistantMessage.KnowledgeReferences))
+	refs := make([]types.MemoryDocAffinity, 0, len(assistantMessage.KnowledgeReferences))
+	for _, ref := range assistantMessage.KnowledgeReferences {
+		if ref.KnowledgeID == "" {
+			continue
+		}
+		if _, dup := seen[ref.KnowledgeID]; dup {
+			continue
+		}
+		seen[ref.KnowledgeID] = struct{}{}
+		refs = append(refs, types.MemoryDocAffinity{
+			KnowledgeID:     ref.KnowledgeID,
+			KnowledgeBaseID: ref.KnowledgeBaseID,
+			Title:           ref.KnowledgeTitle,
+		})
+	}
+	h.memoryService.RecordAnswerSources(ctx, refs)
 }

@@ -194,8 +194,8 @@ func TestExtractionParsesFencedJSON(t *testing.T) {
 			"\"topic\":\"t\",\"content\":\"c\"}]}\n```",
 	)
 	require.NoError(t, err)
-	require.Len(t, decisions, 1)
-	require.Equal(t, "c", decisions[0].Content)
+	require.Len(t, decisions.Memories, 1)
+	require.Equal(t, "c", decisions.Memories[0].Content)
 }
 
 func TestExtractionSkippedWhenWorkspaceDisabledAtRunTime(t *testing.T) {

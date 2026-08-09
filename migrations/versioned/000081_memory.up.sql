@@ -94,6 +94,43 @@ CREATE INDEX IF NOT EXISTS idx_memory_tombstones_scope
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_tomb_fp
     ON memory_tombstones (tenant_id, subject_id, fingerprint);
 
+-- How often this person has asked about a topic. A single question is noise;
+-- the same subject across several conversations is a signal, so topics are
+-- counted here and only promoted into memory_items once they recur.
+CREATE TABLE IF NOT EXISTS memory_topic_stats (
+    id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id INTEGER NOT NULL,
+    subject_id VARCHAR(512) NOT NULL,
+    normalized_key VARCHAR(255) NOT NULL,
+    topic VARCHAR(255) NOT NULL DEFAULT '',
+    hits INTEGER NOT NULL DEFAULT 0,
+    last_seen_at TIMESTAMP WITH TIME ZONE,
+    promoted_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_topic_scope
+    ON memory_topic_stats (tenant_id, subject_id, normalized_key);
+
+-- How often this person's answers drew on a document. Read by the reranker to
+-- prefer material they keep coming back to.
+CREATE TABLE IF NOT EXISTS memory_doc_affinity (
+    id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id INTEGER NOT NULL,
+    subject_id VARCHAR(512) NOT NULL,
+    knowledge_id VARCHAR(36) NOT NULL,
+    knowledge_base_id VARCHAR(36) NOT NULL DEFAULT '',
+    title VARCHAR(512) NOT NULL DEFAULT '',
+    hits INTEGER NOT NULL DEFAULT 0,
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_affinity_scope
+    ON memory_doc_affinity (tenant_id, subject_id, knowledge_id);
+
 -- Workspace-level switch, write mode, extraction model and capacity.
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS memory_config JSONB;
 

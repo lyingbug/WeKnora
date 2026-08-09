@@ -63,5 +63,37 @@ CREATE INDEX IF NOT EXISTS idx_memory_tombstones_scope
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_tomb_fp
     ON memory_tombstones (tenant_id, subject_id, fingerprint);
 
+CREATE TABLE IF NOT EXISTS memory_topic_stats (
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    subject_id VARCHAR(512) NOT NULL,
+    normalized_key VARCHAR(255) NOT NULL,
+    topic VARCHAR(255) NOT NULL DEFAULT '',
+    hits INTEGER NOT NULL DEFAULT 0,
+    last_seen_at DATETIME,
+    promoted_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_topic_scope
+    ON memory_topic_stats (tenant_id, subject_id, normalized_key);
+
+CREATE TABLE IF NOT EXISTS memory_doc_affinity (
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    subject_id VARCHAR(512) NOT NULL,
+    knowledge_id VARCHAR(36) NOT NULL,
+    knowledge_base_id VARCHAR(36) NOT NULL DEFAULT '',
+    title VARCHAR(512) NOT NULL DEFAULT '',
+    hits INTEGER NOT NULL DEFAULT 0,
+    last_used_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_affinity_scope
+    ON memory_doc_affinity (tenant_id, subject_id, knowledge_id);
+
 ALTER TABLE tenants ADD COLUMN memory_config TEXT;
 ALTER TABLE messages ADD COLUMN used_memories TEXT;
