@@ -318,7 +318,7 @@ func (s *Service) Handle(ctx context.Context, task *asynq.Task) error {
 		s.applyDecisions(ctx, scope, cfg, segment, existing, parsed.Memories)
 		// Subjects are counted separately from memories: one question is noise,
 		// the same subject across conversations is an interest.
-		s.ObserveQuestionTopics(ctx, parsed.Topics)
+		s.observeTopics(ctx, scope, cfg, parsed.Topics)
 		if segment.end.After(newCursor) {
 			newCursor = segment.end
 		}

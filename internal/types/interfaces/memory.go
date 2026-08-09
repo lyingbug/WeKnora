@@ -95,6 +95,9 @@ type MemoryRepository interface {
 	// MarkConsolidated records that this subject's whole store was just
 	// reviewed, so the next review waits out the interval.
 	MarkConsolidated(ctx context.Context, scope MemoryScope) error
+	// ListLive returns items of one kind that the user can see: in use plus
+	// proposed and awaiting a decision.
+	ListLive(ctx context.Context, scope MemoryScope, kind string, limit int) ([]*types.MemoryItem, error)
 	// SetItemStatus moves an item between statuses, used to confirm or reject
 	// something the system inferred.
 	SetItemStatus(ctx context.Context, scope MemoryScope, id, status string) error

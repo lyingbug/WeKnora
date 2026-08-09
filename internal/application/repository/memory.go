@@ -300,6 +300,26 @@ func (r *memoryRepository) ListItems(
 	return items, total, nil
 }
 
+// ListLive returns the items of one kind that the user can currently see:
+// in use, plus proposed and awaiting their decision. Deduplication has to
+// consider both, or confirming a proposal can leave a duplicate behind.
+func (r *memoryRepository) ListLive(
+	ctx context.Context, scope interfaces.MemoryScope, kind string, limit int,
+) ([]*types.MemoryItem, error) {
+	var items []*types.MemoryItem
+	query := notExpired(r.scoped(ctx, scope).
+		Where("status IN ?", []string{types.MemoryStatusActive, types.MemoryStatusPending}).
+		Where("kind = ?", kind)).
+		Order("importance DESC, valid_from DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *memoryRepository) FindActiveByKey(
 	ctx context.Context, scope interfaces.MemoryScope, normalizedKey string,
 ) (*types.MemoryItem, error) {
@@ -307,8 +327,12 @@ func (r *memoryRepository) FindActiveByKey(
 		return nil, nil
 	}
 	var item types.MemoryItem
+	// Pending counts as live here. A memory awaiting confirmation is one the
+	// user can already see, and ignoring it meant every re-derivation of the
+	// same inference stacked another copy in their review list.
 	err := r.scoped(ctx, scope).
-		Where("status = ? AND normalized_key = ?", types.MemoryStatusActive, normalizedKey).
+		Where("status IN ? AND normalized_key = ?",
+			[]string{types.MemoryStatusActive, types.MemoryStatusPending}, normalizedKey).
 		Order("valid_from DESC").
 		First(&item).Error
 	if err != nil {

@@ -329,7 +329,7 @@ func (s *Service) write(
 	return stored, nil
 }
 
-// findContainedDuplicate looks for an active memory of the same kind whose
+// findContainedDuplicate looks for a live memory of the same kind whose
 // statement contains, or is contained by, the incoming one.
 //
 // Containment is deliberately the whole rule. It is cheap, explainable to a
@@ -340,7 +340,7 @@ func (s *Service) write(
 func (s *Service) findContainedDuplicate(
 	ctx context.Context, scope interfaces.MemoryScope, kind, content string,
 ) (*types.MemoryItem, bool, error) {
-	candidates, err := s.repo.ListActiveByKinds(ctx, scope, []string{kind}, 200)
+	candidates, err := s.repo.ListLive(ctx, scope, kind, 200)
 	if err != nil {
 		return nil, false, fmt.Errorf("scan for duplicate memory: %w", err)
 	}
@@ -723,7 +723,21 @@ func (s *Service) ObserveQuestionTopics(ctx context.Context, topics []string) []
 		return nil
 	}
 	scope, cfg, ok := s.enabledScope(ctx)
-	if !ok || !cfg.AutoExtractEnabled() {
+	if !ok {
+		return nil
+	}
+	return s.observeTopics(ctx, scope, cfg, topics)
+}
+
+// observeTopics is the scope-explicit form.
+//
+// Distillation runs on a background worker whose context carries no principal —
+// its scope comes from the task payload — so anything the distiller calls has
+// to be handed the scope rather than re-deriving it from the request.
+func (s *Service) observeTopics(
+	ctx context.Context, scope interfaces.MemoryScope, cfg *types.MemoryConfig, topics []string,
+) []string {
+	if len(topics) == 0 || cfg == nil || !cfg.AutoExtractEnabled() {
 		return nil
 	}
 	if _, err := s.repo.EnsureSubject(ctx, scope); err != nil {

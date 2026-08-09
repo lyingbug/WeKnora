@@ -300,3 +300,33 @@ var (
 	_ = json.Marshal
 	_ asynq.Task
 )
+
+// Distillation runs on a worker whose context carries no principal — its scope
+// travels in the task payload. Anything the distiller calls therefore has to be
+// handed that scope explicitly. When topic counting re-derived the scope from
+// the context instead, it silently counted nothing: extraction looked healthy,
+// memories were written, and interests never appeared.
+func TestTopicsAreCountedOnTheBackgroundWorker(t *testing.T) {
+	svc, tenantRepo, messages, models, enqueuer := newExtractionHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	tenantRepo.set(1, &types.MemoryConfig{
+		Enabled: true, WriteMode: types.MemoryWriteAuto,
+		ExtractDelaySeconds: 1, InterestThreshold: 2,
+	})
+	models.response = `{"memories":[],"topics":["医学影像分割"]}`
+
+	base := time.Now().Add(-time.Hour)
+	messages.set("session-1", []*types.Message{
+		userMessage("session-1", "分割模型怎么调参", base),
+	})
+	svc.ScheduleExtraction(ctx, "session-1", "message-1", "model-1")
+	drainExtractions(t, svc, enqueuer)
+
+	scope, err := ResolveScope(ctx)
+	require.NoError(t, err)
+	stats, err := svc.repo.TopTopics(context.Background(), scope, 10)
+	require.NoError(t, err)
+	require.Len(t, stats, 1, "the worker must be able to count topics without a request context")
+	require.Equal(t, "医学影像分割", stats[0].Topic)
+	require.Equal(t, 1, stats[0].Hits)
+}

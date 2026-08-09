@@ -225,3 +225,30 @@ func scopeFor(t *testing.T, ctx context.Context) interfaces.MemoryScope {
 	require.NoError(t, err)
 	return scope
 }
+
+// The same guess arriving twice must not stack up two copies in the review
+// list. Deduplication originally looked only at active memories, so every
+// re-derivation of an inference added another row the user had to decline
+// separately.
+func TestARepeatedGuessDoesNotStackUpInTheInbox(t *testing.T) {
+	svc, _, tenantRepo := newMemoryHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+
+	guess := types.MemoryItem{
+		Kind:       types.MemoryKindProfile,
+		Topic:      "可能的身份",
+		Content:    "可能在参与儿童游泳赛事的组织工作",
+		Importance: 2,
+		Origin:     types.MemoryOriginExtracted,
+		Inferred:   true,
+	}
+	first, err := svc.Remember(ctx, guess)
+	require.NoError(t, err)
+	second, err := svc.Remember(ctx, guess)
+	require.NoError(t, err)
+	require.Equal(t, first.ID, second.ID)
+
+	_, total, err := svc.ListItems(ctx, types.MemoryStatusPending, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+}

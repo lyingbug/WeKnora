@@ -88,7 +88,7 @@ func (h *MemoryHandler) UpdateSettings(c *gin.Context) {
 // @Description  分页返回当前用户的记忆条目，可按状态过滤
 // @Tags         长期记忆
 // @Produce      json
-// @Param        status  query     string  false  "状态过滤"  Enums(active, superseded, archived)
+// @Param        status  query     string  false  "状态过滤"  Enums(active, superseded, archived, pending)
 // @Param        limit   query     int     false  "每页条数"  default(50)
 // @Param        offset  query     int     false  "偏移量"
 // @Success      200     {object}  map[string]interface{}  "记忆列表"
@@ -98,7 +98,8 @@ func (h *MemoryHandler) ListItems(c *gin.Context) {
 	ctx := c.Request.Context()
 	status := c.Query("status")
 	switch status {
-	case "", types.MemoryStatusActive, types.MemoryStatusSuperseded, types.MemoryStatusArchived:
+	case "", types.MemoryStatusActive, types.MemoryStatusSuperseded,
+		types.MemoryStatusArchived, types.MemoryStatusPending:
 	default:
 		c.Error(apperrors.NewBadRequestError("unsupported status"))
 		return
