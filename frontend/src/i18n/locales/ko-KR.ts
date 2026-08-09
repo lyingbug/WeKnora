@@ -4616,6 +4616,9 @@ export default {
     extractDelayDescription: '대화가 끝난 뒤 정리를 시작하기까지의 대기 시간입니다. 잠시 기다리면 사용자가 연달아 보낸 여러 메시지를 모델 호출 한 번으로 처리할 수 있습니다.',
     extractMinIntervalLabel: '정리 간 최소 간격',
     extractMinIntervalDescription: '같은 사람에 대한 두 번의 정리 사이 최소 간격으로, 비용을 제한합니다. 간격 안에 생긴 메시지는 버려지지 않고 다음 정리로 넘어갑니다.',
+    instructionsLabel: '사용자 정의 정리 규칙',
+    instructionsDescription: '정리 프롬프트에 덧붙는 워크스페이스 규칙으로, 제품이 알 수 없는 정책을 표현합니다. 예: "고객 이름은 절대 기록하지 않는다".',
+    instructionsPlaceholder: '한 줄에 규칙 하나, 예: 고객 이름은 기록하지 않기',
     maxItemsLabel: '구성원당 기억 상한',
     maxItemsDescription: '초과하면 중요도와 사용 시점이 낮은 항목부터 보관 처리되며 "내 기억"에서 계속 확인할 수 있습니다.',
     toasts: {

@@ -1408,6 +1408,9 @@ export default {
     extractDelayDescription: 'How long a finished turn waits before distillation runs. Waiting lets one model call cover the several messages a user usually sends in a row.',
     extractMinIntervalLabel: 'Minimum interval between runs',
     extractMinIntervalDescription: 'The floor between two distillation runs for one person, used to bound cost. Messages produced inside the interval are not dropped — they are carried over to the next run.',
+    instructionsLabel: 'Custom distillation rules',
+    instructionsDescription: 'Workspace rules appended to the distillation prompt, for policies the product cannot guess — for example "never record customer names".',
+    instructionsPlaceholder: 'One rule per line, for example: never record customer names',
     maxItemsLabel: 'Memories per member',
     maxItemsDescription: 'Beyond this, the lowest ranked memories are archived by importance and recency. Archived memories stay visible under "My memory".',
     toasts: {

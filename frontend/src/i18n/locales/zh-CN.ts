@@ -4616,6 +4616,9 @@ export default {
     extractDelayDescription: '一轮对话结束后等待多久再挖掘。等一等可以让一次模型调用覆盖用户连着发的几条消息。',
     extractMinIntervalLabel: '两次挖掘的最小间隔',
     extractMinIntervalDescription: '同一个人两次挖掘之间至少间隔多久，用来控制成本。间隔内产生的消息不会被丢弃，会顺延到下一次挖掘一并处理。',
+    instructionsLabel: '自定义挖掘规则',
+    instructionsDescription: '追加到挖掘提示词里的空间规则，用来表达产品猜不到的策略，例如「永远不要记录客户姓名」。',
+    instructionsPlaceholder: '一行一条规则，例如：永远不要记录客户姓名',
     maxItemsLabel: '每人记忆上限',
     maxItemsDescription: '超出后按重要度与使用时间归档最低的若干条，归档的记忆仍可在「我的记忆」里查看。',
     toasts: {

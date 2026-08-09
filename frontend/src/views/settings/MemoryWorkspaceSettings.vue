@@ -102,6 +102,23 @@
         </div>
       </div>
 
+      <div v-if="config.enabled && config.write_mode === 'auto'" class="setting-row instructions-row">
+        <div class="setting-info">
+          <label>{{ t('memoryWorkspaceSettings.instructionsLabel') }}</label>
+          <p class="desc">{{ t('memoryWorkspaceSettings.instructionsDescription') }}</p>
+        </div>
+        <div class="setting-control instructions-control">
+          <t-textarea
+            v-model="config.extract_instructions"
+            :autosize="{ minRows: 3, maxRows: 8 }"
+            :maxlength="1000"
+            :disabled="!canEdit"
+            :placeholder="t('memoryWorkspaceSettings.instructionsPlaceholder')"
+            @blur="debouncedSave"
+          />
+        </div>
+      </div>
+
       <div v-if="config.enabled" class="setting-row">
         <div class="setting-info">
           <label>{{ t('memoryWorkspaceSettings.maxItemsLabel') }}</label>
@@ -140,6 +157,7 @@ const config = reactive<MemoryConfig>({
   max_items: 200,
   extract_delay_seconds: 90,
   extract_min_interval_seconds: 300,
+  extract_instructions: '',
 })
 const isInitializing = ref(true)
 
@@ -155,6 +173,7 @@ const loadConfig = async () => {
       config.max_items = response.data.max_items || 200
       config.extract_delay_seconds = response.data.extract_delay_seconds || 90
       config.extract_min_interval_seconds = response.data.extract_min_interval_seconds || 300
+      config.extract_instructions = response.data.extract_instructions || ''
     }
   } catch (error: any) {
     console.error('Failed to load memory config:', error)
@@ -296,5 +315,23 @@ onMounted(loadConfig)
   display: flex;
   justify-content: flex-end;
   align-items: center;
+}
+
+// The custom prompt needs room to read, so this row stacks instead of putting a
+// paragraph of rules into a narrow right-hand column.
+.instructions-row {
+  flex-direction: column;
+  align-items: stretch;
+
+  .setting-info {
+    max-width: 100%;
+    padding-right: 0;
+    margin-bottom: 10px;
+  }
+}
+
+.instructions-control {
+  width: 100%;
+  justify-content: stretch;
 }
 </style>

@@ -46,6 +46,8 @@ export interface MemoryConfig {
   extract_delay_seconds: number
   /** Floor between two distillation runs for one person, in seconds. */
   extract_min_interval_seconds: number
+  /** Workspace-specific rules appended to the distillation prompt. */
+  extract_instructions: string
 }
 
 // ---------------------------------------------------------------------------

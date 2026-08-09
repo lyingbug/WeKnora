@@ -1783,6 +1783,12 @@ func (h *TenantHandler) updateTenantMemoryConfigInternal(c *gin.Context) {
 			types.MaxMemoryExtractMinIntervalSeconds)))
 		return
 	}
+	if len([]rune(cfg.ExtractInstructions)) > types.MaxMemoryExtractInstructionsRunes {
+		c.Error(errors.NewBadRequestError(fmt.Sprintf(
+			"extract_instructions must be at most %d characters",
+			types.MaxMemoryExtractInstructionsRunes)))
+		return
+	}
 	cfg.Normalize()
 
 	tenant, _ := types.TenantInfoFromContext(ctx)
