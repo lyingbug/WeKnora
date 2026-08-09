@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,10 +186,15 @@ func TestAlreadyReadMessagesAreNotReread(t *testing.T) {
 	drainExtractions(t, svc, enqueuer)
 
 	require.Equal(t, 2, models.calls)
-	lastPrompt := models.lastPrompt
-	require.Contains(t, lastPrompt, "新的一句")
-	require.NotContains(t, lastPrompt, "旧的一句",
-		"a message already behind the watermark must not be paid for twice")
+	// The earlier message may appear as read-only context, but it must not be
+	// inside the block the model extracts from, or it would be re-derived into
+	// a memory on every run.
+	transcript := transcriptBlock(models.lastPrompt)
+	require.Contains(t, transcript, "新的一句")
+	require.NotContains(t, transcript, "旧的一句",
+		"a message already behind the watermark must not be extracted from twice")
+	require.Contains(t, models.lastPrompt, "context only",
+		"the earlier turn should still be visible as context")
 }
 
 // TestFailedRunLeavesMessagesUnread: a model error must not consume the
@@ -279,5 +285,18 @@ func TestNothingIsScheduledWhileMemoryIsOff(t *testing.T) {
 	require.Zero(t, models.calls)
 }
 
-var _ = json.Marshal
-var _ asynq.Task
+// transcriptBlock returns just the part of the prompt the model is asked to
+// extract from, so a test can distinguish "shown as context" from "extracted".
+func transcriptBlock(prompt string) string {
+	start := strings.Index(prompt, "<transcript>")
+	end := strings.Index(prompt, "</transcript>")
+	if start < 0 || end <= start {
+		return ""
+	}
+	return prompt[start:end]
+}
+
+var (
+	_ = json.Marshal
+	_ asynq.Task
+)

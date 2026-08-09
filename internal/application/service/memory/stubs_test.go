@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -59,6 +60,33 @@ func (s *stubMessageRepo) set(sessionID string, messages []*types.Message) {
 	s.bySession[sessionID] = messages
 }
 
+func (s *stubMessageRepo) GetMessagesBySessionBeforeTime(
+	_ context.Context, sessionID string, beforeTime time.Time, limit int,
+) ([]*types.Message, error) {
+	s.mu.Lock()
+	source := s.bySession[sessionID]
+	if source == nil {
+		source = s.messages
+	}
+	snapshot := append([]*types.Message(nil), source...)
+	s.mu.Unlock()
+
+	sort.SliceStable(snapshot, func(i, j int) bool {
+		return snapshot[i].CreatedAt.Before(snapshot[j].CreatedAt)
+	})
+	var out []*types.Message
+	for _, message := range snapshot {
+		if !message.CreatedAt.Before(beforeTime) {
+			break
+		}
+		out = append(out, message)
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out, nil
+}
+
 func (s *stubMessageRepo) ListMessagesBySessionAfterTime(
 	_ context.Context, sessionID string, afterTime time.Time, limit int,
 ) ([]*types.Message, error) {
@@ -101,6 +129,8 @@ type stubModelService struct {
 	calls   int
 	// failNext makes the next call fail, standing in for a provider outage.
 	failNext bool
+	// lastFormat records the response schema the caller asked for.
+	lastFormat json.RawMessage
 }
 
 func (s *stubModelService) GetChatModel(_ context.Context, modelID string) (chat.Chat, error) {
@@ -122,7 +152,7 @@ type stubChatModel struct {
 }
 
 func (m *stubChatModel) Chat(
-	_ context.Context, messages []chat.Message, _ *chat.ChatOptions,
+	_ context.Context, messages []chat.Message, opts *chat.ChatOptions,
 ) (*types.ChatResponse, error) {
 	var prompt strings.Builder
 	for _, message := range messages {
@@ -133,6 +163,9 @@ func (m *stubChatModel) Chat(
 	defer m.owner.mu.Unlock()
 	m.owner.calls++
 	m.owner.lastPrompt = prompt.String()
+	if opts != nil {
+		m.owner.lastFormat = opts.Format
+	}
 	m.owner.prompts = append(m.owner.prompts, prompt.String())
 	if m.owner.failNext {
 		m.owner.failNext = false

@@ -43,10 +43,10 @@ func TestExtractionRebuildsScopeFromPayload(t *testing.T) {
 	svc, tenantRepo, messages, models, _ := newExtractionHarness(t)
 	tenantRepo.set(7, &types.MemoryConfig{Enabled: true, WriteMode: types.MemoryWriteAuto})
 	messages.messages = []*types.Message{
-		{Role: "user", Content: "我们的生产库是 PostgreSQL 17"},
+		{ID: "msg-db", SessionID: "session-1", Role: "user", Content: "我们的生产库是 PostgreSQL 17"},
 	}
 	models.response = `{"memories":[{"action":"add","kind":"fact","topic":"生产数据库",
-		"content":"生产库是 PostgreSQL 17","importance":4}]}`
+		"content":"生产库是 PostgreSQL 17","importance":4,"source":1}]}`
 
 	// Deliberately a bare context: nothing about the original request survives.
 	err := svc.Handle(context.Background(), extractTask(t, types.MemoryExtractPayload{
@@ -63,8 +63,12 @@ func TestExtractionRebuildsScopeFromPayload(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), total, "extraction must write into the payload's scope")
 	require.Equal(t, "生产库是 PostgreSQL 17", items[0].Content)
+	// Provenance is the message the statement was actually said in, not the
+	// turn that happened to trigger the run. A run can span several messages
+	// across two conversations, so attributing everything to the trigger would
+	// point the memory manager at an unrelated conversation.
 	require.Equal(t, "session-1", items[0].SourceSessionID, "every memory must be traceable to a message")
-	require.Equal(t, "message-1", items[0].SourceMessageID)
+	require.Equal(t, "msg-db", items[0].SourceMessageID)
 }
 
 // TestExtractionFallsBackToTheConversationModel pins the promise the settings
