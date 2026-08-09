@@ -74,6 +74,24 @@ type MemoryRepository interface {
 	DeleteAll(ctx context.Context, scope MemoryScope) (int64, error)
 	// TouchUsed records that items were injected into a turn.
 	TouchUsed(ctx context.Context, scope MemoryScope, ids []string) error
+	// AddTombstone records that a statement was deliberately forgotten. Only
+	// the topic, a fingerprint and the originating message are stored, never
+	// the statement itself.
+	AddTombstone(ctx context.Context, scope MemoryScope, topic, fingerprint, sourceMessageID string) error
+	// HasTombstoneForMessage reports whether a memory derived from this message
+	// was rejected within the given window. The window matters: this rule
+	// exists to stop the re-derivation that happens one debounce later, not to
+	// ban a message for good.
+	HasTombstoneForMessage(
+		ctx context.Context, scope MemoryScope, sourceMessageID string, within time.Duration,
+	) (bool, error)
+	// ListTombstones returns the most recent rejections for this subject.
+	ListTombstones(ctx context.Context, scope MemoryScope, limit int) ([]*types.MemoryTombstone, error)
+	// HasTombstone reports whether this exact statement was already forgotten.
+	HasTombstone(ctx context.Context, scope MemoryScope, fingerprint string) (bool, error)
+	// ExpireOverdue archives items whose expires_at has passed and returns how
+	// many were archived.
+	ExpireOverdue(ctx context.Context, scope MemoryScope) (int64, error)
 	// ArchiveLowestRanked archives active items beyond the capacity cap and
 	// returns how many were archived.
 	ArchiveLowestRanked(ctx context.Context, scope MemoryScope, keep int) (int64, error)

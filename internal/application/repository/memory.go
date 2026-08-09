@@ -226,6 +226,13 @@ func (r *memoryRepository) GetItem(
 	return &item, nil
 }
 
+// notExpired excludes items whose usefulness has a stated end. Applying it in
+// the query rather than after the fact means an expired task cannot slip into
+// a prompt through a code path that forgot to filter.
+func notExpired(query *gorm.DB) *gorm.DB {
+	return query.Where("expires_at IS NULL OR expires_at > ?", time.Now())
+}
+
 func (r *memoryRepository) ListActiveByKinds(
 	ctx context.Context, scope interfaces.MemoryScope, kinds []string, limit int,
 ) ([]*types.MemoryItem, error) {
@@ -233,9 +240,9 @@ func (r *memoryRepository) ListActiveByKinds(
 		return nil, nil
 	}
 	var items []*types.MemoryItem
-	query := r.scoped(ctx, scope).
+	query := notExpired(r.scoped(ctx, scope).
 		Where("status = ?", types.MemoryStatusActive).
-		Where("kind IN ?", kinds).
+		Where("kind IN ?", kinds)).
 		Order("importance DESC, valid_from DESC")
 	if limit > 0 {
 		query = query.Limit(limit)
@@ -256,11 +263,11 @@ func (r *memoryRepository) ListActiveResident(
 	ctx context.Context, scope interfaces.MemoryScope, limit int,
 ) ([]*types.MemoryItem, error) {
 	var items []*types.MemoryItem
-	query := r.scoped(ctx, scope).
+	query := notExpired(r.scoped(ctx, scope).
 		Where("status = ?", types.MemoryStatusActive).
 		Where("kind IN ? OR origin = ?",
 			[]string{types.MemoryKindProfile, types.MemoryKindPreference},
-			types.MemoryOriginExplicit).
+			types.MemoryOriginExplicit)).
 		Order("importance DESC, valid_from DESC")
 	if limit > 0 {
 		query = query.Limit(limit)
@@ -401,6 +408,115 @@ func (r *memoryRepository) ArchiveLowestRanked(
 		"status":     types.MemoryStatusArchived,
 		"updated_at": time.Now(),
 	})
+	return result.RowsAffected, result.Error
+}
+
+func (r *memoryRepository) AddTombstone(
+	ctx context.Context, scope interfaces.MemoryScope, topic, fingerprint, sourceMessageID string,
+) error {
+	if fingerprint == "" {
+		return nil
+	}
+	tombstone := &types.MemoryTombstone{
+		ID:              uuid.New().String(),
+		TenantID:        scope.TenantID,
+		SubjectID:       scope.SubjectID,
+		Topic:           topic,
+		Fingerprint:     fingerprint,
+		SourceMessageID: sourceMessageID,
+	}
+	err := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "tenant_id"}, {Name: "subject_id"}, {Name: "fingerprint"},
+			},
+			DoNothing: true,
+		}).
+		Create(tombstone).Error
+	if err != nil {
+		return err
+	}
+	return r.trimTombstones(ctx, scope)
+}
+
+// trimTombstones keeps the list bounded. A rejection from long ago matters less
+// than this table growing without limit.
+func (r *memoryRepository) trimTombstones(ctx context.Context, scope interfaces.MemoryScope) error {
+	var keep []string
+	err := r.scoped(ctx, scope).
+		Model(&types.MemoryTombstone{}).
+		Order("created_at DESC").
+		Limit(types.MaxMemoryTombstones).
+		Pluck("id", &keep).Error
+	if err != nil {
+		return err
+	}
+	if len(keep) < types.MaxMemoryTombstones {
+		return nil
+	}
+	return r.scoped(ctx, scope).
+		Where("id NOT IN ?", keep).
+		Delete(&types.MemoryTombstone{}).Error
+}
+
+func (r *memoryRepository) ListTombstones(
+	ctx context.Context, scope interfaces.MemoryScope, limit int,
+) ([]*types.MemoryTombstone, error) {
+	var tombstones []*types.MemoryTombstone
+	query := r.scoped(ctx, scope).
+		Model(&types.MemoryTombstone{}).
+		Order("created_at DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Find(&tombstones).Error; err != nil {
+		return nil, err
+	}
+	return tombstones, nil
+}
+
+func (r *memoryRepository) HasTombstone(
+	ctx context.Context, scope interfaces.MemoryScope, fingerprint string,
+) (bool, error) {
+	if fingerprint == "" {
+		return false, nil
+	}
+	var count int64
+	err := r.scoped(ctx, scope).
+		Model(&types.MemoryTombstone{}).
+		Where("fingerprint = ?", fingerprint).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (r *memoryRepository) HasTombstoneForMessage(
+	ctx context.Context, scope interfaces.MemoryScope, sourceMessageID string, within time.Duration,
+) (bool, error) {
+	if sourceMessageID == "" {
+		return false, nil
+	}
+	query := r.scoped(ctx, scope).
+		Model(&types.MemoryTombstone{}).
+		Where("source_message_id = ?", sourceMessageID)
+	if within > 0 {
+		query = query.Where("created_at > ?", time.Now().Add(-within))
+	}
+	var count int64
+	err := query.Count(&count).Error
+	return count > 0, err
+}
+
+func (r *memoryRepository) ExpireOverdue(
+	ctx context.Context, scope interfaces.MemoryScope,
+) (int64, error) {
+	now := time.Now()
+	result := r.scoped(ctx, scope).
+		Model(&types.MemoryItem{}).
+		Where("status = ? AND expires_at IS NOT NULL AND expires_at <= ?", types.MemoryStatusActive, now).
+		Updates(map[string]interface{}{
+			"status":     types.MemoryStatusArchived,
+			"updated_at": now,
+		})
 	return result.RowsAffected, result.Error
 }
 

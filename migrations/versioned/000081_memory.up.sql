@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS memory_items (
     source_message_id VARCHAR(36),
     valid_from TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     invalid_at TIMESTAMP WITH TIME ZONE,
+    -- When the statement stops being worth recalling. Without it an in-flight
+    -- task stays in context long after the user finished it.
+    expires_at TIMESTAMP WITH TIME ZONE,
     superseded_by VARCHAR(36),
     last_used_at TIMESTAMP WITH TIME ZONE,
     use_count INTEGER NOT NULL DEFAULT 0,
@@ -72,6 +75,24 @@ CREATE INDEX IF NOT EXISTS idx_memory_items_scope
     ON memory_items (tenant_id, subject_id, status);
 CREATE INDEX IF NOT EXISTS idx_memory_items_key
     ON memory_items (tenant_id, subject_id, normalized_key);
+
+-- A statement the user deliberately forgot. Only the topic and a fingerprint of
+-- the statement are kept, never the statement itself: this table exists to stop
+-- distillation from re-adding what was dropped, not to retain it.
+CREATE TABLE IF NOT EXISTS memory_tombstones (
+    id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id INTEGER NOT NULL,
+    subject_id VARCHAR(512) NOT NULL,
+    topic VARCHAR(255) NOT NULL DEFAULT '',
+    fingerprint VARCHAR(64) NOT NULL,
+    source_message_id VARCHAR(36),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_tombstones_scope
+    ON memory_tombstones (tenant_id, subject_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_tomb_fp
+    ON memory_tombstones (tenant_id, subject_id, fingerprint);
 
 -- Workspace-level switch, write mode, extraction model and capacity.
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS memory_config JSONB;

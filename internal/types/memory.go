@@ -2,9 +2,12 @@ package types
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql/driver"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -240,13 +243,18 @@ type MemoryItem struct {
 	Status          string     `json:"status"             gorm:"type:varchar(16);not null;default:'active'"`
 	SourceSessionID string     `json:"source_session_id"  gorm:"column:source_session_id;type:varchar(36)"`
 	SourceMessageID string     `json:"source_message_id"  gorm:"column:source_message_id;type:varchar(36)"`
-	ValidFrom       time.Time  `json:"valid_from"         gorm:"column:valid_from;not null"`
-	InvalidAt       *time.Time `json:"invalid_at"         gorm:"column:invalid_at"`
-	SupersededBy    string     `json:"superseded_by"      gorm:"column:superseded_by;type:varchar(36)"`
-	LastUsedAt      *time.Time `json:"last_used_at"       gorm:"column:last_used_at"`
-	UseCount        int        `json:"use_count"          gorm:"column:use_count;not null;default:0"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ValidFrom       time.Time  `json:"valid_from" gorm:"column:valid_from;not null"`
+	InvalidAt       *time.Time `json:"invalid_at" gorm:"column:invalid_at"`
+	// ExpiresAt is when the statement stops being worth recalling, used for
+	// things that are true only for a while ("finish the migration this week").
+	// Without it an in-flight task stays in context forever and slowly turns
+	// the memory into a list of things the user finished months ago.
+	ExpiresAt    *time.Time `json:"expires_at" gorm:"column:expires_at"`
+	SupersededBy string     `json:"superseded_by"      gorm:"column:superseded_by;type:varchar(36)"`
+	LastUsedAt   *time.Time `json:"last_used_at"       gorm:"column:last_used_at"`
+	UseCount     int        `json:"use_count"          gorm:"column:use_count;not null;default:0"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 func (MemoryItem) TableName() string { return "memory_items" }
@@ -276,7 +284,15 @@ type MemoryConfig struct {
 	// a turn arriving inside the interval is queued and picked up by the next
 	// run. 0 means the default.
 	ExtractMinIntervalSeconds int `json:"extract_min_interval_seconds"`
+	// ExtractInstructions are workspace-specific rules appended to the
+	// distillation prompt, for policies the product cannot guess ("never record
+	// customer names", "always note the environment a question is about").
+	ExtractInstructions string `json:"extract_instructions"`
 }
+
+// MaxMemoryExtractInstructionsRunes bounds the custom prompt so one workspace
+// cannot turn every distillation call into a large prompt.
+const MaxMemoryExtractInstructionsRunes = 1000
 
 func (c MemoryConfig) Value() (driver.Value, error) { return json.Marshal(c) }
 
@@ -322,6 +338,10 @@ func (c *MemoryConfig) Normalize() {
 		c.ExtractMinIntervalSeconds, DefaultMemoryExtractMinIntervalSeconds,
 		0, MaxMemoryExtractMinIntervalSeconds,
 	)
+	c.ExtractInstructions = strings.TrimSpace(c.ExtractInstructions)
+	if runes := []rune(c.ExtractInstructions); len(runes) > MaxMemoryExtractInstructionsRunes {
+		c.ExtractInstructions = strings.TrimSpace(string(runes[:MaxMemoryExtractInstructionsRunes]))
+	}
 }
 
 // Bounds for the distillation timers. The lower bound on the delay is not a
@@ -435,6 +455,135 @@ func NormalizeMemoryKey(key, content string) string {
 	}
 	return result
 }
+
+// Patterns for material that must never become a long-term note. A memory is
+// injected into the system prompt of every later turn, so a credential that
+// lands here is not just retained, it is re-sent to a model repeatedly.
+//
+// The list is deliberately specific rather than clever. The previous attempt at
+// this feature matched loosely and mangled ordinary long order numbers while
+// still leaving the tail of an ID card in place, which is the worst of both
+// outcomes: the user loses correct memories and keeps the sensitive one.
+var sensitivePatterns = []*regexp.Regexp{
+	// Provider tokens, matched by their documented prefixes.
+	regexp.MustCompile(`\bsk-[A-Za-z0-9_\-]{16,}`),
+	regexp.MustCompile(`\bsk_(live|test)_[A-Za-z0-9]{16,}`),
+	regexp.MustCompile(`\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}`),
+	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}`),
+	regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}`),
+	regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9\-]{10,}`),
+	regexp.MustCompile(`\bAIza[0-9A-Za-z_\-]{35}`),
+	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
+	// A value assigned to something that names itself a secret.
+	// The value stops at whitespace or CJK punctuation: Chinese has no spaces,
+	// so a greedy \S+ would swallow the rest of the sentence and redact a whole
+	// legitimate memory along with the secret.
+	regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token|api[_\- ]?key|access[_\- ]?key)\b` +
+		`\s*[:=＝：]\s*[^\s，。、；：！？,;]+`),
+	// No \b here: Go's word boundary is ASCII-only, so it never matches before
+	// a CJK character and would silently disable this rule.
+	regexp.MustCompile(`(密码|口令|密钥|秘钥)\s*[:=＝：是为]?\s*[^\s，。、；：！？,;]+`),
+	// Mainland China resident ID: anchored on a plausible birth date so long
+	// order numbers and other 18-digit strings are not caught.
+	regexp.MustCompile(`\b[1-9]\d{5}(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b`),
+	// Bank card numbers, optionally spaced or dashed into groups.
+	regexp.MustCompile(`\b\d{4}[ \-]?\d{4}[ \-]?\d{4}[ \-]?\d{2,7}\b`),
+	// Mainland China mobile numbers.
+	regexp.MustCompile(`\b1[3-9]\d{9}\b`),
+	// Long opaque high-entropy strings: what an unrecognised token looks like.
+	regexp.MustCompile(`\b[A-Za-z0-9_\-]{40,}\b`),
+}
+
+// RedactedMemoryPlaceholder replaces removed material. It is visible on purpose:
+// a user reading their memory list should be able to tell that something was
+// dropped rather than silently mangled.
+const RedactedMemoryPlaceholder = "【已隐藏】"
+
+// RedactSensitive removes credentials and identity numbers from a statement.
+// The second return value reports whether anything was removed.
+func RedactSensitive(content string) (string, bool) {
+	redacted := content
+	for _, pattern := range sensitivePatterns {
+		redacted = pattern.ReplaceAllString(redacted, RedactedMemoryPlaceholder)
+	}
+	return redacted, redacted != content
+}
+
+// IsMostlyRedacted reports whether a statement lost so much that keeping it
+// would store a placeholder rather than a memory.
+func IsMostlyRedacted(content string) bool {
+	stripped := strings.ReplaceAll(content, RedactedMemoryPlaceholder, "")
+	remaining := len([]rune(strings.TrimSpace(stripped)))
+	return remaining < 6
+}
+
+// NormalizeMemoryForMatch collapses a statement to a comparable form: no case,
+// no whitespace, no punctuation. Used both for containment de-duplication and
+// for the fingerprint that suppresses a forgotten memory.
+func NormalizeMemoryForMatch(content string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToLower(SanitizeMemoryContent(content)) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
+}
+
+// MemoryFingerprint hashes the normalized statement. Tombstones keep only this
+// hash, never the text: a user who asked to forget something should not have it
+// retained in a second table under a different name.
+func MemoryFingerprint(content string) string {
+	normalized := NormalizeMemoryForMatch(content)
+	if normalized == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(sum[:])
+}
+
+// MemoryTombstone records that a statement was deliberately forgotten, so the
+// background distillation cannot quietly re-add it the next time it reads the
+// message it came from.
+//
+// It stores the topic and a fingerprint, never the statement. The trade-off is
+// explicit: a re-worded restatement can come back, and that is the price of not
+// retaining what the user asked us to drop.
+type MemoryTombstone struct {
+	ID string `json:"id" gorm:"primaryKey;type:varchar(36)"`
+	// The scope plus fingerprint is declared as a unique index on the model, not
+	// only in the migration, so the upsert has a constraint to target on every
+	// database the model is auto-migrated onto.
+	// The scope plus fingerprint is a unique index on the model as well as in
+	// the migration, so the upsert has a constraint to target on every database
+	// the model is auto-migrated onto. The index name is kept short because a
+	// struct tag cannot be wrapped across lines.
+	TenantID  uint64 `json:"tenant_id"  gorm:"not null;uniqueIndex:idx_mem_tomb_fp,priority:1"`
+	SubjectID string `json:"subject_id" gorm:"type:varchar(512);not null;uniqueIndex:idx_mem_tomb_fp,priority:2"`
+	// Topic is kept because it is a short subject name rather than content, and
+	// telling the extraction model which topics were rejected is what stops a
+	// re-phrased version from coming straight back.
+	Topic string `json:"topic" gorm:"type:varchar(255);not null;default:''"`
+	// Fingerprint is MemoryFingerprint of the forgotten statement.
+	Fingerprint string `json:"fingerprint" gorm:"type:varchar(64);not null;uniqueIndex:idx_mem_tomb_fp,priority:3"`
+	// SourceMessageID is the message the rejected memory was derived from.
+	//
+	// The fingerprint alone is not enough: distillation re-reads that same
+	// message minutes later and usually words the statement slightly
+	// differently ("生产库是 X" versus "我们的生产库是 X"), which hashes
+	// differently and slips through. Remembering the message is content-free
+	// and closes that path exactly, while anything the user says afterwards
+	// comes from a later message and is still allowed through.
+	SourceMessageID string    `json:"source_message_id" gorm:"column:source_message_id;type:varchar(36);index"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+func (MemoryTombstone) TableName() string { return "memory_tombstones" }
+
+// MaxMemoryTombstones bounds how many rejections one subject accumulates.
+// Beyond it the oldest are dropped: a rejection from long ago matters less than
+// the store growing without limit.
+const MaxMemoryTombstones = 500
 
 // SanitizeMemoryTopic normalizes the readable subject to a single short line.
 func SanitizeMemoryTopic(topic string) string {

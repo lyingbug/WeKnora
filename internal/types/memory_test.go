@@ -118,6 +118,84 @@ func TestDetectExplicitMemory(t *testing.T) {
 	}
 }
 
+// A memory is injected into the system prompt of every later turn, so a
+// credential that reaches storage is not merely retained — it is re-sent to a
+// model repeatedly. These cases are the ones a user actually pastes.
+func TestRedactSensitiveRemovesCredentials(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"openai key", "我的 key 是 sk-abcdefghijklmnop0123456789ABCDEF"},
+		{"github token", "用 ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 拉代码"},
+		{"aws key", "AKIAIOSFODNN7EXAMPLE 是我们的 access key"},
+		{"password assignment", "登录用 password: hunter2xyz"},
+		{"chinese password", "数据库密码是 Tiger#2024"},
+		{"private key header", "-----BEGIN RSA PRIVATE KEY----- 开头那段"},
+		{"id card", "我的身份证号是 110101199003078515"},
+		{"bank card", "工资卡 6222 0202 0001 2345 678"},
+		{"mobile", "我的手机号 13800138000"},
+		{"opaque token", "token 是 abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			redacted, changed := RedactSensitive(tc.input)
+			if !changed {
+				t.Fatalf("nothing was redacted from %q", tc.input)
+			}
+			if !strings.Contains(redacted, RedactedMemoryPlaceholder) {
+				t.Fatalf("redaction left no marker: %q", redacted)
+			}
+		})
+	}
+}
+
+// Over-redaction is its own failure: the previous attempt at this mangled
+// ordinary long numbers while still leaving part of an ID card in place.
+func TestRedactSensitiveLeavesOrdinaryStatementsAlone(t *testing.T) {
+	cases := []string{
+		"生产数据库是 PostgreSQL 17，部署在法兰克福",
+		"订单号 20260809 的那笔要加急",
+		"我在做医疗影像方向的后端开发",
+		"回答请直接给结论，不要铺垫",
+		"联系邮箱是 alice@example.com",
+		"服务跑在 10.0.12.7 的 8080 端口",
+	}
+	for _, input := range cases {
+		t.Run(input, func(t *testing.T) {
+			redacted, changed := RedactSensitive(input)
+			if changed {
+				t.Fatalf("ordinary statement was redacted: %q -> %q", input, redacted)
+			}
+		})
+	}
+}
+
+func TestIsMostlyRedacted(t *testing.T) {
+	redacted, _ := RedactSensitive("sk-abcdefghijklmnop0123456789ABCDEF")
+	if !IsMostlyRedacted(redacted) {
+		t.Fatal("a statement that was only a credential must not be stored")
+	}
+	kept, _ := RedactSensitive("生产库的密码是 hunter2xyz，库跑在法兰克福")
+	if IsMostlyRedacted(kept) {
+		t.Fatal("a statement with real content left must survive redaction")
+	}
+}
+
+func TestMemoryFingerprintIgnoresFormatting(t *testing.T) {
+	a := MemoryFingerprint("生产数据库是 PostgreSQL 17，部署在法兰克福")
+	b := MemoryFingerprint("生产数据库是 postgresql 17 部署在法兰克福")
+	if a != b {
+		t.Fatal("a fingerprint must survive spacing, case and punctuation changes")
+	}
+	if a == MemoryFingerprint("生产数据库是 MySQL 8") {
+		t.Fatal("different statements must not share a fingerprint")
+	}
+	if MemoryFingerprint("   ") != "" {
+		t.Fatal("an empty statement has no fingerprint")
+	}
+}
+
 func TestMemoryConfigNormalizeRejectsUnknownWriteMode(t *testing.T) {
 	cfg := &MemoryConfig{WriteMode: "everything"}
 	cfg.Normalize()

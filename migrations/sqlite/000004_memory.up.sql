@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     source_message_id VARCHAR(36),
     valid_from DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     invalid_at DATETIME,
+    expires_at DATETIME,
     superseded_by VARCHAR(36),
     last_used_at DATETIME,
     use_count INTEGER NOT NULL DEFAULT 0,
@@ -46,6 +47,21 @@ CREATE INDEX IF NOT EXISTS idx_memory_items_scope
     ON memory_items (tenant_id, subject_id, status);
 CREATE INDEX IF NOT EXISTS idx_memory_items_key
     ON memory_items (tenant_id, subject_id, normalized_key);
+
+CREATE TABLE IF NOT EXISTS memory_tombstones (
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    subject_id VARCHAR(512) NOT NULL,
+    topic VARCHAR(255) NOT NULL DEFAULT '',
+    fingerprint VARCHAR(64) NOT NULL,
+    source_message_id VARCHAR(36),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_tombstones_scope
+    ON memory_tombstones (tenant_id, subject_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_tomb_fp
+    ON memory_tombstones (tenant_id, subject_id, fingerprint);
 
 ALTER TABLE tenants ADD COLUMN memory_config TEXT;
 ALTER TABLE messages ADD COLUMN used_memories TEXT;

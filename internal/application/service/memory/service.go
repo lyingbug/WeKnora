@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -23,6 +22,20 @@ var ErrMemoryDisabled = errors.New("memory: disabled for this scope")
 // own memory space. Scope mismatch and genuine absence deliberately produce
 // the same error so an id cannot be probed for existence across users.
 var ErrItemNotFound = errors.New("memory: item not found")
+
+// ErrPreviouslyForgotten means the statement matches one the user deleted.
+// Callers on the write path treat it as "nothing to do", not as a failure.
+var ErrPreviouslyForgotten = errors.New("memory: previously forgotten by the user")
+
+// ErrSensitiveContent means the statement was almost entirely credentials or
+// identity numbers, so redacting it left nothing worth remembering.
+var ErrSensitiveContent = errors.New("memory: statement was sensitive material")
+
+// rejectedMessageWindow is how long a rejected message keeps blocking
+// re-derivation. The case this closes is the debounced run that reads the same
+// message minutes after the user deleted what it produced; past that, whatever
+// the user said is treated fresh again.
+const rejectedMessageWindow = time.Hour
 
 // Service implements interfaces.MemoryService.
 type Service struct {
@@ -211,8 +224,43 @@ func (s *Service) write(
 	if content == "" {
 		return nil, errors.New("memory: empty content")
 	}
+	// Redact before anything else looks at the statement. A memory is injected
+	// into the system prompt of every later turn, so a credential that reaches
+	// storage is not merely retained, it is re-sent to a model repeatedly.
+	if redacted, changed := types.RedactSensitive(content); changed {
+		if types.IsMostlyRedacted(redacted) {
+			logger.Infof(ctx, "memory: dropped a statement that was mostly sensitive material")
+			return nil, ErrSensitiveContent
+		}
+		logger.Infof(ctx, "memory: redacted sensitive material before storing")
+		content = types.SanitizeMemoryContent(redacted)
+	}
 	if !types.IsValidMemoryKind(item.Kind) {
 		item.Kind = types.MemoryKindFact
+	}
+
+	// Something the user deliberately forgot must not come back the next time
+	// distillation reads the message it came from. Two checks, because the
+	// re-derived statement is usually worded slightly differently and so does
+	// not hash the same: the exact fingerprint, and whether the message it came
+	// from already produced a memory the user rejected.
+	forgotten, err := s.repo.HasTombstone(ctx, scope, types.MemoryFingerprint(content))
+	if err != nil {
+		return nil, fmt.Errorf("check forgotten memory: %w", err)
+	}
+	if !forgotten && item.SourceMessageID != "" && item.Origin == types.MemoryOriginExtracted {
+		// Only the background path is gated this way. An explicit "remember
+		// this" is the user asking again, and must always win.
+		forgotten, err = s.repo.HasTombstoneForMessage(
+			ctx, scope, item.SourceMessageID, rejectedMessageWindow,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("check forgotten source: %w", err)
+		}
+	}
+	if forgotten {
+		logger.Infof(ctx, "memory: skipped a statement the user previously deleted")
+		return nil, ErrPreviouslyForgotten
 	}
 	if _, err := s.repo.EnsureSubject(ctx, scope); err != nil {
 		return nil, fmt.Errorf("ensure memory subject: %w", err)
@@ -260,6 +308,7 @@ func (s *Service) write(
 		SourceSessionID: item.SourceSessionID,
 		SourceMessageID: item.SourceMessageID,
 		ValidFrom:       time.Now(),
+		ExpiresAt:       item.ExpiresAt,
 	}
 	if stored.Origin == "" {
 		stored.Origin = types.MemoryOriginExtracted
@@ -295,7 +344,7 @@ func (s *Service) findContainedDuplicate(
 	if err != nil {
 		return nil, false, fmt.Errorf("scan for duplicate memory: %w", err)
 	}
-	normalized := normalizeForContainment(content)
+	normalized := types.NormalizeMemoryForMatch(content)
 	if normalized == "" {
 		return nil, false, nil
 	}
@@ -303,7 +352,7 @@ func (s *Service) findContainedDuplicate(
 		if candidate == nil {
 			continue
 		}
-		existing := normalizeForContainment(candidate.Content)
+		existing := types.NormalizeMemoryForMatch(candidate.Content)
 		if existing == "" {
 			continue
 		}
@@ -315,19 +364,6 @@ func (s *Service) findContainedDuplicate(
 		}
 	}
 	return nil, false, nil
-}
-
-// normalizeForContainment strips whitespace and case so containment is not
-// defeated by spacing around Latin words inside a Chinese sentence.
-func normalizeForContainment(content string) string {
-	var builder strings.Builder
-	for _, r := range strings.ToLower(types.SanitizeMemoryContent(content)) {
-		if unicode.IsSpace(r) {
-			continue
-		}
-		builder.WriteRune(r)
-	}
-	return builder.String()
 }
 
 // enforceCapacity archives the lowest ranked items once the subject exceeds
@@ -449,6 +485,14 @@ func (s *Service) DeleteItem(ctx context.Context, id string) error {
 	if existing == nil {
 		return ErrItemNotFound
 	}
+	// Record the rejection before removing the row. Deleting a memory that
+	// distillation is about to re-derive from the same message is how a user
+	// ends up deleting the same thing twice and stops trusting the feature.
+	if err := s.repo.AddTombstone(
+		ctx, scope, existing.Topic, types.MemoryFingerprint(existing.Content), existing.SourceMessageID,
+	); err != nil {
+		logger.Warnf(ctx, "memory: record tombstone failed: %v", err)
+	}
 	if err := s.repo.DeleteItem(ctx, scope, id); err != nil {
 		return err
 	}
@@ -461,6 +505,22 @@ func (s *Service) Clear(ctx context.Context) (int64, error) {
 	scope, err := ResolveScope(ctx)
 	if err != nil {
 		return 0, err
+	}
+	// Clearing is a rejection of everything currently stored, so it leaves the
+	// same tombstones an individual delete would.
+	items, _, err := s.repo.ListItems(ctx, scope, "", types.MaxMemoryTombstones, 0)
+	if err != nil {
+		return 0, err
+	}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if err := s.repo.AddTombstone(
+			ctx, scope, item.Topic, types.MemoryFingerprint(item.Content), item.SourceMessageID,
+		); err != nil {
+			logger.Warnf(ctx, "memory: record tombstone during clear failed: %v", err)
+		}
 	}
 	removed, err := s.repo.DeleteAll(ctx, scope)
 	if err != nil {
