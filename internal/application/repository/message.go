@@ -171,7 +171,7 @@ func (r *messageRepository) GetMessageByRequestID(
 
 // SearchMessagesByKeyword searches messages by keyword (ILIKE) across sessions for a tenant
 func (r *messageRepository) SearchMessagesByKeyword(
-	ctx context.Context, tenantID uint64, keyword string, sessionIDs []string, limit int,
+	ctx context.Context, tenantID uint64, ownerID, keyword string, sessionIDs []string, limit int,
 ) ([]*types.MessageWithSession, error) {
 	if limit <= 0 {
 		limit = 20
@@ -187,6 +187,12 @@ func (r *messageRepository) SearchMessagesByKeyword(
 		Where("messages.deleted_at IS NULL").
 		Where("messages.content ILIKE ?", "%"+escapeLikeKeyword(keyword)+"%")
 
+	// Matches the scoping used when listing sessions, including the legacy
+	// allowance for tenant-level sessions created before per-user ownership.
+	if ownerID != "" {
+		query = query.Where("(sessions.user_id = ? OR sessions.user_id IS NULL OR sessions.user_id = '')", ownerID)
+	}
+
 	if len(sessionIDs) > 0 {
 		query = query.Where("messages.session_id IN ?", sessionIDs)
 	}
@@ -196,6 +202,37 @@ func (r *messageRepository) SearchMessagesByKeyword(
 	}
 
 	return results, nil
+}
+
+// OwnedSessionIDs narrows a set of session ids to the ones this person owns.
+//
+// The vector path finds messages through a shared knowledge base that has no
+// notion of who wrote them, so ownership has to be re-established here before
+// anything is returned.
+func (r *messageRepository) OwnedSessionIDs(
+	ctx context.Context, tenantID uint64, ownerID string, sessionIDs []string,
+) (map[string]bool, error) {
+	owned := make(map[string]bool, len(sessionIDs))
+	if len(sessionIDs) == 0 {
+		return owned, nil
+	}
+	var ids []string
+	query := r.db.WithContext(ctx).
+		Table("sessions").
+		Select("id").
+		Where("tenant_id = ?", tenantID).
+		Where("deleted_at IS NULL").
+		Where("id IN ?", sessionIDs)
+	if ownerID != "" {
+		query = query.Where("(user_id = ? OR user_id IS NULL OR user_id = '')", ownerID)
+	}
+	if err := query.Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		owned[id] = true
+	}
+	return owned, nil
 }
 
 // GetMessagesByKnowledgeIDs retrieves messages by their associated Knowledge IDs
