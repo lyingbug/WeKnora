@@ -204,6 +204,46 @@ func (h *MemoryHandler) DeleteItem(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+// ConfirmItem godoc
+// @Summary      确认一条推断出的记忆
+// @Description  接受系统推断的记忆，使其开始生效
+// @Tags         长期记忆
+// @Produce      json
+// @Param        id   path      string  true  "记忆 ID"
+// @Success      200  {object}  map[string]interface{}  "确认成功"
+// @Security     Bearer
+// @Router       /memory/items/{id}/confirm [post]
+//
+// Inferred memories are the ones worth having and the ones most likely to be
+// wrong, so they wait here rather than taking effect silently.
+func (h *MemoryHandler) ConfirmItem(c *gin.Context) {
+	ctx := c.Request.Context()
+	item, err := h.memoryService.ConfirmItem(ctx, c.Param("id"))
+	if err != nil {
+		h.fail(c, err, "Failed to confirm memory")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": item})
+}
+
+// RejectItem godoc
+// @Summary      否决一条推断出的记忆
+// @Description  拒绝系统推断的记忆，并记住这次拒绝
+// @Tags         长期记忆
+// @Produce      json
+// @Param        id   path      string  true  "记忆 ID"
+// @Success      200  {object}  map[string]interface{}  "否决成功"
+// @Security     Bearer
+// @Router       /memory/items/{id}/reject [post]
+func (h *MemoryHandler) RejectItem(c *gin.Context) {
+	ctx := c.Request.Context()
+	if err := h.memoryService.RejectItem(ctx, c.Param("id")); err != nil {
+		h.fail(c, err, "Failed to reject memory")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
 // Clear godoc
 // @Summary      清空我的记忆
 // @Description  永久删除当前用户的全部记忆

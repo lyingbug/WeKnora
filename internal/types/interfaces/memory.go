@@ -92,6 +92,9 @@ type MemoryRepository interface {
 	// ExpireOverdue archives items whose expires_at has passed and returns how
 	// many were archived.
 	ExpireOverdue(ctx context.Context, scope MemoryScope) (int64, error)
+	// MarkConsolidated records that this subject's whole store was just
+	// reviewed, so the next review waits out the interval.
+	MarkConsolidated(ctx context.Context, scope MemoryScope) error
 	// SetItemStatus moves an item between statuses, used to confirm or reject
 	// something the system inferred.
 	SetItemStatus(ctx context.Context, scope MemoryScope, id, status string) error
@@ -182,6 +185,11 @@ type MemoryService interface {
 	ListItems(ctx context.Context, status string, limit, offset int) ([]*types.MemoryItem, int64, error)
 	// CreateItem adds a memory typed by the user in the memory manager.
 	CreateItem(ctx context.Context, kind, content string, importance int) (*types.MemoryItem, error)
+	// ConfirmItem accepts a memory the system inferred, so it starts being used.
+	ConfirmItem(ctx context.Context, id string) (*types.MemoryItem, error)
+	// RejectItem declines an inference and remembers the refusal, so the same
+	// guess is not proposed again next week.
+	RejectItem(ctx context.Context, id string) error
 	// UpdateItem edits one item's content and importance.
 	UpdateItem(ctx context.Context, id, content string, importance int) (*types.MemoryItem, error)
 	// DeleteItem forgets one item.

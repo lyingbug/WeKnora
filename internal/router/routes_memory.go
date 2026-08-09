@@ -27,6 +27,8 @@ func RegisterMemoryRoutes(r *gin.RouterGroup, memoryHandler *handler.MemoryHandl
 		memoryGroup.DELETE("/items", memoryHandler.Clear)
 		memoryGroup.PUT("/items/:id", memoryHandler.UpdateItem)
 		memoryGroup.DELETE("/items/:id", memoryHandler.DeleteItem)
+		memoryGroup.POST("/items/:id/confirm", memoryHandler.ConfirmItem)
+		memoryGroup.POST("/items/:id/reject", memoryHandler.RejectItem)
 		memoryGroup.GET("/export", memoryHandler.Export)
 	}
 }

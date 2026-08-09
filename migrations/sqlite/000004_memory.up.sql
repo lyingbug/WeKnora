@@ -97,3 +97,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_affinity_scope
 
 ALTER TABLE tenants ADD COLUMN memory_config TEXT;
 ALTER TABLE messages ADD COLUMN used_memories TEXT;
+
+ALTER TABLE memory_subjects ADD COLUMN consolidated_at DATETIME;

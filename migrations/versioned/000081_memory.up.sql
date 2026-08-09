@@ -137,3 +137,5 @@ ALTER TABLE tenants ADD COLUMN IF NOT EXISTS memory_config JSONB;
 -- Which memories were injected into this answer. Persisted rather than only
 -- streamed so reopening a conversation still shows what the answer saw.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS used_memories JSONB;
+
+ALTER TABLE memory_subjects ADD COLUMN IF NOT EXISTS consolidated_at TIMESTAMP WITH TIME ZONE;

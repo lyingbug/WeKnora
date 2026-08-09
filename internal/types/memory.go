@@ -170,8 +170,13 @@ type MemorySubject struct {
 	// ExtractScheduledAt marks a distillation task as in flight, so concurrent
 	// turns enqueue one task rather than one per turn.
 	ExtractScheduledAt *time.Time `json:"extract_scheduled_at" gorm:"column:extract_scheduled_at"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	// ConsolidatedAt is when this subject's memories were last reviewed as a
+	// whole rather than one turn at a time. Distillation only ever sees the
+	// newest conversation, so nothing else notices that five turns over three
+	// weeks have said the same thing five slightly different ways.
+	ConsolidatedAt *time.Time `json:"consolidated_at" gorm:"column:consolidated_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 // MemoryPendingSessions is the persisted queue of sessions awaiting

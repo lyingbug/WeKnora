@@ -332,6 +332,11 @@ func (s *Service) Handle(ctx context.Context, task *asynq.Task) error {
 	// working. Both mean there is more to read, and both are how the "every
 	// message is eventually considered" guarantee survives a busy user.
 	s.scheduleFollowUpIfNeeded(ctx, scope, cfg, payload, truncated)
+
+	// Maintenance rides along on a background run that has already happened
+	// rather than needing its own scheduler, which keeps it working identically
+	// in Lite mode where there is no asynq worker to hold a periodic job.
+	s.consolidateIfDue(ctx, scope, cfg)
 	return nil
 }
 
