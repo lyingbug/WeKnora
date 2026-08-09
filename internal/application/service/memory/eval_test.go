@@ -103,7 +103,7 @@ func TestEvalSetIsWellFormed(t *testing.T) {
 		seen[c.Name] = struct{}{}
 		require.NotEmpty(t, c.Lines, "case %q has nothing to extract from", c.Name)
 
-		prompt := buildExtractionPrompt(segmentForCase(c), existingForCase(c), nil, "")
+		prompt := buildExtractionPrompt(segmentForCase(c), existingForCase(c), nil, nil, "")
 		for _, line := range c.Lines {
 			require.Contains(t, prompt, line, "case %q: line missing from the prompt", c.Name)
 		}
@@ -225,7 +225,7 @@ func TestPromptEval(t *testing.T) {
 	set := loadEvalSet(t)
 	passed := 0
 	for _, c := range set.Cases {
-		prompt := buildExtractionPrompt(segmentForCase(c), existingForCase(c), nil, "")
+		prompt := buildExtractionPrompt(segmentForCase(c), existingForCase(c), nil, nil, "")
 		decisions, err := runEvalExtraction(context.Background(), chatModel, prompt)
 		if err != nil {
 			t.Errorf("case %q: %v", c.Name, err)

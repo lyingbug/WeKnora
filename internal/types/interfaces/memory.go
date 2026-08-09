@@ -104,7 +104,9 @@ type MemoryRepository interface {
 
 	// BumpTopic records one more sighting of a topic and returns the running
 	// total, so a caller can decide whether it has recurred enough to promote.
-	BumpTopic(ctx context.Context, scope MemoryScope, topic, normalizedKey string) (*types.MemoryTopicStat, error)
+	BumpTopic(
+		ctx context.Context, scope MemoryScope, topic, normalizedKey, alias string,
+	) (*types.MemoryTopicStat, error)
 	// MarkTopicPromoted stops a topic from being promoted again.
 	MarkTopicPromoted(ctx context.Context, scope MemoryScope, normalizedKey string) error
 	// TopTopics returns the most-asked topics, newest activity first.

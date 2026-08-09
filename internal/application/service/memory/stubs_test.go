@@ -119,8 +119,12 @@ func (s *stubMessageRepo) ListMessagesBySessionAfterTime(
 type stubModelService struct {
 	interfaces.ModelService
 
-	mu               sync.Mutex
-	response         string
+	mu       sync.Mutex
+	response string
+	// responseFor lets one stub answer two different prompts. Distillation and
+	// topic adjudication both go through this model, and a test that pins one
+	// must not accidentally pin the other.
+	responseFor      map[string]string
 	requestedModelID string
 	lastPrompt       string
 	// prompts records every transcript the model was asked about, so a test
@@ -138,6 +142,13 @@ func (s *stubModelService) GetChatModel(_ context.Context, modelID string) (chat
 	s.requestedModelID = modelID
 	s.mu.Unlock()
 	return &stubChatModel{owner: s}, nil
+}
+
+// callCount is how many times the model has been asked anything.
+func (s *stubModelService) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
 }
 
 // seenTranscripts concatenates every prompt the model received.
@@ -171,7 +182,14 @@ func (m *stubChatModel) Chat(
 		m.owner.failNext = false
 		return nil, errors.New("stub model outage")
 	}
-	return &types.ChatResponse{Content: m.owner.response}, nil
+	body := m.owner.response
+	for marker, canned := range m.owner.responseFor {
+		if strings.Contains(prompt.String(), marker) {
+			body = canned
+			break
+		}
+	}
+	return &types.ChatResponse{Content: body}, nil
 }
 
 func (m *stubChatModel) ChatStream(

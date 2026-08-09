@@ -745,15 +745,36 @@ func (s *Service) observeTopics(
 		return nil
 	}
 
+	// Clean the labels first, then resolve them against the subjects this
+	// person already has. Counting the raw string is what made this feature
+	// silently useless: a model names the same subject differently every run,
+	// so each sighting landed under its own key and no topic ever recurred.
+	surfaces := make([]string, 0, len(topics))
+	for _, topic := range topics {
+		if topic = types.SanitizeMemoryTopic(topic); topic != "" {
+			surfaces = append(surfaces, topic)
+		}
+	}
+	if len(surfaces) == 0 {
+		return nil
+	}
+	resolutions := s.resolveTopics(ctx, scope, cfg, surfaces)
+
 	threshold := cfg.EffectiveInterestThreshold()
 	var promoted []string
-	for _, topic := range topics {
-		topic = types.SanitizeMemoryTopic(topic)
-		if topic == "" {
+	for _, resolution := range resolutions {
+		// The stored label stays the one this subject was first recorded under,
+		// so a person's topic list does not churn its wording every time the
+		// model rephrases. The new wording is kept as an alias.
+		canonicalTopic := resolution.Surface
+		if resolution.Canonical != nil {
+			canonicalTopic = resolution.Canonical.Topic
+		}
+		key := types.NormalizeTopicKey(canonicalTopic)
+		if key == "" {
 			continue
 		}
-		key := types.NormalizeMemoryKey(topic, topic)
-		stat, err := s.repo.BumpTopic(ctx, scope, topic, key)
+		stat, err := s.repo.BumpTopic(ctx, scope, canonicalTopic, key, resolution.Surface)
 		if err != nil {
 			logger.Warnf(ctx, "memory: count topic failed: %v", err)
 			continue
@@ -763,8 +784,8 @@ func (s *Service) observeTopics(
 		}
 		if _, err := s.write(ctx, scope, cfg, types.MemoryItem{
 			Kind:       types.MemoryKindInterest,
-			Topic:      topic,
-			Content:    topic,
+			Topic:      canonicalTopic,
+			Content:    canonicalTopic,
 			Importance: 3,
 			Origin:     types.MemoryOriginExtracted,
 		}); err != nil {
@@ -777,7 +798,7 @@ func (s *Service) observeTopics(
 		if err := s.repo.MarkTopicPromoted(ctx, scope, key); err != nil {
 			logger.Warnf(ctx, "memory: mark topic promoted failed: %v", err)
 		}
-		promoted = append(promoted, topic)
+		promoted = append(promoted, canonicalTopic)
 	}
 	if len(promoted) > 0 {
 		logger.Infof(ctx, "memory: promoted %d recurring topics into interests", len(promoted))

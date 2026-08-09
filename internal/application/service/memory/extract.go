@@ -302,7 +302,13 @@ func (s *Service) Handle(ctx context.Context, task *asynq.Task) error {
 			logger.Warnf(ctx, "memory: load tombstones failed: %v", err)
 		}
 
-		parsed, err := s.callExtractionModel(ctx, cfg, payload, segment, existing, forgotten)
+		knownTopics, err := s.repo.TopTopics(ctx, scope, topicCandidateLimit)
+		if err != nil {
+			logger.Warnf(ctx, "memory: load known topics failed: %v", err)
+			knownTopics = nil
+		}
+
+		parsed, err := s.callExtractionModel(ctx, cfg, payload, segment, existing, forgotten, knownTopics)
 		if err != nil {
 			// Leave the watermark where it is: the messages this run failed on
 			// must be read again, not skipped. Advancing over the segments that
@@ -699,6 +705,7 @@ func buildExtractionPrompt(
 	segment transcriptSegment,
 	existing []*types.MemoryItem,
 	forgotten []*types.MemoryTombstone,
+	knownTopics []*types.MemoryTopicStat,
 	instructions string,
 ) string {
 	var builder strings.Builder
@@ -735,6 +742,21 @@ func buildExtractionPrompt(
 		}
 	}
 
+	if len(knownTopics) > 0 {
+		// Showing the vocabulary and asking for reuse is the cheapest tier of
+		// topic resolution and the one that fires most often: a model that
+		// echoes an existing label costs nothing to match, while a model left
+		// to invent a name will invent a different one every run.
+		builder.WriteString("\nTopics already tracked for this user. When the transcript is about " +
+			"one of these, reuse its label EXACTLY as written rather than inventing a new wording:\n")
+		for _, stat := range knownTopics {
+			if stat == nil || stat.Topic == "" {
+				continue
+			}
+			fmt.Fprintf(&builder, "- %s\n", stat.Topic)
+		}
+	}
+
 	if instructions != "" {
 		builder.WriteString("\nWorkspace rules (follow these in addition to the above):\n<rules>\n")
 		builder.WriteString(instructions)
@@ -757,6 +779,7 @@ func (s *Service) callExtractionModel(
 	segment transcriptSegment,
 	existing []*types.MemoryItem,
 	forgotten []*types.MemoryTombstone,
+	knownTopics []*types.MemoryTopicStat,
 ) (extractionResponse, error) {
 	// The settings UI says a blank extraction model means "use the model the
 	// conversation used", so a blank value must resolve, not fail.
@@ -773,7 +796,7 @@ func (s *Service) callExtractionModel(
 		return extractionResponse{}, fmt.Errorf("get extraction model: %w", err)
 	}
 
-	userPrompt := buildExtractionPrompt(segment, existing, forgotten, cfg.ExtractInstructions)
+	userPrompt := buildExtractionPrompt(segment, existing, forgotten, knownTopics, cfg.ExtractInstructions)
 
 	response, err := chatModel.Chat(ctx, []chat.Message{
 		{Role: "system", Content: extractionSystemPrompt},

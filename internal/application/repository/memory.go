@@ -565,7 +565,7 @@ func (r *memoryRepository) SetItemStatus(
 // BumpTopic counts one more sighting. The insert-then-increment shape keeps two
 // concurrent turns from both deciding the topic is new.
 func (r *memoryRepository) BumpTopic(
-	ctx context.Context, scope interfaces.MemoryScope, topic, normalizedKey string,
+	ctx context.Context, scope interfaces.MemoryScope, topic, normalizedKey, alias string,
 ) (*types.MemoryTopicStat, error) {
 	if normalizedKey == "" {
 		return nil, nil
@@ -607,6 +607,23 @@ func (r *memoryRepository) BumpTopic(
 		Where("normalized_key = ?", normalizedKey).
 		First(&updated).Error; err != nil {
 		return nil, err
+	}
+
+	// Record the wording this sighting arrived as, so the same phrasing
+	// resolves by exact match next time instead of being re-adjudicated.
+	if alias != "" && !updated.Aliases.Has(alias) &&
+		types.NormalizeTopicKey(alias) != updated.NormalizedKey {
+		aliases := append(updated.Aliases, alias)
+		if len(aliases) > 12 {
+			aliases = aliases[len(aliases)-12:]
+		}
+		if err := r.scoped(ctx, scope).
+			Model(&types.MemoryTopicStat{}).
+			Where("normalized_key = ?", normalizedKey).
+			Updates(map[string]interface{}{"aliases": aliases, "updated_at": now}).Error; err != nil {
+			return nil, err
+		}
+		updated.Aliases = aliases
 	}
 	return &updated, nil
 }

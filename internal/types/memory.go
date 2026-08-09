@@ -612,19 +612,74 @@ func MemoryFingerprint(content string) string {
 // is the reason a knowledge-base question can produce memory at all without
 // producing a memory every time.
 type MemoryTopicStat struct {
-	ID            string     `json:"id"         gorm:"primaryKey;type:varchar(36)"`
-	TenantID      uint64     `json:"tenant_id"  gorm:"not null;uniqueIndex:idx_mem_topic_scope,priority:1"`
-	SubjectID     string     `json:"subject_id" gorm:"type:varchar(512);not null;uniqueIndex:idx_mem_topic_scope,priority:2"`
-	NormalizedKey string     `json:"normalized_key" gorm:"type:varchar(255);not null;uniqueIndex:idx_mem_topic_scope,priority:3"`
-	Topic         string     `json:"topic"      gorm:"type:varchar(255);not null;default:''"`
-	Hits          int        `json:"hits"       gorm:"not null;default:0"`
-	LastSeenAt    time.Time  `json:"last_seen_at" gorm:"column:last_seen_at"`
-	PromotedAt    *time.Time `json:"promoted_at"  gorm:"column:promoted_at"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID            string `json:"id"         gorm:"primaryKey;type:varchar(36)"`
+	TenantID      uint64 `json:"tenant_id"  gorm:"not null;uniqueIndex:idx_mem_topic_scope,priority:1"`
+	SubjectID     string `json:"subject_id" gorm:"type:varchar(512);not null;uniqueIndex:idx_mem_topic_scope,priority:2"`
+	NormalizedKey string `json:"normalized_key" gorm:"type:varchar(255);not null;uniqueIndex:idx_mem_topic_scope,priority:3"`
+	Topic         string `json:"topic"      gorm:"type:varchar(255);not null;default:''"`
+	// Aliases are the other wordings this same subject has arrived as. A model
+	// asked to name a topic will not name it the same way twice, so the label
+	// the user sees is the canonical one and every surface form that resolved
+	// to it is kept here — both as an audit trail and as an exact-match index
+	// that saves the resolver from re-deciding the same question.
+	Aliases    MemoryTopicAliases `json:"aliases" gorm:"type:jsonb;column:aliases"`
+	Hits       int                `json:"hits"       gorm:"not null;default:0"`
+	LastSeenAt time.Time          `json:"last_seen_at" gorm:"column:last_seen_at"`
+	PromotedAt *time.Time         `json:"promoted_at"  gorm:"column:promoted_at"`
+	CreatedAt  time.Time          `json:"created_at"`
+	UpdatedAt  time.Time          `json:"updated_at"`
 }
 
 func (MemoryTopicStat) TableName() string { return "memory_topic_stats" }
+
+// MemoryTopicAliases is the list of surface forms that resolved to one topic.
+type MemoryTopicAliases []string
+
+func (a MemoryTopicAliases) Value() (driver.Value, error) {
+	if len(a) == 0 {
+		return "[]", nil
+	}
+	data, err := json.Marshal(a)
+	if err != nil {
+		return nil, err
+	}
+	return string(data), nil
+}
+
+func (a *MemoryTopicAliases) Scan(value interface{}) error {
+	if value == nil {
+		*a = nil
+		return nil
+	}
+	var data []byte
+	switch v := value.(type) {
+	case []byte:
+		data = v
+	case string:
+		data = []byte(v)
+	default:
+		return fmt.Errorf("unsupported type for MemoryTopicAliases: %T", value)
+	}
+	if len(data) == 0 {
+		*a = nil
+		return nil
+	}
+	return json.Unmarshal(data, a)
+}
+
+// Has reports whether a surface form has already resolved to this topic.
+func (a MemoryTopicAliases) Has(surface string) bool {
+	target := NormalizeTopicKey(surface)
+	if target == "" {
+		return false
+	}
+	for _, alias := range a {
+		if NormalizeTopicKey(alias) == target {
+			return true
+		}
+	}
+	return false
+}
 
 // MemoryDocAffinity records how often one person's answers drew on a document.
 //
@@ -950,4 +1005,110 @@ func MergeUsedMemories(existing, additional []UsedMemory) []UsedMemory {
 		}
 	}
 	return merged
+}
+
+// topicNoiseRunes are characters that carry no subject information on their
+// own. They are dropped from a topic key so "儿童游泳赛事的组织" and
+// "儿童游泳赛事组织" are recognised as the same subject.
+var topicNoiseRunes = map[rune]struct{}{
+	'的': {}, '了': {}, '地': {}, '得': {}, '之': {}, '与': {}, '和': {}, '及': {},
+	'在': {}, '是': {}, '有': {}, '个': {}, '等': {}, '对': {}, '于': {},
+}
+
+// topicNoiseWords are trailing qualifiers people and models add to the same
+// subject interchangeably: "PostgreSQL 连接池" and "PostgreSQL 连接池问题" are
+// one topic, not two.
+var topicNoiseWords = []string{
+	"相关问题", "相关", "问题", "方面", "情况", "事宜", "工作", "方向",
+}
+
+// NormalizeTopicKey reduces a topic label to a stable identity key.
+//
+// This is deliberately NOT NormalizeMemoryKey, which sorts and de-duplicates
+// characters. That behaviour is defensible for a memory item — where word order
+// should not matter and a containment check catches what it misses — but as a
+// topic identity it is wrong in both directions: it treats "儿童游泳赛事组织"
+// and "儿童游泳赛事的组织" as different subjects because of one extra
+// character, and it would treat two anagrams as the same one.
+//
+// Order is preserved here, and only genuinely uninformative characters and
+// trailing qualifiers are removed. Everything a model might vary that is not
+// purely cosmetic — synonyms, different phrasings — is left for the resolver,
+// which has more than string comparison available to it.
+func NormalizeTopicKey(topic string) string {
+	topic = strings.ToLower(strings.TrimSpace(topic))
+	if topic == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, r := range topic {
+		if _, noise := topicNoiseRunes[r]; noise {
+			continue
+		}
+		switch {
+		case unicode.Is(unicode.Han, r), unicode.IsLetter(r), unicode.IsDigit(r):
+			b.WriteRune(r)
+		}
+	}
+	key := b.String()
+
+	for _, suffix := range topicNoiseWords {
+		trimmed := strings.TrimSuffix(key, suffix)
+		if trimmed != key && trimmed != "" {
+			key = trimmed
+			break
+		}
+	}
+
+	if runes := []rune(key); len(runes) > 120 {
+		key = string(runes[:120])
+	}
+	return key
+}
+
+// TopicSimilarity scores two topic labels on shared character bigrams.
+//
+// Bigrams rather than whole words because Chinese has no word separators, and
+// Dice rather than Jaccard because it is more forgiving of one label being
+// longer than the other — which is the common case when a model elaborates
+// ("游泳赛事组织" vs "儿童游泳赛事组织").
+func TopicSimilarity(a, b string) float64 {
+	left, right := topicBigrams(a), topicBigrams(b)
+	if len(left) == 0 || len(right) == 0 {
+		return 0
+	}
+	shared := 0
+	for gram := range left {
+		if _, ok := right[gram]; ok {
+			shared++
+		}
+	}
+	return 2 * float64(shared) / float64(len(left)+len(right))
+}
+
+func topicBigrams(topic string) map[string]struct{} {
+	runes := []rune(NormalizeTopicKey(topic))
+	grams := make(map[string]struct{})
+	if len(runes) == 0 {
+		return grams
+	}
+	if len(runes) == 1 {
+		grams[string(runes)] = struct{}{}
+		return grams
+	}
+	for i := 0; i+1 < len(runes); i++ {
+		grams[string(runes[i:i+2])] = struct{}{}
+	}
+	return grams
+}
+
+// TopicIsSpecificEnoughToMatchLoosely gates fuzzy matching.
+//
+// Graphiti skips fuzzy matching for low-entropy names for the same reason: on a
+// two-character label, a single shared bigram is most of the score, so fuzzy
+// matching mostly produces false merges. Short labels fall through to the
+// resolver's slower and more accurate tier instead.
+func TopicIsSpecificEnoughToMatchLoosely(topic string) bool {
+	return len([]rune(NormalizeTopicKey(topic))) >= 4
 }

@@ -99,3 +99,5 @@ ALTER TABLE tenants ADD COLUMN memory_config TEXT;
 ALTER TABLE messages ADD COLUMN used_memories TEXT;
 
 ALTER TABLE memory_subjects ADD COLUMN consolidated_at DATETIME;
+
+ALTER TABLE memory_topic_stats ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]';
