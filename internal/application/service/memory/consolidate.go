@@ -45,7 +45,7 @@ const (
 //
 // It never runs on the request path.
 func (s *Service) consolidateIfDue(
-	ctx context.Context, scope interfaces.MemoryScope, cfg *types.MemoryConfig,
+	ctx context.Context, scope interfaces.MemoryScope, cfg *types.MemoryConfig, modelID string,
 ) {
 	subject, err := s.repo.GetSubject(ctx, scope)
 	if err != nil || subject == nil {
@@ -71,7 +71,7 @@ func (s *Service) consolidateIfDue(
 	demoted := s.demoteStaleTasks(ctx, scope, items)
 	merged := 0
 	if len(items) >= consolidateMinItems {
-		merged = s.mergeRedundant(ctx, scope, cfg, items)
+		merged = s.mergeRedundant(ctx, scope, cfg, modelID, items)
 	}
 
 	if err := s.repo.MarkConsolidated(ctx, scope); err != nil {
@@ -119,7 +119,11 @@ func (s *Service) demoteStaleTasks(
 
 // mergeRedundant folds groups of near-duplicate memories into one statement.
 func (s *Service) mergeRedundant(
-	ctx context.Context, scope interfaces.MemoryScope, cfg *types.MemoryConfig, items []*types.MemoryItem,
+	ctx context.Context,
+	scope interfaces.MemoryScope,
+	cfg *types.MemoryConfig,
+	modelID string,
+	items []*types.MemoryItem,
 ) int {
 	clusters := clusterSimilar(items)
 	if len(clusters) == 0 {
@@ -131,7 +135,7 @@ func (s *Service) mergeRedundant(
 
 	merged := 0
 	for _, cluster := range clusters {
-		statement, ok := s.callConsolidationModel(ctx, cfg, cluster)
+		statement, ok := s.callConsolidationModel(ctx, modelID, cluster)
 		if !ok {
 			continue
 		}
@@ -250,9 +254,8 @@ var consolidationSchema = json.RawMessage(`{
 
 // callConsolidationModel asks the model to merge one cluster.
 func (s *Service) callConsolidationModel(
-	ctx context.Context, cfg *types.MemoryConfig, cluster []*types.MemoryItem,
+	ctx context.Context, modelID string, cluster []*types.MemoryItem,
 ) (string, bool) {
-	modelID := cfg.ExtractModelID
 	if modelID == "" {
 		return "", false
 	}

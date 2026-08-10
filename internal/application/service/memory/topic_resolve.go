@@ -65,7 +65,7 @@ type topicResolution struct {
 func (s *Service) resolveTopics(
 	ctx context.Context,
 	scope interfaces.MemoryScope,
-	cfg *types.MemoryConfig,
+	modelID string,
 	surfaces []string,
 ) []topicResolution {
 	if len(surfaces) == 0 {
@@ -95,7 +95,7 @@ func (s *Service) resolveTopics(
 	}
 
 	if len(unresolved) > 0 && len(existing) > 0 {
-		s.adjudicateTopics(ctx, cfg, existing, resolutions, unresolved)
+		s.adjudicateTopics(ctx, modelID, existing, resolutions, unresolved)
 	}
 
 	// Two labels in the same run can be the same new subject. Without this the
@@ -186,15 +186,23 @@ var topicAdjudicationSchema = json.RawMessage(`{
 // the decision is the same shape for all of them.
 func (s *Service) adjudicateTopics(
 	ctx context.Context,
-	cfg *types.MemoryConfig,
+	modelID string,
 	existing []*types.MemoryTopicStat,
 	resolutions []topicResolution,
 	unresolved []int,
 ) {
-	if cfg == nil || cfg.ExtractModelID == "" {
+	if modelID == "" {
+		// Nothing to fall back on. Every label here becomes its own subject,
+		// which is the wrong answer but a visible one — as opposed to silently
+		// skipping the tier, which is what happened while this checked the
+		// configured extraction model directly: blank is the *default* and
+		// means "use the conversation model", so on a default workspace the
+		// model tier never ran and every rephrasing sat in its own row at one
+		// hit, forever short of the promotion threshold.
+		logger.Warnf(ctx, "memory: no model available to resolve %d new topics", len(unresolved))
 		return
 	}
-	chatModel, err := s.modelService.GetChatModel(ctx, cfg.ExtractModelID)
+	chatModel, err := s.modelService.GetChatModel(ctx, modelID)
 	if err != nil || chatModel == nil {
 		logger.Warnf(ctx, "memory: topic adjudication model unavailable: %v", err)
 		return

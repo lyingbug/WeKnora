@@ -135,7 +135,9 @@ type stubModelService struct {
 	// lastBudget is the completion ceiling the last call asked for.
 	lastBudget int
 	// lastThinking is the thinking flag the last call passed.
-	lastThinking     *bool
+	lastThinking *bool
+	// workspaceModels backs ListModels.
+	workspaceModels  []*types.Model
 	requestedModelID string
 	lastPrompt       string
 	// prompts records every transcript the model was asked about, so a test
@@ -146,6 +148,14 @@ type stubModelService struct {
 	failNext bool
 	// lastFormat records the response schema the caller asked for.
 	lastFormat json.RawMessage
+}
+
+// workspaceModels is what ListModels returns, so a test can reproduce a
+// workspace that has a usable model and one that has none.
+func (s *stubModelService) ListModels(context.Context) ([]*types.Model, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.workspaceModels, nil
 }
 
 func (s *stubModelService) GetChatModel(_ context.Context, modelID string) (chat.Chat, error) {

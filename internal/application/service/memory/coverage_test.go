@@ -425,3 +425,81 @@ func TestExtractionDoesNotAskTheModelToThink(t *testing.T) {
 	require.NotNil(t, thinking, "leaving it unset defers to the model, which is how this broke")
 	require.False(t, *thinking)
 }
+
+// "Blank extraction model" is the default and the settings UI promises it means
+// "use the model the conversation used". When nothing can be resolved, the run
+// used to log and return success, which advanced the watermark over messages no
+// model had read. A workspace on defaults therefore had memory enabled, tasks
+// succeeding, and nothing whatsoever learned.
+func TestNoAvailableModelDoesNotConsumeTheMessages(t *testing.T) {
+	svc, tenantRepo, messages, _, enqueuer := newExtractionHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	tenantRepo.set(1, &types.MemoryConfig{
+		Enabled: true, WriteMode: types.MemoryWriteAuto,
+		ExtractModelID: "", ExtractDelaySeconds: 1,
+	})
+
+	messages.set("session-1", []*types.Message{
+		userMessage("session-1", "我在做医疗影像的后端", time.Now().Add(-time.Hour)),
+	})
+	// Schedule with no conversation model either, which is what the QA path
+	// actually passes: the effective model is resolved inside the pipeline and
+	// never written back onto the message.
+	svc.ScheduleExtraction(ctx, "session-1", "message-1", "")
+
+	task := enqueuer.pop()
+	require.NotNil(t, task)
+	require.Error(t, svc.Handle(context.Background(), task))
+
+	scope, err := ResolveScope(ctx)
+	require.NoError(t, err)
+	subject, err := svc.repo.GetSubject(context.Background(), scope)
+	require.NoError(t, err)
+	require.True(t, subject.ExtractCursor == nil || subject.ExtractCursor.IsZero(),
+		"messages no model ever read must not be marked as read")
+}
+
+// The model tier of topic resolution has to use the same fallback the
+// extraction call does. While it read the configured model directly, a default
+// workspace lost the tier entirely — and losing it looks exactly like the
+// symptom that led here: several wordings of one subject, each in its own row,
+// each stuck at one hit, none ever reaching the threshold.
+func TestTopicResolutionUsesTheSameModelFallbackAsExtraction(t *testing.T) {
+	svc, tenantRepo, messages, models, enqueuer := newExtractionHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	tenantRepo.set(1, &types.MemoryConfig{
+		Enabled: true, WriteMode: types.MemoryWriteAuto,
+		ExtractModelID: "", ExtractDelaySeconds: 1, InterestThreshold: 3,
+	})
+	scope, err := ResolveScope(ctx)
+	require.NoError(t, err)
+
+	models.responseFor = map[string]string{
+		"你在维护一个人的关注主题列表": `{"resolutions":[{"index":0,"same_as":0}]}`,
+	}
+	models.response = `{"memories":[],"topics":["北京市儿童游泳比赛参赛选手"]}`
+	messages.set("session-1", []*types.Message{
+		userMessage("session-1", "参赛选手名单在哪查", time.Now().Add(-2*time.Hour)),
+	})
+	svc.ScheduleExtraction(ctx, "session-1", "message-1", "conversation-model")
+	drainExtractions(t, svc, enqueuer)
+
+	// A second, lexically distant wording of the same subject. Only the model
+	// tier can resolve it, and it only runs if the fallback is applied.
+	models.response = `{"memories":[],"topics":["女子U8组50米爬泳打腿决赛参赛人数"]}`
+	messages.set("session-1", []*types.Message{
+		userMessage("session-1", "参赛选手名单在哪查", time.Now().Add(-2*time.Hour)),
+		userMessage("session-1", "决赛参赛人数是多少", time.Now().Add(-time.Hour)),
+	})
+	svc.ScheduleExtraction(ctx, "session-1", "message-2", "conversation-model")
+	drainExtractions(t, svc, enqueuer)
+
+	stats, err := svc.repo.TopTopics(context.Background(), scope, 10)
+	require.NoError(t, err)
+	require.Len(t, stats, 1, "both wordings are one subject, so there is one row")
+	// The exact count depends on how the run happened to segment the
+	// transcript, which is not what this test is about. What matters is that a
+	// second wording advanced the count instead of starting its own row.
+	require.GreaterOrEqual(t, stats[0].Hits, 2,
+		"the count has to move, or nothing is ever promoted")
+}

@@ -726,7 +726,7 @@ func (s *Service) ObserveQuestionTopics(ctx context.Context, topics []string) []
 	if !ok {
 		return nil
 	}
-	return s.observeTopics(ctx, scope, cfg, topics)
+	return s.observeTopics(ctx, scope, cfg, cfg.ExtractModelID, topics)
 }
 
 // observeTopics is the scope-explicit form.
@@ -735,7 +735,11 @@ func (s *Service) ObserveQuestionTopics(ctx context.Context, topics []string) []
 // its scope comes from the task payload — so anything the distiller calls has
 // to be handed the scope rather than re-deriving it from the request.
 func (s *Service) observeTopics(
-	ctx context.Context, scope interfaces.MemoryScope, cfg *types.MemoryConfig, topics []string,
+	ctx context.Context,
+	scope interfaces.MemoryScope,
+	cfg *types.MemoryConfig,
+	modelID string,
+	topics []string,
 ) []string {
 	if len(topics) == 0 || cfg == nil || !cfg.AutoExtractEnabled() {
 		return nil
@@ -758,7 +762,7 @@ func (s *Service) observeTopics(
 	if len(surfaces) == 0 {
 		return nil
 	}
-	resolutions := s.resolveTopics(ctx, scope, cfg, surfaces)
+	resolutions := s.resolveTopics(ctx, scope, modelID, surfaces)
 
 	threshold := cfg.EffectiveInterestThreshold()
 	var promoted []string
@@ -776,10 +780,20 @@ func (s *Service) observeTopics(
 		}
 		stat, err := s.repo.BumpTopic(ctx, scope, canonicalTopic, key, resolution.Surface)
 		if err != nil {
-			logger.Warnf(ctx, "memory: count topic failed: %v", err)
+			logger.Warnf(ctx, "memory: count topic %q failed: %v", canonicalTopic, err)
 			continue
 		}
-		if stat == nil || stat.PromotedAt != nil || stat.Hits < threshold {
+		if stat == nil {
+			logger.Warnf(ctx, "memory: topic %q produced no row", canonicalTopic)
+			continue
+		}
+		// Without this line there is no way to tell, from the outside, whether
+		// a topic was counted, which subject it was folded into, or which tier
+		// decided — and "hits is always 1" looks identical to "nothing ran".
+		logger.Infof(ctx,
+			"memory: topic %q -> %q (tier=%s, hits=%d, threshold=%d)",
+			resolution.Surface, canonicalTopic, resolutionTier(resolution), stat.Hits, threshold)
+		if stat.PromotedAt != nil || stat.Hits < threshold {
 			continue
 		}
 		if _, err := s.write(ctx, scope, cfg, types.MemoryItem{
@@ -804,6 +818,14 @@ func (s *Service) observeTopics(
 		logger.Infof(ctx, "memory: promoted %d recurring topics into interests", len(promoted))
 	}
 	return promoted
+}
+
+// resolutionTier names which rule matched, for logs.
+func resolutionTier(resolution topicResolution) string {
+	if resolution.Tier == "" {
+		return "new"
+	}
+	return resolution.Tier
 }
 
 // ConfirmItem accepts something the system inferred, moving it out of the

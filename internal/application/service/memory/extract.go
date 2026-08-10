@@ -332,7 +332,7 @@ func (s *Service) Handle(ctx context.Context, task *asynq.Task) error {
 		s.applyDecisions(ctx, scope, cfg, segment, existing, parsed.Memories)
 		// Subjects are counted separately from memories: one question is noise,
 		// the same subject across conversations is an interest.
-		s.observeTopics(ctx, scope, cfg, parsed.Topics)
+		s.observeTopics(ctx, scope, cfg, s.extractionModelID(ctx, cfg, payload), parsed.Topics)
 		if segment.end.After(newCursor) {
 			newCursor = segment.end
 		}
@@ -350,7 +350,7 @@ func (s *Service) Handle(ctx context.Context, task *asynq.Task) error {
 	// Maintenance rides along on a background run that has already happened
 	// rather than needing its own scheduler, which keeps it working identically
 	// in Lite mode where there is no asynq worker to hold a periodic job.
-	s.consolidateIfDue(ctx, scope, cfg)
+	s.consolidateIfDue(ctx, scope, cfg, s.extractionModelID(ctx, cfg, payload))
 	return nil
 }
 
@@ -779,6 +779,55 @@ func buildExtractionPrompt(
 	return builder.String()
 }
 
+// extractionModelID resolves which model the memory pipeline should use.
+//
+// The settings UI says a blank extraction model means "use the model the
+// conversation used", so blank must resolve rather than disable anything. Every
+// caller in this package has to go through here: when only the extraction call
+// applied the fallback, the topic resolver quietly lost its model tier on every
+// workspace that had not picked a model — which is all of them by default.
+func (s *Service) extractionModelID(
+	ctx context.Context, cfg *types.MemoryConfig, payload types.MemoryExtractPayload,
+) string {
+	if cfg != nil && cfg.ExtractModelID != "" {
+		return cfg.ExtractModelID
+	}
+	if payload.ChatModelID != "" {
+		return payload.ChatModelID
+	}
+	// The turn that produced this task does not always carry the model that
+	// answered it — the effective model is resolved inside the QA pipeline and
+	// is not written back onto the message. Falling back to the workspace's own
+	// QA model keeps the documented "blank means use the conversation model"
+	// behaviour from degrading into "memory quietly does nothing".
+	return s.workspaceChatModelID(ctx)
+}
+
+// workspaceChatModelID picks a usable QA model for this workspace.
+//
+// The choice is logged because it is a guess: without an explicitly configured
+// extraction model there is no record of which model the workspace wants used
+// for background work, and silently picking one is only acceptable if it is
+// visible afterwards.
+func (s *Service) workspaceChatModelID(ctx context.Context) string {
+	models, err := s.modelService.ListModels(ctx)
+	if err != nil {
+		logger.Warnf(ctx, "memory: list models for extraction fallback failed: %v", err)
+		return ""
+	}
+	for _, model := range models {
+		if model == nil || model.Type != types.ModelTypeKnowledgeQA {
+			continue
+		}
+		if model.Status != "" && model.Status != types.ModelStatusActive {
+			continue
+		}
+		logger.Infof(ctx, "memory: no extraction model configured, using workspace model %s", model.ID)
+		return model.ID
+	}
+	return ""
+}
+
 // callExtractionModel runs the single LLM call in the write path.
 func (s *Service) callExtractionModel(
 	ctx context.Context,
@@ -789,15 +838,16 @@ func (s *Service) callExtractionModel(
 	forgotten []*types.MemoryTombstone,
 	knownTopics []*types.MemoryTopicStat,
 ) (extractionResponse, error) {
-	// The settings UI says a blank extraction model means "use the model the
-	// conversation used", so a blank value must resolve, not fail.
-	modelID := cfg.ExtractModelID
+	modelID := s.extractionModelID(ctx, cfg, payload)
 	if modelID == "" {
-		modelID = payload.ChatModelID
-	}
-	if modelID == "" {
-		logger.Warnf(ctx, "memory: no model available for extraction, skipping")
-		return extractionResponse{}, nil
+		// Returning an error keeps the watermark where it is. Skipping here
+		// silently consumed every message the run was given: distillation
+		// reported success, advanced past them, and no model had ever seen
+		// them — which is how a workspace on default settings ends up with an
+		// enabled memory feature that has learned nothing.
+		return extractionResponse{}, fmt.Errorf(
+			"no chat model available for memory extraction; " +
+				"configure one under workspace memory settings")
 	}
 	chatModel, err := s.modelService.GetChatModel(ctx, modelID)
 	if err != nil {
