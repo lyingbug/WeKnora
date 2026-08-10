@@ -268,12 +268,17 @@ func (s *Service) callConsolidationModel(
 			item.ValidFrom.Format("2006-01-02"), types.SanitizeMemoryContent(item.Content)))
 	}
 
+	// Thinking off, for the reason given on completeExtraction: a reasoning
+	// model spends this whole budget on its own deliberation and returns
+	// nothing, which here would silently skip every merge.
+	thinking := false
 	response, err := chatModel.Chat(ctx, []chat.Message{
 		{Role: "system", Content: consolidationSystemPrompt},
 		{Role: "user", Content: b.String()},
 	}, &chat.ChatOptions{
 		Temperature:         0,
-		MaxCompletionTokens: 300,
+		MaxCompletionTokens: 600,
+		Thinking:            &thinking,
 		Format:              consolidationSchema,
 	})
 	if err != nil || response == nil {

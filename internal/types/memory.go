@@ -465,6 +465,24 @@ func (c *MemoryConfig) MemoryEnabled() bool {
 	return c != nil && c.Enabled
 }
 
+// MemoryItemKey derives the conflict-detection key for a stored memory.
+//
+// A memory's identity is its topic, not its wording: "生产库用的是 MySQL" and
+// "生产库用的是 PostgreSQL" are the same note with a corrected value, and the
+// second has to replace the first rather than sit beside it. That only works if
+// two labels for the same subject produce the same key, which is why this uses
+// the topic normaliser rather than the character-bag key below — the same
+// reason topic counting needed it.
+//
+// Content is the fallback when a statement arrives without a topic, where there
+// is nothing better to key on and word order genuinely should not matter.
+func MemoryItemKey(topic, content string) string {
+	if key := NormalizeTopicKey(topic); key != "" {
+		return key
+	}
+	return NormalizeMemoryKey(topic, content)
+}
+
 // NormalizeMemoryKey derives the conflict-detection key for a statement.
 // Callers may supply their own key (the extraction model is asked for one);
 // when they do not, we fall back to the significant words of the content so

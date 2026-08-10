@@ -330,3 +330,98 @@ func TestTopicsAreCountedOnTheBackgroundWorker(t *testing.T) {
 	require.Equal(t, "医学影像分割", stats[0].Topic)
 	require.Equal(t, 1, stats[0].Hits)
 }
+
+// A model that returns nothing must not be mistaken for a conversation with
+// nothing in it.
+//
+// This is the failure the token ceiling actually produces in the field: a
+// reasoning model spends the whole completion budget on its own deliberation
+// and returns an empty string with finish_reason=length. Treating that as
+// "nothing worth recording" advanced the watermark over messages no model had
+// ever read, so the run reported success, the coverage guarantee held on paper,
+// and the feature learned nothing — silently, forever.
+func TestATruncatedRunDoesNotSwallowTheMessages(t *testing.T) {
+	svc, tenantRepo, messages, models, enqueuer := newExtractionHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	tenantRepo.set(1, &types.MemoryConfig{
+		Enabled: true, WriteMode: types.MemoryWriteAuto, ExtractDelaySeconds: 1,
+	})
+	// Truncate every attempt, including the retry with more room.
+	models.truncateUntilCall = 99
+
+	messages.set("session-1", []*types.Message{
+		userMessage("session-1", "我在做医疗影像的后端", time.Now().Add(-time.Hour)),
+	})
+	svc.ScheduleExtraction(ctx, "session-1", "message-1", "model-1")
+
+	task := enqueuer.pop()
+	require.NotNil(t, task)
+	require.Error(t, svc.Handle(context.Background(), task),
+		"a run that read nothing has to fail, or the messages are consumed for good")
+
+	scope, err := ResolveScope(ctx)
+	require.NoError(t, err)
+	subject, err := svc.repo.GetSubject(context.Background(), scope)
+	require.NoError(t, err)
+	require.True(t, subject.ExtractCursor == nil || subject.ExtractCursor.IsZero(),
+		"the watermark must not advance over messages the model never read")
+
+	// The same message is still there to be read once the model can answer.
+	models.truncateUntilCall = 0
+	models.response = `{"memories":[{"action":"add","kind":"profile","topic":"职业",` +
+		`"content":"在做医疗影像的后端","importance":4,"source":1}]}`
+	svc.ScheduleExtraction(ctx, "session-1", "message-1", "model-1")
+	drainExtractions(t, svc, enqueuer)
+
+	_, total, err := svc.ListItems(ctx, types.MemoryStatusActive, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total, "the message must still be distilled after the model recovers")
+}
+
+// A model that only needs more room gets it, without the caller ever seeing a
+// failure.
+func TestTruncationIsRetriedWithMoreRoom(t *testing.T) {
+	svc, tenantRepo, messages, models, enqueuer := newExtractionHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	tenantRepo.set(1, &types.MemoryConfig{
+		Enabled: true, WriteMode: types.MemoryWriteAuto, ExtractDelaySeconds: 1,
+	})
+	models.truncateUntilCall = 1
+	models.response = `{"memories":[{"action":"add","kind":"profile","topic":"职业",` +
+		`"content":"在做医疗影像的后端","importance":4,"source":1}]}`
+
+	messages.set("session-1", []*types.Message{
+		userMessage("session-1", "我在做医疗影像的后端", time.Now().Add(-time.Hour)),
+	})
+	svc.ScheduleExtraction(ctx, "session-1", "message-1", "model-1")
+	drainExtractions(t, svc, enqueuer)
+
+	require.Greater(t, models.lastBudgetAsked(), extractBudgetTokens,
+		"the retry has to offer more room than the attempt that ran out of it")
+
+	_, total, err := svc.ListItems(ctx, types.MemoryStatusActive, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+}
+
+// Every other structured-output call in this codebase disables thinking. The
+// memory calls are a classification job with a fixed schema, so reasoning buys
+// nothing and on a model that reasons by default it eats the whole budget.
+func TestExtractionDoesNotAskTheModelToThink(t *testing.T) {
+	svc, tenantRepo, messages, models, enqueuer := newExtractionHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	tenantRepo.set(1, &types.MemoryConfig{
+		Enabled: true, WriteMode: types.MemoryWriteAuto, ExtractDelaySeconds: 1,
+	})
+	models.response = `{"memories":[]}`
+
+	messages.set("session-1", []*types.Message{
+		userMessage("session-1", "随便说点什么", time.Now().Add(-time.Hour)),
+	})
+	svc.ScheduleExtraction(ctx, "session-1", "message-1", "model-1")
+	drainExtractions(t, svc, enqueuer)
+
+	thinking := models.lastThinkingAsked()
+	require.NotNil(t, thinking, "leaving it unset defers to the model, which is how this broke")
+	require.False(t, *thinking)
+}

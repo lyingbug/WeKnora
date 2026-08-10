@@ -124,7 +124,18 @@ type stubModelService struct {
 	// responseFor lets one stub answer two different prompts. Distillation and
 	// topic adjudication both go through this model, and a test that pins one
 	// must not accidentally pin the other.
-	responseFor      map[string]string
+	responseFor map[string]string
+	// finishReason is reported on every reply, so a test can simulate a model
+	// that ran out of completion budget.
+	finishReason string
+	// truncateUntilCall makes the model return nothing until this many calls
+	// have been made, simulating a reasoning model that only answers when it
+	// is given room for its thinking.
+	truncateUntilCall int
+	// lastBudget is the completion ceiling the last call asked for.
+	lastBudget int
+	// lastThinking is the thinking flag the last call passed.
+	lastThinking     *bool
 	requestedModelID string
 	lastPrompt       string
 	// prompts records every transcript the model was asked about, so a test
@@ -149,6 +160,20 @@ func (s *stubModelService) callCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls
+}
+
+// lastBudgetAsked is the completion ceiling of the most recent call.
+func (s *stubModelService) lastBudgetAsked() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastBudget
+}
+
+// lastThinkingAsked is the thinking flag of the most recent call.
+func (s *stubModelService) lastThinkingAsked() *bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastThinking
 }
 
 // seenTranscripts concatenates every prompt the model received.
@@ -176,12 +201,18 @@ func (m *stubChatModel) Chat(
 	m.owner.lastPrompt = prompt.String()
 	if opts != nil {
 		m.owner.lastFormat = opts.Format
+		m.owner.lastBudget = opts.MaxCompletionTokens
+		m.owner.lastThinking = opts.Thinking
 	}
 	m.owner.prompts = append(m.owner.prompts, prompt.String())
 	if m.owner.failNext {
 		m.owner.failNext = false
 		return nil, errors.New("stub model outage")
 	}
+	if m.owner.calls <= m.owner.truncateUntilCall {
+		return &types.ChatResponse{Content: "", FinishReason: "length"}, nil
+	}
+
 	body := m.owner.response
 	for marker, canned := range m.owner.responseFor {
 		if strings.Contains(prompt.String(), marker) {
@@ -189,7 +220,7 @@ func (m *stubChatModel) Chat(
 			break
 		}
 	}
-	return &types.ChatResponse{Content: body}, nil
+	return &types.ChatResponse{Content: body, FinishReason: m.owner.finishReason}, nil
 }
 
 func (m *stubChatModel) ChatStream(

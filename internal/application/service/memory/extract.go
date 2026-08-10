@@ -43,6 +43,14 @@ const (
 	// in-flight claim is stale. Without it, a worker that died between claiming
 	// and running would wedge the subject permanently.
 	extractInFlightGrace = 10 * time.Minute
+	// extractBudgetTokens is the completion budget for one extraction call.
+	// The output is a small JSON object; the ceiling exists to bound a model
+	// that starts rambling, not because the task needs room.
+	extractBudgetTokens = 1200
+	// extractBudgetRetryTokens is the second attempt after a truncated one.
+	// Models that reason regardless of the disable flag need somewhere to put
+	// that reasoning before they can answer at all.
+	extractBudgetRetryTokens = 4000
 	// extractFollowUpDelay is the wait before a run that hit its message cap,
 	// or that saw new turns arrive while it worked, queues its successor.
 	extractFollowUpDelay = 15 * time.Second
@@ -798,30 +806,85 @@ func (s *Service) callExtractionModel(
 
 	userPrompt := buildExtractionPrompt(segment, existing, forgotten, knownTopics, cfg.ExtractInstructions)
 
-	response, err := chatModel.Chat(ctx, []chat.Message{
-		{Role: "system", Content: extractionSystemPrompt},
-		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{
-		Temperature:         0,
-		MaxCompletionTokens: 1200,
-		Format:              extractionSchema,
-	})
+	response, err := s.completeExtraction(ctx, chatModel, userPrompt, extractBudgetTokens)
 	if err != nil {
-		return extractionResponse{}, fmt.Errorf("extraction model call: %w", err)
+		return extractionResponse{}, err
 	}
 	if response == nil {
 		return extractionResponse{}, nil
 	}
 
+	// A truncated call is retried once with room to spare. Reasoning models
+	// that ignore the disable flag spend the whole budget thinking and return
+	// an empty string, which is indistinguishable from "nothing to record"
+	// unless the finish reason is checked.
+	if isTruncated(response) {
+		logger.Warnf(ctx,
+			"memory: extraction hit the token ceiling with %d chars of content, retrying with %d tokens",
+			len(strings.TrimSpace(response.Content)), extractBudgetRetryTokens)
+		response, err = s.completeExtraction(ctx, chatModel, userPrompt, extractBudgetRetryTokens)
+		if err != nil {
+			return extractionResponse{}, err
+		}
+		if response == nil || isTruncated(response) {
+			// Returning an error is what keeps the watermark where it is, so
+			// these messages are read again rather than silently consumed by a
+			// run that learned nothing.
+			return extractionResponse{}, fmt.Errorf(
+				"extraction model returned no usable output within %d tokens; "+
+					"if this is a reasoning model, its thinking is consuming the budget",
+				extractBudgetRetryTokens)
+		}
+	}
+
 	parsed, err := parseExtractionResponse(response.Content)
 	if err != nil {
-		// A malformed response is the model's fault, not a transient failure.
-		// Retrying would re-run the same prompt at the same temperature, so
-		// log and drop instead of consuming the retry budget.
+		// A malformed but complete response is the model's fault, not a
+		// transient failure: the same prompt at temperature zero produces the
+		// same garbage, so retrying only burns the budget. Truncation is
+		// handled above precisely because it is *not* this case.
 		logger.Warnf(ctx, "memory: unparsable extraction response: %v", err)
 		return extractionResponse{}, nil
 	}
 	return parsed, nil
+}
+
+// completeExtraction issues one extraction call.
+//
+// Thinking is off. Every other structured-output call in this codebase turns it
+// off for the same reason: this is a classification job with a fixed schema,
+// reasoning buys nothing, and on a model that reasons by default it consumes
+// the entire completion budget and returns an empty string.
+func (s *Service) completeExtraction(
+	ctx context.Context, chatModel chat.Chat, userPrompt string, budget int,
+) (*types.ChatResponse, error) {
+	thinking := false
+	response, err := chatModel.Chat(ctx, []chat.Message{
+		{Role: "system", Content: extractionSystemPrompt},
+		{Role: "user", Content: userPrompt},
+	}, &chat.ChatOptions{
+		Temperature:         0,
+		MaxCompletionTokens: budget,
+		Thinking:            &thinking,
+		Format:              extractionSchema,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("extraction model call: %w", err)
+	}
+	return response, nil
+}
+
+// isTruncated reports whether a response ran out of room before saying anything
+// usable. An empty body is treated as truncation even without the finish
+// reason, because some providers report neither.
+func isTruncated(response *types.ChatResponse) bool {
+	if response == nil {
+		return true
+	}
+	if strings.TrimSpace(response.Content) == "" {
+		return true
+	}
+	return response.FinishReason == "length"
 }
 
 // parseExtractionResponse tolerates the usual model wrappers: fenced code
@@ -888,7 +951,7 @@ func (s *Service) applyDecisions(
 			topic = target.Topic
 		}
 
-		key := types.NormalizeMemoryKey(topic, decision.Content)
+		key := types.MemoryItemKey(topic, decision.Content)
 		if _, duplicate := seenTopics[key]; duplicate && key != "" {
 			continue
 		}

@@ -210,12 +210,16 @@ func (s *Service) adjudicateTopics(
 		fmt.Fprintf(&b, "[%d] %s\n", idx, resolutions[idx].Surface)
 	}
 
+	// Thinking off, for the reason given on completeExtraction. Silently
+	// getting nothing back here would send every rephrasing to its own row.
+	thinking := false
 	response, err := chatModel.Chat(ctx, []chat.Message{
 		{Role: "system", Content: topicAdjudicationPrompt},
 		{Role: "user", Content: b.String()},
 	}, &chat.ChatOptions{
 		Temperature:         0,
-		MaxCompletionTokens: 400,
+		MaxCompletionTokens: 800,
+		Thinking:            &thinking,
 		Format:              topicAdjudicationSchema,
 	})
 	if err != nil || response == nil {
