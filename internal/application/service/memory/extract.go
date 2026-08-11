@@ -43,6 +43,11 @@ const (
 	// in-flight claim is stale. Without it, a worker that died between claiming
 	// and running would wedge the subject permanently.
 	extractInFlightGrace = 10 * time.Minute
+	// extractShownTopics bounds the tracked subjects shown to the extraction
+	// call. The resolver still considers more; this is about anchoring, not
+	// cost — the longer the list, the likelier the model files a question under
+	// something merely adjacent.
+	extractShownTopics = 12
 	// extractBudgetTokens is the completion budget for one extraction call.
 	// The output is a small JSON object; the ceiling exists to bound a model
 	// that starts rambling, not because the task needs room.
@@ -751,18 +756,35 @@ func buildExtractionPrompt(
 	}
 
 	if len(knownTopics) > 0 {
-		// Showing the vocabulary and asking for reuse is the cheapest tier of
-		// topic resolution and the one that fires most often: a model that
-		// echoes an existing label costs nothing to match, while a model left
-		// to invent a name will invent a different one every run.
-		builder.WriteString("\nTopics already tracked for this user. When the transcript is about " +
-			"one of these, reuse its label EXACTLY as written rather than inventing a new wording:\n")
+		// Showing the vocabulary is the cheapest tier of topic resolution: a
+		// model that echoes an existing label costs nothing to match, while a
+		// model left to invent a name will invent a different one every run.
+		//
+		// The wording has to test identity, not relatedness. It used to say
+		// "when the transcript is about one of these", and a question about one
+		// athlete's events genuinely *is* about children's swimming events — so
+		// the model dutifully filed it under 儿童游泳赛事组织 and every specific
+		// question in the domain collapsed into one bucket.
+		builder.WriteString("\nSubjects already tracked for this user:\n")
+		shown := 0
 		for _, stat := range knownTopics {
 			if stat == nil || stat.Topic == "" {
 				continue
 			}
 			fmt.Fprintf(&builder, "- %s\n", stat.Topic)
+			// A long list invites picking something off it. The resolver still
+			// considers every tracked subject; this is only what the extraction
+			// call sees.
+			if shown++; shown >= extractShownTopics {
+				break
+			}
 		}
+		builder.WriteString(
+			"Reuse one of these labels EXACTLY only when the transcript is about the SAME subject,\n" +
+				"just worded differently. A narrower question inside a broader subject is NOT the same\n" +
+				"subject: if \"儿童游泳赛事组织\" is tracked and the user asks which events one named\n" +
+				"athlete signed up for, that is its own subject (\"某选手的参赛项目\"), not that one.\n" +
+				"When nothing above names the same subject, write a new label. Do not force a fit.\n")
 	}
 
 	if instructions != "" {

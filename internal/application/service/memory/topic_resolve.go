@@ -84,7 +84,16 @@ func (s *Service) resolveTopics(
 		resolution := topicResolution{Surface: surface}
 		if match := matchTopicExactly(surface, existing); match != nil {
 			resolution.Canonical = match
-			resolution.Tier = "exact"
+			// Distinguish "the extraction model echoed a tracked label" from
+			// "the resolver's own normalisation matched". Both look like an
+			// exact hit here, but only the first is a judgement the model made
+			// — and reporting that as the cheapest, most certain tier is how an
+			// over-merge hides.
+			if surface == match.Topic {
+				resolution.Tier = "reused"
+			} else {
+				resolution.Tier = "exact"
+			}
 		} else if match := matchTopicLoosely(surface, existing); match != nil {
 			resolution.Canonical = match
 			resolution.Tier = "fuzzy"
@@ -150,13 +159,19 @@ func matchTopicLoosely(surface string, existing []*types.MemoryTopicStat) *types
 
 const topicAdjudicationPrompt = `你在维护一个人的关注主题列表。下面给出「已有主题」和「新出现的说法」。
 
-对每个新说法，判断它说的是不是已有主题里的同一件事。
+对每个新说法，判断它和某个已有主题**说的是不是同一件事**——注意是同一件事，不是有关系。
 
-判断标准：
-- 同义或换个说法（「少儿游泳比赛筹办」和「儿童游泳赛事组织」）算同一件事。
-- 同一领域但问的不是一回事（「PostgreSQL 连接池」和「PostgreSQL 备份恢复」）不算。
-- 一个是另一个的具体子话题时，算同一件事，归到已有主题。
-- 拿不准就算不同。合并错了会把两件事的计数混在一起，且事后看不出来；没合并只是暂时多一条。
+算同一件事：
+- 同义、换个说法、详略不同的同一件事：「少儿游泳比赛筹办」和「儿童游泳赛事组织」。
+- 加了个无关紧要的限定词：「PostgreSQL 连接池」和「PostgreSQL 连接池问题」。
+
+不算同一件事：
+- 同一领域里的不同问题：「PostgreSQL 连接池」和「PostgreSQL 备份恢复」。
+- 一个是另一个范围内的**具体查询**：已有「儿童游泳赛事组织」，新说法是「陈戈妤的参赛项目」——
+  后者确实属于前者的领域，但它是一次具体查询，不是同一个长期关注点。这类要判为不同。
+- 一个是另一个的下位概念：「数据库」和「PostgreSQL 连接池」。
+
+拿不准就判不同。合并错了会把两件事的计数混在一起、事后完全看不出来；没合并只是暂时多一条。
 
 只输出 JSON：{"resolutions":[{"index":<新说法的序号>,"same_as":<已有主题的序号，没有则 null>}]}`
 
@@ -272,6 +287,11 @@ func (s *Service) adjudicateTopics(
 		}
 		resolutions[decision.Index].Canonical = existing[target]
 		resolutions[decision.Index].Tier = "model"
+		// A merge nothing lexical supported is the one most likely to be wrong,
+		// so it is logged with both labels rather than only appearing as a
+		// bumped counter on a subject the user never named.
+		logger.Infof(ctx, "memory: model merged topic %q into %q",
+			resolutions[decision.Index].Surface, existing[target].Topic)
 	}
 }
 
