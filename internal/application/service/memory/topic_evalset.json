@@ -1,0 +1,75 @@
+{
+  "description": "Whether two topic labels name the same subject. Merging is the decision that cannot be reviewed by reading the prompt: too strict and one subject spreads across rows that never reach the promotion threshold, too loose and every specific question in a domain collapses into one useless bucket. These are the pairs that mark the boundary.",
+  "cases": [
+    {
+      "name": "rephrasing",
+      "tracked": "儿童游泳赛事组织",
+      "incoming": "少儿游泳比赛筹办",
+      "same": true,
+      "why": "两个说法指的是同一件事，只是用词不同。这是主题漂移的典型形态，不合并就永远到不了阈值。"
+    },
+    {
+      "name": "elaboration",
+      "tracked": "儿童游泳赛事组织",
+      "incoming": "游泳赛事组织",
+      "same": true,
+      "why": "一方比另一方少一个限定词，说的仍是同一件事。"
+    },
+    {
+      "name": "harmless qualifier",
+      "tracked": "PostgreSQL 连接池",
+      "incoming": "PostgreSQL 连接池问题",
+      "same": true,
+      "why": "「问题」不改变主题本身。"
+    },
+    {
+      "name": "specific lookup inside a broad subject",
+      "tracked": "儿童游泳赛事组织",
+      "incoming": "陈戈妤的参赛项目",
+      "same": false,
+      "why": "确实属于同一领域，但这是一次具体查询，不是同一个长期关注点。把它折进去会让关注面变成一个什么都装的桶。"
+    },
+    {
+      "name": "different question in the same domain",
+      "tracked": "PostgreSQL 连接池",
+      "incoming": "PostgreSQL 备份恢复",
+      "same": false,
+      "why": "共享产品名不等于同一件事。"
+    },
+    {
+      "name": "hyponym",
+      "tracked": "数据库选型",
+      "incoming": "PostgreSQL 连接池调优",
+      "same": false,
+      "why": "下位概念不是同一件事，否则一个宽泛主题会吸收整个领域。"
+    },
+    {
+      "name": "same event different aspect",
+      "tracked": "北京市儿童游泳比赛参赛选手",
+      "incoming": "北京市儿童游泳比赛裁判安排",
+      "same": false,
+      "why": "同一场比赛的两个不同侧面，关心的是不同的事。"
+    },
+    {
+      "name": "unrelated",
+      "tracked": "儿童游泳赛事组织",
+      "incoming": "讯飞开放平台核心功能",
+      "same": false,
+      "why": "毫无关系，任何一层都不该合并。"
+    },
+    {
+      "name": "abbreviation",
+      "tracked": "持续集成流水线",
+      "incoming": "CI 流水线",
+      "same": true,
+      "why": "缩写和全称是同一件事，词面上却几乎没有重叠——只有模型层能判。"
+    },
+    {
+      "name": "same word different field",
+      "tracked": "图像分割模型调参",
+      "incoming": "数据库分库分表",
+      "same": false,
+      "why": "共享一个「分」字不构成任何关系。"
+    }
+  ]
+}

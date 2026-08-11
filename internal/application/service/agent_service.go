@@ -101,6 +101,7 @@ type agentService struct {
 	webSearchStateService interfaces.WebSearchStateService
 	wikiPageService       interfaces.WikiPageService
 	tenantService         interfaces.TenantService
+	messageService        interfaces.MessageService
 	storageResolver       interfaces.StorageBackendResolver
 	toolApprovalGate      approval.MCPApproval
 }
@@ -122,6 +123,7 @@ func NewAgentService(
 	webSearchStateService interfaces.WebSearchStateService,
 	wikiPageService interfaces.WikiPageService,
 	tenantService interfaces.TenantService,
+	messageService interfaces.MessageService,
 	storageResolver interfaces.StorageBackendResolver,
 	toolApprovalGate approval.MCPApproval,
 ) interfaces.AgentService {
@@ -141,6 +143,7 @@ func NewAgentService(
 		webSearchStateService: webSearchStateService,
 		wikiPageService:       wikiPageService,
 		tenantService:         tenantService,
+		messageService:        messageService,
 		storageResolver:       storageResolver,
 		toolApprovalGate:      toolApprovalGate,
 	}
@@ -613,6 +616,12 @@ func (s *agentService) registerTools(
 				WithKnowledgeScope(s.knowledgeService)
 		case tools.ToolGetDocumentInfo:
 			toolToRegister = tools.NewGetDocumentInfoTool(s.knowledgeService, s.chunkService, config.SearchTargets)
+		case tools.ToolSearchConversations:
+			// The owner is captured from the caller's identity here, not read
+			// from the model's arguments, so no prompt can redirect the search
+			// at somebody else's conversations.
+			toolToRegister = tools.NewSearchConversationsTool(
+				s.messageService, types.SessionOwnerIDFromContext(ctx), sessionID)
 		case tools.ToolDatabaseQuery:
 			toolToRegister = tools.NewDatabaseQueryTool(s.db, config.SearchTargets)
 		case tools.ToolWebSearch:
