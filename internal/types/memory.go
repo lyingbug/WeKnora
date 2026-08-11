@@ -1026,8 +1026,8 @@ func MergeUsedMemories(existing, additional []UsedMemory) []UsedMemory {
 }
 
 // topicNoiseRunes are characters that carry no subject information on their
-// own. They are dropped from a topic key so "儿童游泳赛事的组织" and
-// "儿童游泳赛事组织" are recognised as the same subject.
+// own. They are dropped from a topic key so "门店的排班管理" and
+// "门店排班管理" are recognised as the same subject.
 var topicNoiseRunes = map[rune]struct{}{
 	'的': {}, '了': {}, '地': {}, '得': {}, '之': {}, '与': {}, '和': {}, '及': {},
 	'在': {}, '是': {}, '有': {}, '个': {}, '等': {}, '对': {}, '于': {},
@@ -1045,8 +1045,8 @@ var topicNoiseWords = []string{
 // This is deliberately NOT NormalizeMemoryKey, which sorts and de-duplicates
 // characters. That behaviour is defensible for a memory item — where word order
 // should not matter and a containment check catches what it misses — but as a
-// topic identity it is wrong in both directions: it treats "儿童游泳赛事组织"
-// and "儿童游泳赛事的组织" as different subjects because of one extra
+// topic identity it is wrong in both directions: it treats "门店排班管理"
+// and "门店的排班管理" as different subjects because of one extra
 // character, and it would treat two anagrams as the same one.
 //
 // Order is preserved here, and only genuinely uninformative characters and
@@ -1090,7 +1090,7 @@ func NormalizeTopicKey(topic string) string {
 // Bigrams rather than whole words because Chinese has no word separators, and
 // Dice rather than Jaccard because it is more forgiving of one label being
 // longer than the other — which is the common case when a model elaborates
-// ("游泳赛事组织" vs "儿童游泳赛事组织").
+// ("排班管理" vs "门店排班管理").
 func TopicSimilarity(a, b string) float64 {
 	left, right := topicBigrams(a), topicBigrams(b)
 	if len(left) == 0 || len(right) == 0 {
@@ -1177,7 +1177,7 @@ func TopicLabelIsAnImprovement(canonical, incoming, proposed string) bool {
 //
 // A subject has to recur to be worth anything: it is counted, and only becomes
 // a memory once several conversations touch it. A label like
-// "北京市第三十六届儿童游泳比赛男子U8组50米蝶泳决赛选手名单" can only ever match
+// "v2.3版本orders接口分页参数默认值查询" can only ever match
 // itself, so it is counted once and then sits at one hit forever — the counting
 // mechanism is dead and nothing says so.
 //

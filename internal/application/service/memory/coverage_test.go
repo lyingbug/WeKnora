@@ -477,7 +477,7 @@ func TestTopicResolutionUsesTheSameModelFallbackAsExtraction(t *testing.T) {
 	models.responseFor = map[string]string{
 		"你在维护一个人的关注主题列表": `{"resolutions":[{"index":0,"same_as":0}]}`,
 	}
-	models.response = `{"memories":[],"topics":["北京市儿童游泳比赛参赛选手"]}`
+	models.response = `{"memories":[],"topics":["订单接口限流"]}`
 	messages.set("session-1", []*types.Message{
 		userMessage("session-1", "参赛选手名单在哪查", time.Now().Add(-2*time.Hour)),
 	})
@@ -486,7 +486,7 @@ func TestTopicResolutionUsesTheSameModelFallbackAsExtraction(t *testing.T) {
 
 	// A second, lexically distant wording of the same subject. Only the model
 	// tier can resolve it, and it only runs if the fallback is applied.
-	models.response = `{"memories":[],"topics":["女子U8组50米爬泳打腿决赛参赛人数"]}`
+	models.response = `{"memories":[],"topics":["orders接口限流阈值"]}`
 	messages.set("session-1", []*types.Message{
 		userMessage("session-1", "参赛选手名单在哪查", time.Now().Add(-2*time.Hour)),
 		userMessage("session-1", "决赛参赛人数是多少", time.Now().Add(-time.Hour)),

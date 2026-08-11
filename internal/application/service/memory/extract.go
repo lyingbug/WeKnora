@@ -619,18 +619,17 @@ The "topics" list
 - Name the subject AREA, at a level that could plausibly come up again in
   another conversation. Not the individual question. This is the whole point:
   a label that can only ever match itself is counted once and never again.
-- The specifics of one question — a person's name, an age group, a distance, an
-  edition number, a placing — belong to the question, not to the subject name.
-  Strip them.
+- The specifics of one question — a name, an identifier, a date, a version, a
+  quantity — belong to the question, not to the subject name. Strip them.
 
-  question: 陈戈妤在女子U7组确认参加了哪些游泳项目？
-  subject:  北京市儿童游泳比赛参赛信息          NOT 陈戈妤女子U7组参赛项目查询
-  question: 第三十六届比赛男子U8组50米蝶泳决赛的选手名单？
-  subject:  北京市儿童游泳比赛参赛信息          NOT 第三十六届男子U8组50米蝶泳决赛选手名单
-  question: 讯飞开放平台的商务怎么联系？
-  subject:  讯飞开放平台                        NOT 讯飞开放平台商务联系方式
+  question: 三号仓库上个月的入库单号有哪些？
+  subject:  仓库入库单查询    NOT 三号仓库上月入库单号查询
+  question: v2.3 版本 orders 接口的分页参数默认值是多少？
+  subject:  订单接口用法      NOT v2.3版本orders接口分页参数默认值
+  question: 结算平台的商务怎么联系？
+  subject:  结算平台          NOT 结算平台商务联系方式
 
-- Do not go the other way either. "游泳"、"体育"、"平台" are categories, not
+- Do not go the other way either. "接口"、"平台"、"管理" are categories, not
   subjects: they say nothing about what this person works on.
 - Two to eight characters of qualifier is usually the right size.
 
@@ -681,13 +680,13 @@ Existing notes:
 "topics":["数据库迁移","支付流程重构"]}
 
 Lines:
-[1] (2026-04-02) 第三十六届市儿童游泳比赛领奖后多久需要清场？
+[1] (2026-04-02) 三号仓库的入库单要保留多久？
 Existing notes: (none)
 {"memories":[
 {"action":"add","target":null,"kind":"profile","topic":"可能的身份",
- "content":"可能在参与儿童游泳赛事的组织工作","importance":2,"source":1,
+ "content":"可能在负责连锁门店的排班","importance":2,"source":1,
  "expires_at":null,"inferred":true}],
-"topics":["儿童游泳赛事组织"]}
+"topics":["门店排班管理"]}
 The identity is a guess, so it is marked inferred and waits for confirmation.
 The subject is counted either way.
 
@@ -779,7 +778,7 @@ func buildExtractionPrompt(
 		// The wording has to test identity, not relatedness. It used to say
 		// "when the transcript is about one of these", and a question about one
 		// athlete's events genuinely *is* about children's swimming events — so
-		// the model dutifully filed it under 儿童游泳赛事组织 and every specific
+		// the model dutifully filed it under 门店排班管理 and every specific
 		// question in the domain collapsed into one bucket.
 		builder.WriteString("\nSubjects already tracked for this user:\n")
 		shown := 0
@@ -798,9 +797,9 @@ func buildExtractionPrompt(
 		builder.WriteString(
 			"Reuse one of these labels EXACTLY only when the transcript is about the SAME subject,\n" +
 				"just worded differently. Being in the same domain is not enough: if\n" +
-				"\"儿童游泳赛事组织\" is tracked and the user asks who is entered in one event, that\n" +
-				"is a different subject (\"北京市儿童游泳比赛参赛信息\") — organising a competition and\n" +
-				"looking up who is in it are different things this person does.\n" +
+				"\"门店排班管理\" is tracked and the user asks how a shift swap gets approved, that\n" +
+				"is a different subject (\"排班审批流程\") — building the roster and approving\n" +
+				"changes to it are different things this person does.\n" +
 				"When nothing above names the same subject, write a new label at the same level of\n" +
 				"generality as these. Do not force a fit, and do not name the individual question.\n")
 	}

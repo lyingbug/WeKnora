@@ -15,7 +15,7 @@ import (
 
 func TestTopicKeyIgnoresCosmeticDifferences(t *testing.T) {
 	same := [][2]string{
-		{"儿童游泳赛事组织", "儿童游泳赛事的组织"},
+		{"门店排班管理", "门店的排班管理"},
 		{"PostgreSQL 连接池", "PostgreSQL 连接池问题"},
 		{"postgresql连接池", "PostgreSQL 连接池"},
 		{"数据库迁移", "数据库的迁移"},
@@ -27,7 +27,7 @@ func TestTopicKeyIgnoresCosmeticDifferences(t *testing.T) {
 
 	different := [][2]string{
 		{"PostgreSQL 连接池", "PostgreSQL 备份恢复"},
-		{"儿童游泳赛事组织", "成人马拉松报名"},
+		{"门店排班管理", "成人马拉松报名"},
 	}
 	for _, pair := range different {
 		require.NotEqual(t, types.NormalizeTopicKey(pair[0]), types.NormalizeTopicKey(pair[1]),
@@ -55,20 +55,20 @@ func TestRephrasedTopicStillCountsTowardsTheSameSubject(t *testing.T) {
 	// Three sightings, three different wordings, one subject. The first is an
 	// exact match after normalisation, the second is close enough for the
 	// bigram tier; neither needs a model.
-	require.Empty(t, svc.ObserveQuestionTopics(ctx, []string{"儿童游泳赛事组织"}))
-	require.Empty(t, svc.ObserveQuestionTopics(ctx, []string{"儿童游泳赛事的组织"}))
-	promoted := svc.ObserveQuestionTopics(ctx, []string{"游泳赛事组织"})
+	require.Empty(t, svc.ObserveQuestionTopics(ctx, []string{"门店排班管理"}))
+	require.Empty(t, svc.ObserveQuestionTopics(ctx, []string{"门店的排班管理"}))
+	promoted := svc.ObserveQuestionTopics(ctx, []string{"连锁门店排班管理"})
 
-	require.Equal(t, []string{"儿童游泳赛事组织"}, promoted,
+	require.Equal(t, []string{"门店排班管理"}, promoted,
 		"three wordings of one subject must reach the threshold together")
 
 	stats, err := svc.repo.TopTopics(context.Background(), scope, 10)
 	require.NoError(t, err)
 	require.Len(t, stats, 1, "one subject, one row")
 	require.Equal(t, 3, stats[0].Hits)
-	require.Equal(t, "儿童游泳赛事组织", stats[0].Topic,
+	require.Equal(t, "门店排班管理", stats[0].Topic,
 		"the label stays the one it was first recorded under, so the list does not churn")
-	require.True(t, stats[0].Aliases.Has("游泳赛事组织"),
+	require.True(t, stats[0].Aliases.Has("连锁门店排班管理"),
 		"the other wordings are kept, both as an audit trail and as a fast path")
 }
 
@@ -97,49 +97,49 @@ func TestDifferentSubjectsAreStillCountedApart(t *testing.T) {
 // therefore held well above where two labels merely look alike.
 func TestLooseMatchingIsConservative(t *testing.T) {
 	existing := []*types.MemoryTopicStat{
-		{Topic: "儿童游泳赛事组织", NormalizedKey: types.NormalizeTopicKey("儿童游泳赛事组织")},
+		{Topic: "门店排班管理", NormalizedKey: types.NormalizeTopicKey("门店排班管理")},
 	}
-	require.NotNil(t, matchTopicLoosely("游泳赛事组织", existing))
-	require.Nil(t, matchTopicLoosely("少儿游泳比赛筹办", existing),
+	require.NotNil(t, matchTopicLoosely("连锁门店排班管理", existing))
+	require.Nil(t, matchTopicLoosely("店员班次安排", existing),
 		"a synonym is not something character overlap can decide; that is the model's job")
-	require.Nil(t, matchTopicLoosely("成人游泳课程报名", existing))
+	require.Nil(t, matchTopicLoosely("供应商结算流程", existing))
 }
 
 // Short labels carry too little information for overlap to mean anything, so
 // they skip the cheap tier rather than produce a false merge.
 func TestShortLabelsDoNotMatchLoosely(t *testing.T) {
 	existing := []*types.MemoryTopicStat{
-		{Topic: "游泳", NormalizedKey: types.NormalizeTopicKey("游泳")},
+		{Topic: "排班", NormalizedKey: types.NormalizeTopicKey("排班")},
 	}
 	require.Nil(t, matchTopicLoosely("游戏", existing))
-	require.False(t, types.TopicIsSpecificEnoughToMatchLoosely("游泳"))
+	require.False(t, types.TopicIsSpecificEnoughToMatchLoosely("排班"))
 }
 
 func TestAliasGivesAnExactMatchNextTime(t *testing.T) {
 	existing := []*types.MemoryTopicStat{
 		{
-			Topic:         "儿童游泳赛事组织",
-			NormalizedKey: types.NormalizeTopicKey("儿童游泳赛事组织"),
-			Aliases:       types.MemoryTopicAliases{"少儿游泳比赛筹办"},
+			Topic:         "门店排班管理",
+			NormalizedKey: types.NormalizeTopicKey("门店排班管理"),
+			Aliases:       types.MemoryTopicAliases{"店员班次安排"},
 		},
 	}
 	// A synonym the model decided on once must not be re-adjudicated forever.
-	require.NotNil(t, matchTopicExactly("少儿游泳比赛筹办", existing))
-	require.NotNil(t, matchTopicExactly("少儿游泳比赛的筹办", existing))
+	require.NotNil(t, matchTopicExactly("店员班次安排", existing))
+	require.NotNil(t, matchTopicExactly("店员的班次安排", existing))
 }
 
 func TestTwoNewWordingsInOneRunBecomeOneTopic(t *testing.T) {
 	resolutions := []topicResolution{
-		{Surface: "儿童游泳赛事组织"},
-		{Surface: "儿童游泳赛事的组织"},
+		{Surface: "门店排班管理"},
+		{Surface: "门店的排班管理"},
 	}
 	collapseNewTopicsWithinRun(resolutions)
 	require.Equal(t, resolutions[0].Surface, resolutions[1].Surface,
 		"one run must not create two rows it then has to keep apart forever")
 }
 
-// A synonym is not something character overlap can decide. "少儿游泳比赛筹办"
-// and "儿童游泳赛事组织" share one bigram out of fourteen, so the only tier
+// A synonym is not something character overlap can decide. "店员班次安排"
+// and "门店排班管理" share one bigram out of fourteen, so the only tier
 // that can resolve them is the model — and once it has, the answer is stored as
 // an alias so it is never asked again.
 func TestASynonymIsResolvedByTheModelAndThenRemembered(t *testing.T) {
@@ -154,10 +154,10 @@ func TestASynonymIsResolvedByTheModelAndThenRemembered(t *testing.T) {
 		"你在维护一个人的关注主题列表": `{"resolutions":[{"index":0,"same_as":0}]}`,
 	}
 
-	svc.ObserveQuestionTopics(ctx, []string{"儿童游泳赛事组织"})
+	svc.ObserveQuestionTopics(ctx, []string{"门店排班管理"})
 	callsBefore := models.callCount()
 
-	svc.ObserveQuestionTopics(ctx, []string{"少儿游泳比赛筹办"})
+	svc.ObserveQuestionTopics(ctx, []string{"店员班次安排"})
 	require.Greater(t, models.callCount(), callsBefore,
 		"nothing cheaper could have decided this, so the model must have been asked")
 
@@ -165,15 +165,15 @@ func TestASynonymIsResolvedByTheModelAndThenRemembered(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, 2, stats[0].Hits)
-	require.True(t, stats[0].Aliases.Has("少儿游泳比赛筹办"))
+	require.True(t, stats[0].Aliases.Has("店员班次安排"))
 
 	// Third sighting of the same synonym: the alias now answers it, so the
 	// model is not consulted again.
 	callsBefore = models.callCount()
-	promoted := svc.ObserveQuestionTopics(ctx, []string{"少儿游泳比赛筹办"})
+	promoted := svc.ObserveQuestionTopics(ctx, []string{"店员班次安排"})
 	require.Equal(t, callsBefore, models.callCount(),
 		"a decision the model already made must not be paid for twice")
-	require.Equal(t, []string{"儿童游泳赛事组织"}, promoted)
+	require.Equal(t, []string{"门店排班管理"}, promoted)
 }
 
 // The model gets a veto, not a free hand: if it says two subjects are distinct,
@@ -269,16 +269,16 @@ func TestAMergeCannotMakeTheSubjectVaguer(t *testing.T) {
 	})
 	scope := scopeFor(t, ctx)
 	models.responseFor = map[string]string{
-		"你在维护一个人的关注主题列表": `{"resolutions":[{"index":0,"same_as":0,"label":"游泳"}]}`,
+		"你在维护一个人的关注主题列表": `{"resolutions":[{"index":0,"same_as":0,"label":"排班"}]}`,
 	}
 
-	svc.ObserveQuestionTopics(ctx, []string{"儿童游泳赛事组织"})
-	svc.ObserveQuestionTopics(ctx, []string{"少儿游泳比赛筹办"})
+	svc.ObserveQuestionTopics(ctx, []string{"门店排班管理"})
+	svc.ObserveQuestionTopics(ctx, []string{"店员班次安排"})
 
 	stats, err := svc.repo.TopTopics(context.Background(), scope, 10)
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
-	require.Equal(t, "儿童游泳赛事组织", stats[0].Topic,
+	require.Equal(t, "门店排班管理", stats[0].Topic,
 		"the merge stands, but the label may not become a category")
 	require.Equal(t, 2, stats[0].Hits)
 }

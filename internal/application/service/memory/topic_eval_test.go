@@ -118,7 +118,7 @@ func TestTopicPromptsCarryTheRulesTheEvalSetDependsOn(t *testing.T) {
 
 	segment := transcriptSegment{lines: []transcriptLine{{content: "问题"}}}
 	prompt := buildExtractionPrompt(segment, nil, nil,
-		[]*types.MemoryTopicStat{{Topic: "儿童游泳赛事组织"}}, "")
+		[]*types.MemoryTopicStat{{Topic: "门店排班管理"}}, "")
 	require.Contains(t, prompt, "SAME subject",
 		"reuse has to be an identity test; 'is about' is a relatedness test and merges everything adjacent")
 	require.Contains(t, prompt, "Do not force a fit")
@@ -253,7 +253,7 @@ type topicGranularityCase struct {
 //
 // This is not hypothetical: the prompt used to offer "某选手的参赛项目" as the
 // model of a good separate subject, and production filled up with labels like
-// "北京市第三十六届儿童游泳比赛男子U8组50米蝶泳决赛选手名单".
+// "v2.3版本orders接口分页参数默认值查询".
 func TestGoodSubjectsRecurAndQueryShapedOnesDoNot(t *testing.T) {
 	var set struct {
 		Granularity struct {
@@ -285,7 +285,7 @@ func TestExtractionPromptTeachesSubjectLevelNaming(t *testing.T) {
 
 	prompt := buildExtractionPrompt(
 		transcriptSegment{lines: []transcriptLine{{content: "问题"}}}, nil, nil,
-		[]*types.MemoryTopicStat{{Topic: "儿童游泳赛事组织"}}, "")
+		[]*types.MemoryTopicStat{{Topic: "门店排班管理"}}, "")
 	require.NotContains(t, prompt, "某选手的参赛项目",
 		"that example taught the model to name queries, which is how the topic table filled "+
 			"with labels that can never match anything again")

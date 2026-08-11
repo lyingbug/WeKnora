@@ -56,14 +56,14 @@ func TestPendingMemoriesNeverReachAPrompt(t *testing.T) {
 
 	_, err := svc.Remember(ctx, types.MemoryItem{
 		Kind:       types.MemoryKindProfile,
-		Content:    "可能在参与儿童游泳赛事的组织",
+		Content:    "可能在负责连锁门店的排班",
 		Importance: 3,
 		Origin:     types.MemoryOriginExtracted,
 		Inferred:   true,
 	})
 	require.NoError(t, err)
 
-	require.Empty(t, svc.Recall(ctx, "游泳比赛").Items,
+	require.Empty(t, svc.Recall(ctx, "入库流程").Items,
 		"a guess about the user must not be asserted before they confirm it")
 	require.True(t, svc.RetrievalContextFor(ctx).Empty(),
 		"an unconfirmed guess must not steer retrieval either")
@@ -75,7 +75,7 @@ func TestPendingMemoriesNeverReachAPrompt(t *testing.T) {
 	confirmed, err := svc.ConfirmItem(ctx, items[0].ID)
 	require.NoError(t, err)
 	require.Equal(t, types.MemoryStatusActive, confirmed.Status)
-	require.NotEmpty(t, svc.Recall(ctx, "游泳比赛").Items)
+	require.NotEmpty(t, svc.Recall(ctx, "入库流程").Items)
 }
 
 func TestRejectingAGuessStopsItComingBack(t *testing.T) {
@@ -84,7 +84,7 @@ func TestRejectingAGuessStopsItComingBack(t *testing.T) {
 
 	stored, err := svc.Remember(ctx, types.MemoryItem{
 		Kind:       types.MemoryKindProfile,
-		Content:    "可能在参与儿童游泳赛事的组织",
+		Content:    "可能在负责连锁门店的排班",
 		Importance: 3,
 		Origin:     types.MemoryOriginExtracted,
 		Inferred:   true,
@@ -94,7 +94,7 @@ func TestRejectingAGuessStopsItComingBack(t *testing.T) {
 
 	_, err = svc.Remember(ctx, types.MemoryItem{
 		Kind:       types.MemoryKindProfile,
-		Content:    "可能在参与儿童游泳赛事的组织",
+		Content:    "可能在负责连锁门店的排班",
 		Importance: 3,
 		Origin:     types.MemoryOriginExtracted,
 		Inferred:   true,
@@ -110,18 +110,18 @@ func TestATopicBecomesAnInterestOnlyWhenItRecurs(t *testing.T) {
 		Enabled: true, WriteMode: types.MemoryWriteAuto, InterestThreshold: 3,
 	})
 
-	require.Empty(t, svc.ObserveQuestionTopics(ctx, []string{"儿童游泳赛事组织"}),
+	require.Empty(t, svc.ObserveQuestionTopics(ctx, []string{"门店排班管理"}),
 		"one question is a passing curiosity, not a fact about the person")
-	require.Empty(t, svc.ObserveQuestionTopics(ctx, []string{"儿童游泳赛事组织"}))
+	require.Empty(t, svc.ObserveQuestionTopics(ctx, []string{"门店排班管理"}))
 
-	promoted := svc.ObserveQuestionTopics(ctx, []string{"儿童游泳赛事组织"})
-	require.Equal(t, []string{"儿童游泳赛事组织"}, promoted,
+	promoted := svc.ObserveQuestionTopics(ctx, []string{"门店排班管理"})
+	require.Equal(t, []string{"门店排班管理"}, promoted,
 		"the same subject across conversations is a signal worth keeping")
 
 	memCtx := svc.RetrievalContextFor(ctx)
-	require.Contains(t, memCtx.Interests, "儿童游泳赛事组织")
+	require.Contains(t, memCtx.Interests, "门店排班管理")
 
-	require.Empty(t, svc.ObserveQuestionTopics(ctx, []string{"儿童游泳赛事组织"}),
+	require.Empty(t, svc.ObserveQuestionTopics(ctx, []string{"门店排班管理"}),
 		"and it is promoted once, not on every question thereafter")
 }
 
@@ -237,7 +237,7 @@ func TestARepeatedGuessDoesNotStackUpInTheInbox(t *testing.T) {
 	guess := types.MemoryItem{
 		Kind:       types.MemoryKindProfile,
 		Topic:      "可能的身份",
-		Content:    "可能在参与儿童游泳赛事的组织工作",
+		Content:    "可能在负责连锁门店的排班",
 		Importance: 2,
 		Origin:     types.MemoryOriginExtracted,
 		Inferred:   true,

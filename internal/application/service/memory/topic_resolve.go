@@ -51,7 +51,7 @@ type topicResolution struct {
 // this person already has.
 //
 // The problem this solves is that a model asked to name a topic will not name
-// it the same way twice: "儿童游泳赛事组织" one run, "少儿游泳比赛筹办" the
+// it the same way twice: "门店排班管理" one run, "店员班次安排" the
 // next. Treating the string as an identity means the same subject is counted
 // under several keys and never reaches the promotion threshold — the feature
 // looks enabled and learns nothing.
@@ -169,17 +169,17 @@ const topicAdjudicationPrompt = `你在维护一个人的关注主题列表。�
 - 「CI 流水线」和「持续集成流水线」→ label 用全称「持续集成流水线」。
 - 「PostgreSQL 连接池」和「PostgreSQL 连接池调优」→ label 用更具体的那个。
 - 两个名字差不多好，就不要填 label。
-- **绝对不要**给一个更宽泛的名字（「游泳」「体育赛事」「数据库相关」），也不要把两个名字拼起来
+- **绝对不要**给一个更宽泛的名字（「门店」「系统」「数据库相关」），也不要把两个名字拼起来
   （「A与B」）。名字只能变得更准确，不能变得更笼统——否则每合并一次主题就宽一点，最后变成
   一个什么都装的桶。
 
 算同一件事：
-- 同义、换个说法、详略不同的同一件事：「少儿游泳比赛筹办」和「儿童游泳赛事组织」。
+- 同义、换个说法、详略不同的同一件事：「店员班次安排」和「门店排班管理」。
 - 加了个无关紧要的限定词：「PostgreSQL 连接池」和「PostgreSQL 连接池问题」。
 
 不算同一件事：
 - 同一领域里的不同问题：「PostgreSQL 连接池」和「PostgreSQL 备份恢复」。
-- 一个是另一个范围内的**具体查询**：已有「儿童游泳赛事组织」，新说法是「陈戈妤的参赛项目」——
+- 一个是另一个范围内的**具体查询**：已有「门店排班管理」，新说法是「三号店下周三的排班表」——
   后者确实属于前者的领域，但它是一次具体查询，不是同一个长期关注点。这类要判为不同。
 - 一个是另一个的下位概念：「数据库」和「PostgreSQL 连接池」。
 
