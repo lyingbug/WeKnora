@@ -628,6 +628,75 @@ func (r *memoryRepository) BumpTopic(
 	return &updated, nil
 }
 
+// RenameTopic gives a subject a better canonical label.
+//
+// The old label becomes an alias rather than being discarded: it is what every
+// earlier sighting was counted under, and dropping it would make the next
+// occurrence of that wording look like a brand new subject. Returns false when
+// the new key already belongs to another row, in which case the rename is
+// skipped — folding two rows together is a different operation with different
+// risks, and doing it as a side effect of a rename would lose counts.
+func (r *memoryRepository) RenameTopic(
+	ctx context.Context, scope interfaces.MemoryScope, oldKey, newKey, newLabel string,
+) (bool, error) {
+	if oldKey == "" || newKey == "" || oldKey == newKey {
+		return false, nil
+	}
+
+	var clash int64
+	err := r.scoped(ctx, scope).
+		Model(&types.MemoryTopicStat{}).
+		Where("normalized_key = ?", newKey).
+		Count(&clash).Error
+	if err != nil {
+		return false, err
+	}
+	if clash > 0 {
+		return false, nil
+	}
+
+	var current types.MemoryTopicStat
+	if err := r.scoped(ctx, scope).
+		Where("normalized_key = ?", oldKey).
+		First(&current).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	// The incoming wording was recorded as an alias before the rename decided
+	// to adopt it. Leaving it there would list the canonical label as an alias
+	// of itself.
+	aliases := make(types.MemoryTopicAliases, 0, len(current.Aliases)+1)
+	for _, alias := range current.Aliases {
+		if types.NormalizeTopicKey(alias) == newKey {
+			continue
+		}
+		aliases = append(aliases, alias)
+	}
+	if current.Topic != "" && !aliases.Has(current.Topic) {
+		aliases = append(aliases, current.Topic)
+	}
+	if len(aliases) > 12 {
+		aliases = aliases[len(aliases)-12:]
+	}
+
+	err = r.scoped(ctx, scope).
+		Model(&types.MemoryTopicStat{}).
+		Where("normalized_key = ?", oldKey).
+		Updates(map[string]interface{}{
+			"topic":          newLabel,
+			"normalized_key": newKey,
+			"aliases":        aliases,
+			"updated_at":     time.Now(),
+		}).Error
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *memoryRepository) MarkTopicPromoted(
 	ctx context.Context, scope interfaces.MemoryScope, normalizedKey string,
 ) error {

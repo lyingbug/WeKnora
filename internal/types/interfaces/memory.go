@@ -107,6 +107,9 @@ type MemoryRepository interface {
 	BumpTopic(
 		ctx context.Context, scope MemoryScope, topic, normalizedKey, alias string,
 	) (*types.MemoryTopicStat, error)
+	// RenameTopic gives a subject a better canonical label, keeping the old one
+	// as an alias. Reports false when another row already holds the new key.
+	RenameTopic(ctx context.Context, scope MemoryScope, oldKey, newKey, newLabel string) (bool, error)
 	// MarkTopicPromoted stops a topic from being promoted again.
 	MarkTopicPromoted(ctx context.Context, scope MemoryScope, normalizedKey string) error
 	// TopTopics returns the most-asked topics, newest activity first.

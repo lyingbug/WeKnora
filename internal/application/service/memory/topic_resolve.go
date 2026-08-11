@@ -41,6 +41,10 @@ type topicResolution struct {
 	// Tier records which rule decided, for logs and for tests that need to
 	// assert an expensive tier was not reached.
 	Tier string
+	// MergedLabel is a better name for the merged subject, when the model
+	// offered one and it passed the guard against generalising. Empty means
+	// keep the label the subject already has.
+	MergedLabel string
 }
 
 // resolveTopics maps the labels one extraction run produced onto the subjects
@@ -161,6 +165,14 @@ const topicAdjudicationPrompt = `你在维护一个人的关注主题列表。�
 
 对每个新说法，判断它和某个已有主题**说的是不是同一件事**——注意是同一件事，不是有关系。
 
+判为同一件事时，如果其中一个名字明显更完整、更准确，可以在 label 里给出应该保留的那个名字：
+- 「CI 流水线」和「持续集成流水线」→ label 用全称「持续集成流水线」。
+- 「PostgreSQL 连接池」和「PostgreSQL 连接池调优」→ label 用更具体的那个。
+- 两个名字差不多好，就不要填 label。
+- **绝对不要**给一个更宽泛的名字（「游泳」「体育赛事」「数据库相关」），也不要把两个名字拼起来
+  （「A与B」）。名字只能变得更准确，不能变得更笼统——否则每合并一次主题就宽一点，最后变成
+  一个什么都装的桶。
+
 算同一件事：
 - 同义、换个说法、详略不同的同一件事：「少儿游泳比赛筹办」和「儿童游泳赛事组织」。
 - 加了个无关紧要的限定词：「PostgreSQL 连接池」和「PostgreSQL 连接池问题」。
@@ -173,7 +185,8 @@ const topicAdjudicationPrompt = `你在维护一个人的关注主题列表。�
 
 拿不准就判不同。合并错了会把两件事的计数混在一起、事后完全看不出来；没合并只是暂时多一条。
 
-只输出 JSON：{"resolutions":[{"index":<新说法的序号>,"same_as":<已有主题的序号，没有则 null>}]}`
+只输出 JSON：
+{"resolutions":[{"index":<新说法的序号>,"same_as":<已有主题的序号，没有则 null>,"label":<更好的名字，没有则 null>}]}`
 
 var topicAdjudicationSchema = json.RawMessage(`{
   "type": "object",
@@ -184,7 +197,8 @@ var topicAdjudicationSchema = json.RawMessage(`{
         "type": "object",
         "properties": {
           "index": {"type": "integer"},
-          "same_as": {"type": ["integer", "null"]}
+          "same_as": {"type": ["integer", "null"]},
+          "label": {"type": ["string", "null"]}
         },
         "required": ["index", "same_as"]
       }
@@ -252,8 +266,9 @@ func (s *Service) adjudicateTopics(
 
 	var parsed struct {
 		Resolutions []struct {
-			Index  int  `json:"index"`
-			SameAs *int `json:"same_as"`
+			Index  int    `json:"index"`
+			SameAs *int   `json:"same_as"`
+			Label  string `json:"label"`
 		} `json:"resolutions"`
 	}
 	content := strings.TrimSpace(response.Content)
@@ -292,6 +307,19 @@ func (s *Service) adjudicateTopics(
 		// bumped counter on a subject the user never named.
 		logger.Infof(ctx, "memory: model merged topic %q into %q",
 			resolutions[decision.Index].Surface, existing[target].Topic)
+
+		proposed := types.SanitizeMemoryTopic(decision.Label)
+		if proposed == "" {
+			continue
+		}
+		if !types.TopicLabelIsAnImprovement(
+			existing[target].Topic, resolutions[decision.Index].Surface, proposed,
+		) {
+			logger.Infof(ctx, "memory: rejected proposed label %q for %q",
+				proposed, existing[target].Topic)
+			continue
+		}
+		resolutions[decision.Index].MergedLabel = proposed
 	}
 }
 

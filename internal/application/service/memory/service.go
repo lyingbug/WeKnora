@@ -793,6 +793,10 @@ func (s *Service) observeTopics(
 		logger.Infof(ctx,
 			"memory: topic %q -> %q (tier=%s, hits=%d, threshold=%d)",
 			resolution.Surface, canonicalTopic, resolutionTier(resolution), stat.Hits, threshold)
+		if resolution.MergedLabel != "" {
+			canonicalTopic, key = s.renameTopic(ctx, scope, stat, resolution.MergedLabel, key)
+		}
+
 		if stat.PromotedAt != nil || stat.Hits < threshold {
 			continue
 		}
@@ -818,6 +822,60 @@ func (s *Service) observeTopics(
 		logger.Infof(ctx, "memory: promoted %d recurring topics into interests", len(promoted))
 	}
 	return promoted
+}
+
+// renameTopic adopts a better label for a subject and keeps everything that
+// refers to it in step. Returns the label and key to carry on with.
+//
+// The label a merge leaves behind is otherwise just whichever wording arrived
+// first, and that label is not cosmetic: it is fed to the query rewriter as
+// this person's vocabulary and shown to them as what we think they care about.
+func (s *Service) renameTopic(
+	ctx context.Context,
+	scope interfaces.MemoryScope,
+	stat *types.MemoryTopicStat,
+	newLabel, currentKey string,
+) (string, string) {
+	newKey := types.NormalizeTopicKey(newLabel)
+	renamed, err := s.repo.RenameTopic(ctx, scope, currentKey, newKey, newLabel)
+	if err != nil {
+		logger.Warnf(ctx, "memory: rename topic %q failed: %v", stat.Topic, err)
+		return stat.Topic, currentKey
+	}
+	if !renamed {
+		return stat.Topic, currentKey
+	}
+	logger.Infof(ctx, "memory: renamed topic %q to %q", stat.Topic, newLabel)
+	s.renameInterestItem(ctx, scope, stat.Topic, newLabel)
+	return newLabel, newKey
+}
+
+// renameInterestItem keeps a promoted interest in step with its subject.
+//
+// It only touches an item that still reads exactly as the old label. Anything
+// else has been edited by the user, and quietly overwriting someone's own
+// wording is worse than leaving the two slightly out of step.
+func (s *Service) renameInterestItem(
+	ctx context.Context, scope interfaces.MemoryScope, oldLabel, newLabel string,
+) {
+	items, err := s.repo.ListActiveByKinds(ctx, scope, []string{types.MemoryKindInterest}, 100)
+	if err != nil {
+		logger.Warnf(ctx, "memory: load interests for rename failed: %v", err)
+		return
+	}
+	for _, item := range items {
+		if item == nil || item.Content != oldLabel {
+			continue
+		}
+		err := s.repo.UpdateItemContent(
+			ctx, scope, item.ID, newLabel, types.MemoryItemKey(newLabel, newLabel), item.Importance)
+		if err != nil {
+			logger.Warnf(ctx, "memory: rename interest item failed: %v", err)
+			continue
+		}
+		s.rebuildBlock(ctx, scope)
+		return
+	}
 }
 
 // resolutionTier names which rule matched, for logs.

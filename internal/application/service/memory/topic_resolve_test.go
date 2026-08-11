@@ -223,3 +223,107 @@ func TestAdjudicationCannotOverrideACheaperTier(t *testing.T) {
 	require.Len(t, stats, 1, "the model merged the one label it was asked about")
 	require.Equal(t, 3, stats[0].Hits)
 }
+
+// The label a merge leaves behind used to be whichever wording arrived first,
+// which is arbitrary and not cosmetic: interests are fed to the query rewriter
+// as this person's vocabulary. When one of the two names is plainly better, the
+// model may say so.
+func TestAMergeCanAdoptTheBetterName(t *testing.T) {
+	svc, tenantRepo, _, models, _ := newExtractionHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	tenantRepo.set(1, &types.MemoryConfig{
+		Enabled: true, WriteMode: types.MemoryWriteAuto,
+		ExtractModelID: "model-1", InterestThreshold: 2,
+	})
+	scope := scopeFor(t, ctx)
+	models.responseFor = map[string]string{
+		"你在维护一个人的关注主题列表": `{"resolutions":[{"index":0,"same_as":0,"label":"持续集成流水线"}]}`,
+	}
+
+	svc.ObserveQuestionTopics(ctx, []string{"CI 流水线"})
+	promoted := svc.ObserveQuestionTopics(ctx, []string{"持续集成流水线"})
+
+	stats, err := svc.repo.TopTopics(context.Background(), scope, 10)
+	require.NoError(t, err)
+	require.Len(t, stats, 1)
+	require.Equal(t, "持续集成流水线", stats[0].Topic, "the fuller name should win")
+	require.Equal(t, 2, stats[0].Hits, "renaming must not lose the count")
+	require.True(t, stats[0].Aliases.Has("CI 流水线"),
+		"the old label is what earlier sightings were counted under; dropping it makes that "+
+			"wording look new again")
+	require.False(t, stats[0].Aliases.Has("持续集成流水线"),
+		"a subject must not be listed as an alias of itself")
+	require.Equal(t, []string{"持续集成流水线"}, promoted)
+}
+
+// A model asked what two labels have in common will reach for something broader
+// every time. Left unchecked, each merge widens the subject until it is an
+// umbrella that means nothing — the exact failure this feature was just fixed
+// for, arriving through a different door.
+func TestAMergeCannotMakeTheSubjectVaguer(t *testing.T) {
+	svc, tenantRepo, _, models, _ := newExtractionHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	tenantRepo.set(1, &types.MemoryConfig{
+		Enabled: true, WriteMode: types.MemoryWriteAuto,
+		ExtractModelID: "model-1", InterestThreshold: 5,
+	})
+	scope := scopeFor(t, ctx)
+	models.responseFor = map[string]string{
+		"你在维护一个人的关注主题列表": `{"resolutions":[{"index":0,"same_as":0,"label":"游泳"}]}`,
+	}
+
+	svc.ObserveQuestionTopics(ctx, []string{"儿童游泳赛事组织"})
+	svc.ObserveQuestionTopics(ctx, []string{"少儿游泳比赛筹办"})
+
+	stats, err := svc.repo.TopTopics(context.Background(), scope, 10)
+	require.NoError(t, err)
+	require.Len(t, stats, 1)
+	require.Equal(t, "儿童游泳赛事组织", stats[0].Topic,
+		"the merge stands, but the label may not become a category")
+	require.Equal(t, 2, stats[0].Hits)
+}
+
+func TestProposedLabelsAreJudgedOnDirectionNotNovelty(t *testing.T) {
+	canonical, incoming := "PostgreSQL 连接池", "PostgreSQL 连接池调优"
+
+	require.True(t, types.TopicLabelIsAnImprovement(canonical, incoming, "PostgreSQL 连接池调优"),
+		"more specific is the direction a label is allowed to move in")
+	require.False(t, types.TopicLabelIsAnImprovement(canonical, incoming, "数据库"),
+		"a category is not a better name for the same subject")
+	require.False(t, types.TopicLabelIsAnImprovement(canonical, incoming, "PostgreSQL"),
+		"dropping what makes the subject specific is generalising")
+	require.False(t, types.TopicLabelIsAnImprovement(canonical, incoming, "运维相关的一些话题"),
+		"a name grounded in neither label is an invention, not a merge")
+	require.False(t, types.TopicLabelIsAnImprovement(canonical, incoming, canonical),
+		"proposing the name it already has is not a rename")
+}
+
+// A promoted interest is a row the user can see and edit. Renaming the subject
+// behind it has to keep the two in step, but must not overwrite wording the
+// user chose.
+func TestRenamingASubjectDoesNotOverwriteAnEditedInterest(t *testing.T) {
+	svc, tenantRepo, _, models, _ := newExtractionHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	tenantRepo.set(1, &types.MemoryConfig{
+		Enabled: true, WriteMode: types.MemoryWriteAuto,
+		ExtractModelID: "model-1", InterestThreshold: 1,
+	})
+	models.responseFor = map[string]string{
+		"你在维护一个人的关注主题列表": `{"resolutions":[{"index":0,"same_as":0,"label":"持续集成流水线"}]}`,
+	}
+
+	svc.ObserveQuestionTopics(ctx, []string{"CI 流水线"})
+	items, _, err := svc.ListItems(ctx, types.MemoryStatusActive, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+
+	_, err = svc.UpdateItem(ctx, items[0].ID, "我自己写的说法", 4)
+	require.NoError(t, err)
+
+	svc.ObserveQuestionTopics(ctx, []string{"持续集成流水线"})
+
+	after, _, err := svc.ListItems(ctx, types.MemoryStatusActive, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, "我自己写的说法", after[0].Content,
+		"the user's own wording outranks a better generated one")
+}

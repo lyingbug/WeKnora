@@ -1130,3 +1130,44 @@ func topicBigrams(topic string) map[string]struct{} {
 func TopicIsSpecificEnoughToMatchLoosely(topic string) bool {
 	return len([]rune(NormalizeTopicKey(topic))) >= 4
 }
+
+// TopicLabelIsAnImprovement reports whether a proposed label may replace the
+// canonical one when two subjects merge.
+//
+// The label that survives a merge is currently just whichever arrived first,
+// which is arbitrary — and it matters, because interests are fed to the query
+// rewriter as vocabulary and shown to the user as what we think they care
+// about. Letting the model propose a better name is worth doing, but it opens a
+// ratchet: a model asked to name what two labels have in common will reach for
+// something broader every time, and after a few merges the subject is an
+// umbrella that means nothing.
+//
+// So a replacement has to be more complete, never more general. This mirrors
+// what entity-resolution systems that do rename converge on — Graphiti keeps
+// the more specific node when collapsing duplicates, and LLM-driven merges in
+// the wild pick the fullest form of a name rather than a category for it.
+func TopicLabelIsAnImprovement(canonical, incoming, proposed string) bool {
+	proposedKey := NormalizeTopicKey(proposed)
+	canonicalKey := NormalizeTopicKey(canonical)
+	if proposedKey == "" || proposedKey == canonicalKey {
+		return false
+	}
+	if len([]rune(proposed)) > 80 {
+		return false
+	}
+
+	// Dropping content that the current label carries is generalisation, which
+	// is the one direction this must not move in.
+	if strings.Contains(canonicalKey, proposedKey) {
+		return false
+	}
+	if len([]rune(proposedKey)) < len([]rune(canonicalKey)) {
+		return false
+	}
+
+	// The proposal has to be grounded in both labels it claims to unify. A name
+	// that shares little with either is an invention, not a merge.
+	const minAnchor = 0.30
+	return TopicSimilarity(proposed, canonical) >= minAnchor &&
+		TopicSimilarity(proposed, incoming) >= minAnchor
+}
