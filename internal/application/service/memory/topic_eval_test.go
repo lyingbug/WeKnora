@@ -239,3 +239,56 @@ func TestFuzzyThresholdSitsInARealGap(t *testing.T) {
 	t.Logf("fuzzy threshold %.2f sits between %q (%.2f, different) and %q (%.2f, same)",
 		topicFuzzyThreshold, highestName, highestDifferent, lowestName, lowestFuzzyMerged)
 }
+
+type topicGranularityCase struct {
+	Question string `json:"question"`
+	Good     string `json:"good"`
+	Bad      string `json:"bad"`
+}
+
+// A subject has to recur to be worth anything. A label carrying the parameters
+// of one question — a name, an age group, a distance, an edition number — can
+// only ever match itself, so it is counted once and sits at one hit forever
+// while the feature looks like it is working.
+//
+// This is not hypothetical: the prompt used to offer "某选手的参赛项目" as the
+// model of a good separate subject, and production filled up with labels like
+// "北京市第三十六届儿童游泳比赛男子U8组50米蝶泳决赛选手名单".
+func TestGoodSubjectsRecurAndQueryShapedOnesDoNot(t *testing.T) {
+	var set struct {
+		Granularity struct {
+			Cases []topicGranularityCase `json:"cases"`
+		} `json:"granularity"`
+	}
+	raw, err := os.ReadFile("topic_evalset.json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &set))
+	require.NotEmpty(t, set.Granularity.Cases)
+
+	for _, c := range set.Granularity.Cases {
+		require.False(t, types.TopicLooksLikeOneQuestion(c.Good),
+			"%q is the subject we want and must not be flagged as a one-off", c.Good)
+		require.True(t, types.TopicLooksLikeOneQuestion(c.Bad) ||
+			types.TopicSimilarity(c.Good, c.Bad) < 1.0,
+			"%q names the question rather than the subject", c.Bad)
+	}
+}
+
+// The granularity rule has to survive in the prompt, since nothing downstream
+// can recover a subject from a label that already baked one question into it.
+func TestExtractionPromptTeachesSubjectLevelNaming(t *testing.T) {
+	require.Contains(t, extractionSystemPrompt, "RECURS",
+		"the reason a subject must be nameable at a recurring level has to be stated")
+	require.Contains(t, extractionSystemPrompt, "belong to the question, not to the subject name")
+	require.Contains(t, extractionSystemPrompt, "are categories, not",
+		"the opposite failure — naming a category — has to stay ruled out too")
+
+	prompt := buildExtractionPrompt(
+		transcriptSegment{lines: []transcriptLine{{content: "问题"}}}, nil, nil,
+		[]*types.MemoryTopicStat{{Topic: "儿童游泳赛事组织"}}, "")
+	require.NotContains(t, prompt, "某选手的参赛项目",
+		"that example taught the model to name queries, which is how the topic table filled "+
+			"with labels that can never match anything again")
+	require.Contains(t, prompt, "same level of",
+		"a new label has to be written at the level of the ones already tracked")
+}

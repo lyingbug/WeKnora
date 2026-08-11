@@ -793,6 +793,11 @@ func (s *Service) observeTopics(
 		logger.Infof(ctx,
 			"memory: topic %q -> %q (tier=%s, hits=%d, threshold=%d)",
 			resolution.Surface, canonicalTopic, resolutionTier(resolution), stat.Hits, threshold)
+		if types.TopicLooksLikeOneQuestion(canonicalTopic) {
+			logger.Warnf(ctx,
+				"memory: topic %q names one question rather than a subject, so it will never "+
+					"recur and can never reach the threshold", canonicalTopic)
+		}
 		if resolution.MergedLabel != "" {
 			canonicalTopic, key = s.renameTopic(ctx, scope, stat, resolution.MergedLabel, key)
 		}

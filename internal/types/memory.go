@@ -1171,3 +1171,21 @@ func TopicLabelIsAnImprovement(canonical, incoming, proposed string) bool {
 	return TopicSimilarity(proposed, canonical) >= minAnchor &&
 		TopicSimilarity(proposed, incoming) >= minAnchor
 }
+
+// TopicLooksLikeOneQuestion reports whether a label names an individual query
+// rather than a subject.
+//
+// A subject has to recur to be worth anything: it is counted, and only becomes
+// a memory once several conversations touch it. A label like
+// "北京市第三十六届儿童游泳比赛男子U8组50米蝶泳决赛选手名单" can only ever match
+// itself, so it is counted once and then sits at one hit forever — the counting
+// mechanism is dead and nothing says so.
+//
+// Length is a blunt proxy, but a subject that cannot be named in a couple of
+// dozen characters is carrying the parameters of one question. This does not
+// reject anything: throwing the label away would lose the signal entirely, and
+// the fix belongs in the prompt. It exists so the failure is visible in logs
+// instead of only in a trace someone happens to open.
+func TopicLooksLikeOneQuestion(topic string) bool {
+	return len([]rune(NormalizeTopicKey(topic))) > 24
+}

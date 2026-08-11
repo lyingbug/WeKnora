@@ -613,10 +613,26 @@ What to record
 
 The "topics" list
 - Separately from memories, list the subjects the user asked about, however
-  ordinary. Use short noun phrases, in the user's language: "儿童游泳赛事组织",
-  "PostgreSQL 连接池". These are only counted; a subject becomes a memory once
-  it recurs across conversations, so listing one costs nothing and omitting one
-  loses a signal.
+  ordinary. These are only counted; a subject becomes a memory once it RECURS
+  across conversations, so listing one costs nothing and omitting one loses a
+  signal.
+- Name the subject AREA, at a level that could plausibly come up again in
+  another conversation. Not the individual question. This is the whole point:
+  a label that can only ever match itself is counted once and never again.
+- The specifics of one question — a person's name, an age group, a distance, an
+  edition number, a placing — belong to the question, not to the subject name.
+  Strip them.
+
+  question: 陈戈妤在女子U7组确认参加了哪些游泳项目？
+  subject:  北京市儿童游泳比赛参赛信息          NOT 陈戈妤女子U7组参赛项目查询
+  question: 第三十六届比赛男子U8组50米蝶泳决赛的选手名单？
+  subject:  北京市儿童游泳比赛参赛信息          NOT 第三十六届男子U8组50米蝶泳决赛选手名单
+  question: 讯飞开放平台的商务怎么联系？
+  subject:  讯飞开放平台                        NOT 讯飞开放平台商务联系方式
+
+- Do not go the other way either. "游泳"、"体育"、"平台" are categories, not
+  subjects: they say nothing about what this person works on.
+- Two to eight characters of qualifier is usually the right size.
 
 How to reference things
 - "source" is the LINE number the statement came from. Always set it.
@@ -781,10 +797,12 @@ func buildExtractionPrompt(
 		}
 		builder.WriteString(
 			"Reuse one of these labels EXACTLY only when the transcript is about the SAME subject,\n" +
-				"just worded differently. A narrower question inside a broader subject is NOT the same\n" +
-				"subject: if \"儿童游泳赛事组织\" is tracked and the user asks which events one named\n" +
-				"athlete signed up for, that is its own subject (\"某选手的参赛项目\"), not that one.\n" +
-				"When nothing above names the same subject, write a new label. Do not force a fit.\n")
+				"just worded differently. Being in the same domain is not enough: if\n" +
+				"\"儿童游泳赛事组织\" is tracked and the user asks who is entered in one event, that\n" +
+				"is a different subject (\"北京市儿童游泳比赛参赛信息\") — organising a competition and\n" +
+				"looking up who is in it are different things this person does.\n" +
+				"When nothing above names the same subject, write a new label at the same level of\n" +
+				"generality as these. Do not force a fit, and do not name the individual question.\n")
 	}
 
 	if instructions != "" {
