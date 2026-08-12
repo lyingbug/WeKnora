@@ -23,6 +23,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -203,6 +204,26 @@ func remoteExecuteResult(result *RemoteExecResult, err error, duration time.Dura
 		Stderr:   result.Stderr,
 		ExitCode: result.ExitCode,
 		Duration: result.Duration,
+	}
+}
+
+// getInterpreter picks the interpreter for a script from its extension. The
+// remote backends upload the script and then exec this interpreter against
+// the uploaded path, so the choice must not depend on anything host-side.
+func getInterpreter(scriptName string) string {
+	switch strings.ToLower(filepath.Ext(scriptName)) {
+	case ".py":
+		return "python3"
+	case ".sh", ".bash":
+		return "bash"
+	case ".js":
+		return "node"
+	case ".rb":
+		return "ruby"
+	case ".pl":
+		return "perl"
+	default:
+		return "sh"
 	}
 }
 

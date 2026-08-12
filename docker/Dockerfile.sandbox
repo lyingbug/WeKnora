@@ -39,6 +39,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -g 1000 user && \
     useradd -u 1000 -g user -m -s /bin/bash user
 
+# Pre-create the two directories every backend writes to and hand them to the
+# sandbox account. WeKnora otherwise has to create and chown them as root on
+# each execution, which needs capabilities a hardened container should not
+# have to keep.
+RUN mkdir -p /workspace/input /workspace/output && \
+    chown -R user:user /workspace
+
 WORKDIR /workspace
 USER user
 

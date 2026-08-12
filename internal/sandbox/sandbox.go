@@ -12,7 +12,10 @@ import (
 type SandboxType string
 
 const (
-	// SandboxTypeDocker uses Docker containers for isolation
+	// SandboxTypeDocker runs each session in its own long-lived Docker
+	// container, driven through the Docker Engine API. Like the MicroVM
+	// backends it keeps session state between executions; unlike them it
+	// shares the host kernel and lives on a single daemon.
 	SandboxTypeDocker SandboxType = "docker"
 	// SandboxTypeLocal uses local process with restrictions
 	SandboxTypeLocal SandboxType = "local"
@@ -220,8 +223,42 @@ type Config struct {
 	// connection. Link-local addresses are blocked regardless.
 	AllowPrivateEndpoints bool
 
-	// DockerImage is the Docker image to use (Docker sandbox only)
+	// DockerImage is the image every sandbox container is created from. It
+	// plays the same role as a Cube/E2B template ID.
 	DockerImage string
+
+	// DockerHost is the daemon endpoint, in DOCKER_HOST form
+	// ("unix:///var/run/docker.sock", "tcp://10.0.0.5:2376"). Empty uses
+	// DefaultDockerHost.
+	DockerHost string
+
+	// DockerTLSCertPath is a directory on the WeKnora host holding
+	// ca.pem / cert.pem / key.pem for a TLS-protected remote daemon. Empty
+	// means plain HTTP, which only makes sense for a local unix socket.
+	DockerTLSCertPath string
+
+	// DockerCPULimit / DockerMemoryBytes / DockerPidsLimit cap one sandbox
+	// container. Zero uses the built-in defaults.
+	DockerCPULimit    float64
+	DockerMemoryBytes int64
+	DockerPidsLimit   int64
+
+	// DockerNetworkMode is the Docker network every sandbox joins ("bridge",
+	// "none", or a user-defined network). Empty means "bridge"; skills that
+	// install packages need egress, so a sandbox is not isolated from the
+	// network by default.
+	DockerNetworkMode string
+
+	// DockerRuntime selects an alternative OCI runtime, e.g. "runsc" for
+	// gVisor. Empty uses the daemon's default runtime.
+	DockerRuntime string
+
+	// DockerIdleTTL is how long a container may go without executing anything
+	// before the idle sweep reclaims it. Zero uses DefaultDockerIdleTTL.
+	DockerIdleTTL time.Duration
+
+	// DockerHTTPTimeout bounds each Engine API call. Zero uses the default.
+	DockerHTTPTimeout time.Duration
 
 	// AllowedCommands is the default list of allowed commands
 	AllowedCommands []string
