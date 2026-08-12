@@ -14,6 +14,7 @@ on:
       - "scripts/**"
       - "skills/preloaded/**"
       - "docker/Dockerfile.app"
+      - "third_party/anydoc-go/**"
       - ".github/workflows/app.yml"
   pull_request:
     paths:
@@ -27,6 +28,7 @@ on:
       - "scripts/**"
       - "skills/preloaded/**"
       - "docker/Dockerfile.app"
+      - "third_party/anydoc-go/**"
       - ".github/workflows/app.yml"
   workflow_dispatch:
 
@@ -96,3 +98,28 @@ jobs:
 
       - name: Build server
         run: go build ./cmd/server
+
+  anydoc:
+    name: anydoc parser engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The archive is a build artifact, not a committed blob, so CI is what
+      # keeps the vendored bindings in third_party/anydoc-go compiling.
+      - name: Build the anydoc static archive
+        run: ./scripts/build-anydoc-lib.sh
+
+      - name: Vet, test, and build with the engine linked in
+        run: |
+          go vet -tags anydoc ./internal/infrastructure/docparser/...
+          go test -tags anydoc -count=1 ./internal/infrastructure/docparser/...
+          go build -tags anydoc ./cmd/server
