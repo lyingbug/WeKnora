@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -51,6 +53,55 @@ func TestConvertDocxWithEmbeddedImage(t *testing.T) {
 	if !bytes.Equal(asset.Data, onePixelPNG()) {
 		t.Errorf("asset data does not round-trip the embedded image")
 	}
+	// Markdown rendering drops embedded images, so the alt text and the
+	// heading the image sat under are all that is left to describe it.
+	if asset.Alt != "Shipping chart" {
+		t.Errorf("asset alt = %q, want %q", asset.Alt, "Shipping chart")
+	}
+	if asset.Section != "Quarterly report" {
+		t.Errorf("asset section = %q, want %q", asset.Section, "Quarterly report")
+	}
+}
+
+// The ABI reports error messages through a thread-local slot that a second
+// call reads, so a goroutine resumed on another OS thread would report an
+// empty or someone else's message. The binding pins the goroutine for the
+// pair; this is the regression test for that.
+func TestErrorDetailSurvivesConcurrency(t *testing.T) {
+	const conversions = 4000
+
+	var wg sync.WaitGroup
+	var empty, crossed atomic.Int64
+	for i := 0; i < conversions; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			// docx and xlsx failures carry distinctive messages, so a detail
+			// naming the other format proves it came from the wrong thread.
+			format, want, other := "docx", "not a readable zip archive", "unreadable workbook"
+			if i%2 == 1 {
+				format, want, other = "xlsx", "unreadable workbook", "not a readable zip archive"
+			}
+			_, err := Convert([]byte(fmt.Sprintf("garbage %d", i)), Options{Format: format})
+			if err == nil {
+				t.Errorf("Convert(garbage) succeeded")
+				return
+			}
+			detail := err.Error()
+			switch {
+			case strings.Contains(detail, other):
+				crossed.Add(1)
+			case !strings.Contains(detail, want):
+				empty.Add(1)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	if empty.Load() > 0 || crossed.Load() > 0 {
+		t.Fatalf("error details lost or crossed between goroutines: lost=%d crossed=%d (of %d)",
+			empty.Load(), crossed.Load(), conversions)
+	}
 }
 
 // Detection reads the container itself, so a document whose format is not
@@ -83,6 +134,23 @@ func TestConvertPDFIgnoresAssetRequest(t *testing.T) {
 	}
 	if len(result.Assets) != 0 {
 		t.Errorf("got %d assets for a PDF, want 0", len(result.Assets))
+	}
+}
+
+// A PDF whose catalog holds a deeply nested array is the shape of
+// RUSTSEC-2026-0187: lopdf 0.41 recursed per nesting level and killed the
+// process with an uncatchable stack overflow, which no Go-side or Rust-side
+// recover can contain. The pinned dependency in third_party/anydoc-go bounds
+// the recursion, so this must come back as an ordinary error — and if a
+// dependency bump ever reintroduces it, this test crashes rather than passing
+// quietly.
+func TestDeeplyNestedPDFFailsWithoutKillingTheProcess(t *testing.T) {
+	const depth = 50000
+	nested := strings.Repeat("[", depth) + strings.Repeat("]", depth)
+
+	_, err := Convert(nestedPDF(nested), Options{Format: "pdf"})
+	if err == nil {
+		t.Fatal("Convert succeeded on a PDF with no text, want an error")
 	}
 }
 
@@ -178,17 +246,28 @@ func onePixelPNG() []byte {
 // minimalPDF is a one-page PDF with a single text run, written by hand so the
 // test carries no binary fixture.
 func minimalPDF() []byte {
-	var pdf bytes.Buffer
 	content := "BT /F1 12 Tf 20 100 Td (Shipping summary) Tj ET\n"
-	objects := []string{
+	return writePDF([]string{
 		"<< /Type /Catalog /Pages 2 0 R >>",
 		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
 		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R " +
 			"/Resources << /Font << /F1 5 0 R >> >> >>",
 		fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content),
 		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-	}
+	})
+}
 
+// nestedPDF is a one-page PDF carrying the given nested value in its catalog.
+func nestedPDF(nested string) []byte {
+	return writePDF([]string{
+		"<< /Type /Catalog /Pages 2 0 R /Nested " + nested + " >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+	})
+}
+
+func writePDF(objects []string) []byte {
+	var pdf bytes.Buffer
 	offsets := make([]int, len(objects))
 	pdf.WriteString("%PDF-1.4\n")
 	for i, object := range objects {

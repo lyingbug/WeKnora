@@ -65,18 +65,23 @@ func (r *AnydocReader) Read(_ context.Context, req *types.ReadRequest) (*types.R
 }
 
 // appendAnydocAssets adds one markdown image reference per extracted image, so
-// the images reach storage and the multimodal pipeline. They are appended
-// rather than inlined because the converter reports no position for them.
+// the images reach storage and the multimodal pipeline.
+//
+// They are appended rather than inlined because the converter reports no
+// position for them. What it does report — the author's alt text and the
+// heading the image sat under — goes into the link label, so the image still
+// carries a description into the chunk it lands in, and the caption model has
+// something to work with.
 func appendAnydocAssets(markdown string, assets []anydoc.Asset) (string, []types.ImageRef) {
 	if len(assets) == 0 {
 		return markdown, nil
 	}
 
 	refs := make([]types.ImageRef, 0, len(assets))
-	var section strings.Builder
+	var appended strings.Builder
 	for _, asset := range assets {
 		ref := anydocImageDir + asset.Name
-		section.WriteString(fmt.Sprintf("![%s](%s)\n\n", asset.Name, ref))
+		appended.WriteString(fmt.Sprintf("![%s](%s)\n\n", anydocImageLabel(asset), ref))
 		refs = append(refs, types.ImageRef{
 			Filename:    asset.Name,
 			OriginalRef: ref,
@@ -87,9 +92,37 @@ func appendAnydocAssets(markdown string, assets []anydoc.Asset) (string, []types
 
 	markdown = strings.TrimRight(markdown, "\n")
 	if markdown == "" {
-		return strings.TrimRight(section.String(), "\n"), refs
+		return strings.TrimRight(appended.String(), "\n"), refs
 	}
-	return markdown + "\n\n" + strings.TrimRight(section.String(), "\n"), refs
+	return markdown + "\n\n" + strings.TrimRight(appended.String(), "\n"), refs
+}
+
+// anydocImageLabel describes an image as well as the document allows: its alt
+// text, the section it came from, or failing both, its file name. Brackets are
+// stripped because the label sits inside a markdown link label.
+func anydocImageLabel(asset anydoc.Asset) string {
+	parts := make([]string, 0, 2)
+	if alt := sanitizeImageLabel(asset.Alt); alt != "" {
+		parts = append(parts, alt)
+	}
+	if section := sanitizeImageLabel(asset.Section); section != "" {
+		parts = append(parts, section)
+	}
+	if len(parts) == 0 {
+		return asset.Name
+	}
+	return strings.Join(parts, " · ")
+}
+
+func sanitizeImageLabel(text string) string {
+	text = strings.Map(func(r rune) rune {
+		switch r {
+		case '[', ']', '\n', '\r':
+			return ' '
+		}
+		return r
+	}, text)
+	return strings.TrimSpace(strings.Join(strings.Fields(text), " "))
 }
 
 // fileTypeOf reports the request's file type, falling back to the file name's

@@ -62,23 +62,118 @@ func upstreamFormat(name string) (*upstream.Format, error) {
 }
 
 // collectAssets names each embedded image after its position in the document,
-// because containers store assets without a usable file name of their own.
+// because containers store assets without a usable file name of their own, and
+// attaches the alt text and section the image appeared under.
 func collectAssets(document *upstream.Document) []Asset {
 	if document == nil || len(document.Assets) == 0 {
 		return nil
 	}
+	placements := placeAssets(document.Blocks)
 	assets := make([]Asset, 0, len(document.Assets))
 	for i, asset := range document.Assets {
 		if len(asset.Data) == 0 {
 			continue
 		}
+		placement := placements[uint64(i)]
 		assets = append(assets, Asset{
 			Name:      fmt.Sprintf("image-%d%s", i+1, extensionFor(asset.MediaType)),
 			MediaType: asset.MediaType,
 			Data:      asset.Data,
+			Alt:       placement.alt,
+			Section:   placement.section,
 		})
 	}
 	return assets
+}
+
+// placement is where in the document an asset was referenced from.
+type placement struct {
+	alt     string
+	section string
+}
+
+// placeAssets walks the document body and records, per asset, the alt text of
+// the image that referenced it and the heading it sat under.
+//
+// This exists because Markdown rendering drops embedded images: the bytes come
+// back in Document.Assets with no position, so this is the only description of
+// where an image belonged. The walk recurses into lists, tables, and quotes,
+// since an image can be nested anywhere a paragraph can.
+func placeAssets(blocks []upstream.Block) map[uint64]placement {
+	placements := make(map[uint64]placement)
+	section := ""
+	walkBlocks(blocks, &section, placements)
+	return placements
+}
+
+func walkBlocks(blocks []upstream.Block, section *string, placements map[uint64]placement) {
+	for _, block := range blocks {
+		switch block.Kind {
+		case "heading":
+			*section = inlineText(block.Content)
+			walkInlines(block.Content, *section, placements)
+		case "paragraph":
+			walkInlines(block.Content, *section, placements)
+		case "block_quote":
+			walkBlocks(block.Blocks, section, placements)
+		case "list":
+			if block.List != nil {
+				for _, item := range block.List.Items {
+					walkBlocks(item.Blocks, section, placements)
+				}
+			}
+		case "table":
+			if block.Table != nil {
+				for _, row := range block.Table.Grid {
+					for _, slot := range row {
+						if slot.Cell != nil {
+							walkBlocks(slot.Cell.Blocks, section, placements)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func walkInlines(inlines []upstream.Inline, section string, placements map[uint64]placement) {
+	for _, inline := range inlines {
+		switch inline.Kind {
+		case "image":
+			if inline.Source == nil || inline.Source.Kind != "asset" || inline.Source.AssetID == nil {
+				continue
+			}
+			alt := ""
+			if inline.Alt != nil {
+				alt = strings.TrimSpace(*inline.Alt)
+			}
+			// First reference wins: the same asset can be placed more than
+			// once, and the earliest placement is the one a reader would
+			// associate it with.
+			if _, seen := placements[*inline.Source.AssetID]; !seen {
+				placements[*inline.Source.AssetID] = placement{alt: alt, section: section}
+			}
+		case "link":
+			walkInlines(inline.Content, section, placements)
+		}
+	}
+}
+
+// inlineText flattens inline content to plain text, which is all a heading is
+// needed for here.
+func inlineText(inlines []upstream.Inline) string {
+	var text strings.Builder
+	for _, inline := range inlines {
+		switch inline.Kind {
+		case "text":
+			if inline.Text != nil {
+				text.WriteString(*inline.Text)
+			}
+		case "link":
+			text.WriteString(inlineText(inline.Content))
+		}
+	}
+	return strings.TrimSpace(text.String())
 }
 
 func extensionFor(mediaType string) string {

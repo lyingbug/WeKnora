@@ -70,6 +70,49 @@ func TestAppendAnydocAssetsLinksEveryImage(t *testing.T) {
 	}
 }
 
+// The appended reference is the only description an image gets, so the label
+// carries whatever the document knew about it.
+func TestAppendAnydocAssetsLabelsImagesWithTheirContext(t *testing.T) {
+	cases := []struct {
+		name  string
+		asset anydoc.Asset
+		want  string
+	}{
+		{
+			name:  "alt text and section",
+			asset: anydoc.Asset{Name: "image-1.png", Alt: "出货趋势", Section: "季度经营简报"},
+			want:  "![出货趋势 · 季度经营简报](images/image-1.png)",
+		},
+		{
+			name:  "section only",
+			asset: anydoc.Asset{Name: "image-1.png", Section: "架构图"},
+			want:  "![架构图](images/image-1.png)",
+		},
+		{
+			name:  "file name when the document says nothing",
+			asset: anydoc.Asset{Name: "image-1.png"},
+			want:  "![image-1.png](images/image-1.png)",
+		},
+		{
+			name:  "brackets and newlines cannot break the link label",
+			asset: anydoc.Asset{Name: "image-1.png", Alt: "chart [draft]\nsecond line"},
+			want:  "![chart draft second line](images/image-1.png)",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			markdown, refs := appendAnydocAssets("Body.", []anydoc.Asset{tc.asset})
+			if !strings.Contains(markdown, tc.want) {
+				t.Errorf("markdown does not contain %q:\n%s", tc.want, markdown)
+			}
+			if len(refs) != 1 || refs[0].OriginalRef != "images/image-1.png" {
+				t.Errorf("unexpected image refs: %+v", refs)
+			}
+		})
+	}
+}
+
 func TestAppendAnydocAssetsLeavesMarkdownAloneWithoutImages(t *testing.T) {
 	markdown, refs := appendAnydocAssets("# Report\n", nil)
 	if markdown != "# Report\n" {

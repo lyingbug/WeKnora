@@ -428,7 +428,7 @@ docker build -f docker/Dockerfile.app --build-arg WITH_ANYDOC=1 -t weknora-app:a
 
 - **扫描件 PDF 不适用**：anydoc 只抽取 PDF 的文字层，没有文字层的扫描件会直接报错。扫描件仍应使用 `builtin`、`mineru` 或 `paddleocr_vl`。
 - **纵向合并单元格不回填**：docreader 的 `Docx2Parser` 会把纵向合并的值复制到每一行（见 issue #2634），anydoc 只在起始行输出该值，后续行留空。对依赖表格逐行语义的知识库，`builtin` 仍然更稳。
-- **图片位置会丢失**：anydoc 的 Markdown 渲染不输出内嵌图片（Markdown 无法承载字节），图片以原始字节单独返回。因此 `AnydocReader` 把图片引用统一追加在正文末尾，再交给既有的图片持久化与多模态流程；正文中的图片顺序信息不保留。设置引擎覆盖参数 `anydoc_extract_images=false` 可关闭图片抽取，解析耗时减半。
+- **图片位置会丢失**：anydoc 的 Markdown 渲染不输出内嵌图片（Markdown 无法承载字节），图片以原始字节单独返回，而它的渲染函数是 crate 私有的，外部无法「改写成链接再渲染」。因此 `AnydocReader` 把图片引用统一追加在正文末尾，再交给既有的图片持久化与多模态流程。为了不让图片彻底失去语境，引用的标签会带上文档模型里记录的原始 alt 文本与所在章节标题（形如 `![出货趋势 · 季度经营简报](images/image-1.png)`），但正文中的精确位置无法恢复。设置引擎覆盖参数 `anydoc_extract_images=false` 可关闭图片抽取，解析耗时减半。
 - **不处理 URL、图片、音频**：这些仍由 `WebParser`、`SimpleFormatReader` 与 ASR 链路负责。
 
 ### 8.3 代码位置

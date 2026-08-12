@@ -145,9 +145,9 @@ type Asset struct {
 //
 // The buffer is the flat, length-prefixed serialization written by
 // go/src/model.rs. Every field is little-endian. A decoder tracks the read
-// cursor and panics on short buffers — the Rust side always produces a
-// well-formed buffer, so a short read is a bug or a version skew, not user
-// input.
+// cursor and reports a short or implausible buffer as an error — the Rust side
+// always produces a well-formed buffer, so a short read is a bug or a version
+// skew, not user input, and it must not take the process down.
 
 type decoder struct {
 	buf []byte
@@ -170,8 +170,25 @@ func decodeDocument(raw []byte) (*Document, error) {
 	return doc, nil
 }
 
+// capFor bounds a preallocation by what is left in the buffer. Every element
+// costs at least one byte to encode, so a count larger than the remaining
+// bytes can only come from a corrupt buffer or a Rust/Go version skew — and
+// preallocating it would exhaust memory before the first bounds check runs.
+func (d *decoder) capFor(n uint32) int {
+	remaining := len(d.buf) - d.pos
+	if remaining < 0 {
+		return 0
+	}
+	if uint64(n) > uint64(remaining) {
+		return remaining
+	}
+	return int(n)
+}
+
 func (d *decoder) need(n int) error {
-	if d.pos+n > len(d.buf) {
+	// A negative n means a length prefix overflowed int (32-bit builds); it is
+	// as unreadable as a truncated buffer.
+	if n < 0 || d.pos+n > len(d.buf) {
 		return fmt.Errorf("anydoc: truncated document buffer at offset %d (need %d bytes, have %d)", d.pos, n, len(d.buf)-d.pos)
 	}
 	return nil
@@ -273,7 +290,7 @@ func (d *decoder) blocks() ([]Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Block, 0, n)
+	out := make([]Block, 0, d.capFor(n))
 	for i := uint32(0); i < n; i++ {
 		b, err := d.block()
 		if err != nil {
@@ -351,7 +368,7 @@ func (d *decoder) inlines() ([]Inline, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Inline, 0, n)
+	out := make([]Inline, 0, d.capFor(n))
 	for i := uint32(0); i < n; i++ {
 		in, err := d.inline()
 		if err != nil {
@@ -496,7 +513,7 @@ func (d *decoder) list() (*List, error) {
 	if err != nil {
 		return nil, err
 	}
-	items := make([]ListItem, 0, n)
+	items := make([]ListItem, 0, d.capFor(n))
 	for i := uint32(0); i < n; i++ {
 		item, err := d.listItem()
 		if err != nil {
@@ -553,13 +570,13 @@ func (d *decoder) table() (*Table, error) {
 	if err != nil {
 		return nil, err
 	}
-	grid := make([][]CellSlot, 0, rows)
+	grid := make([][]CellSlot, 0, d.capFor(rows))
 	for i := uint32(0); i < rows; i++ {
 		cols, err := d.u32()
 		if err != nil {
 			return nil, err
 		}
-		row := make([]CellSlot, 0, cols)
+		row := make([]CellSlot, 0, d.capFor(cols))
 		for j := uint32(0); j < cols; j++ {
 			slot, err := d.slot()
 			if err != nil {
@@ -626,7 +643,7 @@ func (d *decoder) notes() ([]Note, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Note, 0, n)
+	out := make([]Note, 0, d.capFor(n))
 	for i := uint32(0); i < n; i++ {
 		note, err := d.note()
 		if err != nil {
@@ -662,7 +679,7 @@ func (d *decoder) assets() ([]Asset, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Asset, 0, n)
+	out := make([]Asset, 0, d.capFor(n))
 	for i := uint32(0); i < n; i++ {
 		asset, err := d.asset()
 		if err != nil {

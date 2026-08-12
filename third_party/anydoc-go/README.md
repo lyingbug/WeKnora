@@ -42,19 +42,66 @@ the `lopdf` stack overflow that aborts the process on a hostile PDF.
 
 ## Local modifications
 
-Keep this list current: it is the diff a future upgrade has to re-apply.
+Keep this list current: it is the diff a future upgrade has to re-apply. Items
+2–4 are bugs in the upstream PR and are worth sending back to it.
 
 1. `Cargo.toml` — depends on the published `anydoc = "=0.1.8"` crate instead of
    the workspace path dependency, declares its own empty `[workspace]`, and
    repeats the upstream release profile (`lto`, `strip`), which it would
    otherwise inherit from the anydoc workspace.
-2. `src/lib.rs` — the three conversion entry points run inside `guarded()`,
+2. `anydoc.go` — every ABI call runs inside `call()`, which pins the goroutine
+   with `runtime.LockOSThread` for the duration. The ABI reports the error
+   message through a thread-local slot that a *second* call
+   (`anydoc_last_error`) reads, and Go may resume a goroutine on a different OS
+   thread once a cgo call returns: without pinning, a failed conversion reports
+   an empty message, or one belonging to another document parsed on the thread
+   it landed on. Reproduced at roughly 1 in 1500 concurrent conversions; the
+   regression test is `TestErrorDetailSurvivesConcurrency` in
+   `internal/infrastructure/docparser/anydoc`.
+3. `model.go` — decoder preallocations are bounded by the bytes left in the
+   buffer (`capFor`), and `need` rejects a negative length. A count taken
+   straight from the buffer is only trustworthy while the Rust encoder and this
+   decoder agree; on a skew, `make([]Block, 0, n)` would exhaust memory before
+   the first bounds check, turning a version mismatch into a dead process.
+4. `src/lib.rs` — the three conversion entry points run inside `guarded()`,
    which catches a panic and reports it as a malformed document. A panic
    escaping an `extern "C"` function aborts the process, and WeKnora parses
-   untrusted uploads in the same process that serves the API.
-3. Removed the upstream CLI (`cmd/anydoc`) and the binding test suite, which
+   untrusted uploads in the same process that serves the API. Note the limit:
+   this cannot contain a stack overflow or an allocation failure, which is why
+   the dependency pin below matters as much as the guard.
+5. Removed the upstream CLI (`cmd/anydoc`) and the binding test suite, which
    reads fixtures from the anydoc repository. WeKnora's own tests live in
    `internal/infrastructure/docparser/anydoc`.
+
+## Dependency pinning and audit
+
+`Cargo.lock` is committed and `scripts/build-anydoc-lib.sh` builds with
+`--locked`, so the archive is always the audited dependency tree. CI runs
+`cargo audit` against it, because the crate that fails here is the one parsing
+untrusted uploads inside the API process.
+
+That matters concretely: with `lopdf` 0.41 — what the upstream PR's own
+lockfile resolved to — a ~100 KB PDF holding a deeply nested catalog array
+kills the process with a stack overflow (`RUSTSEC-2026-0187`), which neither
+`guarded()` nor Go's `recover` can contain. anydoc 0.1.8 moved to `lopdf` 0.42
+and the same input comes back as an ordinary error;
+`TestDeeplyNestedPDFFailsWithoutKillingTheProcess` keeps it that way.
+
+`cargo audit` currently reports one allowed warning: `ttf-parser` 0.25.1 is
+unmaintained (`RUSTSEC-2026-0192`), pulled in transitively by the PDF stack. It
+is not a vulnerability and nothing here can fix it, so warnings report without
+failing the job.
+
+## Known upstream limitation
+
+Markdown rendering drops embedded images: `ImageSource::Asset` renders as its
+alt text, and the bytes are only reachable through the document model, which
+also means two parses for a document whose images are wanted. The renderer
+(`document_to_markdown`) is private to the anydoc crate, so a caller cannot
+rewrite asset images into links and render the result itself. Until upstream
+exports the renderer or offers an asset-URL option, `AnydocReader` appends the
+images at the end of the document, labelled with the alt text and section the
+document model reports.
 
 ## Building the archive
 

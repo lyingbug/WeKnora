@@ -41,8 +41,11 @@ case "$target" in
   *) lib_name=libanydoc_go.a ;;
 esac
 
+# --locked: build exactly the dependency versions in the committed Cargo.lock.
+# That lockfile is what pins the patched pdf-inspector/lopdf, so a silent
+# resolver drift must fail the build rather than ship an unaudited tree.
 echo "Building anydoc archive for $target"
-cargo build --release --manifest-path "$crate_dir/Cargo.toml" --target "$target"
+cargo build --release --locked --manifest-path "$crate_dir/Cargo.toml" --target "$target"
 
 dest="$crate_dir/lib/$lib_dir"
 mkdir -p "$dest"

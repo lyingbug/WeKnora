@@ -39,6 +39,14 @@ type Asset struct {
 	MediaType string
 	// Data is the raw image bytes.
 	Data []byte
+	// Alt is the image's alternative text as the document author wrote it,
+	// empty when the document carries none.
+	Alt string
+	// Section is the text of the nearest heading above the image, empty when
+	// the image sits before the first heading. Together with Alt it is what
+	// survives of the image's place in the document: the Markdown renderer
+	// drops embedded images, so their position cannot be recovered.
+	Section string
 }
 
 // Options tunes a single conversion.

@@ -22,8 +22,26 @@ import "C"
 
 import (
 	"fmt"
+	"runtime"
 	"unsafe"
 )
+
+// call runs one ABI entry point and turns its status code into an error.
+//
+// The goroutine is pinned for the duration because the ABI reports the error
+// message through a thread-local slot that a *second* call
+// (`anydoc_last_error`) reads. Go is free to resume a goroutine on a different
+// OS thread after a cgo call returns, and a conversion is long enough for that
+// to happen: the message would then be missing, or belong to another
+// conversion that ran on the thread we landed on.
+func call(entry func() C.int) error {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if code := entry(); code != errOK {
+		return convertError(code)
+	}
+	return nil
+}
 
 // ToMarkdown converts a document file to Markdown. The format is detected
 // from the file content; the extension is the fallback for signature-less
@@ -33,9 +51,8 @@ func ToMarkdown(path string) (string, error) {
 	defer C.free(unsafe.Pointer(cpath))
 	var out *C.char
 	var outLen C.uintptr_t
-	code := C.anydoc_to_markdown(cpath, &out, &outLen)
-	if code != errOK {
-		return "", convertError(code)
+	if err := call(func() C.int { return C.anydoc_to_markdown(cpath, &out, &outLen) }); err != nil {
+		return "", err
 	}
 	defer C.anydoc_string_free(out)
 	markdown, err := cStringN(out, outLen)
@@ -61,9 +78,12 @@ func ToMarkdownBytes(data []byte, format *Format) (string, error) {
 	}
 	var out *C.char
 	var outLen C.uintptr_t
-	code := C.anydoc_to_markdown_bytes((*C.uint8_t)(unsafe.Pointer(&data[0])), C.uintptr_t(len(data)), tag, &out, &outLen)
-	if code != errOK {
-		return "", convertError(code)
+	if err := call(func() C.int {
+		return C.anydoc_to_markdown_bytes(
+			(*C.uint8_t)(unsafe.Pointer(&data[0])), C.uintptr_t(len(data)), tag, &out, &outLen,
+		)
+	}); err != nil {
+		return "", err
 	}
 	defer C.anydoc_string_free(out)
 	markdown, err := cStringN(out, outLen)
@@ -92,9 +112,12 @@ func ToDocument(data []byte, format *Format) (*Document, error) {
 	}
 	var buf *C.uint8_t
 	var bufLen C.uintptr_t
-	code := C.anydoc_to_document((*C.uint8_t)(unsafe.Pointer(&data[0])), C.uintptr_t(len(data)), tag, &buf, &bufLen)
-	if code != errOK {
-		return nil, convertError(code)
+	if err := call(func() C.int {
+		return C.anydoc_to_document(
+			(*C.uint8_t)(unsafe.Pointer(&data[0])), C.uintptr_t(len(data)), tag, &buf, &bufLen,
+		)
+	}); err != nil {
+		return nil, err
 	}
 	defer C.anydoc_buffer_free(buf, bufLen)
 	if buf == nil || bufLen == 0 {
