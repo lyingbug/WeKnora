@@ -20,7 +20,10 @@ export const useUIStore = defineStore('ui', {
     manualEditorInitialContent: '',
     manualEditorInitialStatus: 'draft' as 'draft' | 'publish',
     manualEditorOnSuccess: null as null | ((payload: { kbId: string; knowledgeId: string; status: 'draft' | 'publish' }) => void),
-    sidebarCollapsed: localStorage.getItem('sidebar_collapsed') === 'true'
+    sidebarCollapsed: localStorage.getItem('sidebar_collapsed') === 'true',
+    // 响应式状态
+    isMobile: false,
+    mobileMenuOpen: false,
   }),
 
   actions: {
@@ -125,14 +128,31 @@ export const useUIStore = defineStore('ui', {
       localStorage.setItem('sidebar_collapsed', String(this.sidebarCollapsed))
     },
 
-    collapseSidebar() {
+    collapseSidebar(persist = true) {
       this.sidebarCollapsed = true
-      localStorage.setItem('sidebar_collapsed', 'true')
+      if (persist) localStorage.setItem('sidebar_collapsed', 'true')
     },
 
-    expandSidebar() {
+    expandSidebar(persist = true) {
       this.sidebarCollapsed = false
-      localStorage.setItem('sidebar_collapsed', 'false')
+      if (persist) localStorage.setItem('sidebar_collapsed', 'false')
+    },
+
+    // 响应式断点
+    setMobile(value: boolean) {
+      this.isMobile = value
+    },
+
+    openMobileMenu() {
+      this.mobileMenuOpen = true
+    },
+
+    closeMobileMenu() {
+      this.mobileMenuOpen = false
+    },
+
+    toggleMobileMenu() {
+      this.mobileMenuOpen = !this.mobileMenuOpen
     }
   }
 })

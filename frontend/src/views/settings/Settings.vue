@@ -916,4 +916,186 @@ onUnmounted(() => {
     line-height: 1.6;
   }
 }
+
+// 移动端：全屏弹窗，顶部水平标签栏 + 全宽内容
+@media screen and (max-width: 767px) {
+  .settings-overlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .settings-modal {
+    max-width: 100%;
+    width: 100%;
+    height: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .settings-container {
+    flex-direction: column;
+  }
+
+  // 侧边栏变为顶部水平滚动标签栏
+  .settings-sidebar {
+    width: 100%;
+    flex-shrink: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--td-component-stroke);
+    overflow: visible;
+    background: var(--td-bg-color-container);
+  }
+
+  .sidebar-header {
+    display: none;
+  }
+
+  .settings-nav {
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 10px 12px;
+    gap: 2px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+
+  .nav-group-title {
+    display: none;
+  }
+
+  .nav-item {
+    flex-shrink: 0;
+    white-space: nowrap;
+    padding: 7px 12px;
+    font-size: 13px;
+    margin-bottom: 0;
+    border-radius: 20px; // pill 形状标签
+    min-height: 36px;
+
+    .nav-icon {
+      margin-right: 4px;
+      font-size: 15px;
+    }
+
+    .nav-label {
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .expand-icon {
+      display: none; // 移动端不展开子菜单到侧边栏
+    }
+
+    &.active {
+      background: var(--td-brand-color-light);
+      color: var(--td-brand-color);
+    }
+  }
+
+  // 子菜单在移动端隐藏（点击父级后在内容区以页面内锚点形式呈现）
+  .submenu {
+    display: none;
+  }
+
+  // 内容区全宽
+  .settings-content {
+    flex: 1;
+  }
+
+  .content-wrapper {
+    max-width: 100%;
+    padding: 20px 16px;
+
+    &--wide,
+    &--full {
+      max-width: 100%;
+      padding: 16px 12px;
+    }
+  }
+
+  // 设置项在手机上改为「说明在上、控件在下」。子页面把控件列固定成
+  // min-width: 280px 并给 t-select 写了行内 width，360px 下会把说明列压到
+  // 一个字一行。后代选择器多一层是为了压过子组件 scoped 规则的同等权重，
+  // 行内宽度只能用 !important 覆盖。
+  :deep(.settings-content .setting-row) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  :deep(.settings-content .setting-row > .setting-info) {
+    max-width: 100%;
+    padding-right: 0;
+  }
+
+  :deep(.settings-content .setting-row > .setting-control) {
+    min-width: 0;
+    width: 100%;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+  :deep(.settings-content .setting-row > .setting-control > *) {
+    width: 100% !important;
+    max-width: 100%;
+  }
+
+  .close-btn {
+    top: 6px;
+    right: 6px;
+    z-index: 20;
+    width: 36px;
+    height: 36px;
+    background: var(--td-bg-color-container);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+    border-radius: 50%;
+  }
+}
+
+// 平板：侧边栏适中，内容区域适配
+@media screen and (min-width: 768px) and (max-width: 1023px) {
+  .settings-overlay {
+    padding: 12px;
+  }
+
+  .settings-modal {
+    max-width: 100%;
+    height: calc(100vh - 24px);
+    max-height: none;
+  }
+
+  .settings-sidebar {
+    width: 170px;
+  }
+
+  .content-wrapper {
+    max-width: 100%;
+    padding: 28px 24px;
+
+    &--wide,
+    &--full {
+      padding: 24px 20px;
+    }
+  }
+
+  .sidebar-header {
+    padding: 14px 12px 10px;
+  }
+
+  .nav-item {
+    padding: 5px 10px;
+    font-size: 13px;
+  }
+
+  .nav-icon {
+    margin-right: 6px;
+    font-size: 15px;
+  }
+}
 </style>
