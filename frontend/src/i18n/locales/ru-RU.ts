@@ -4584,6 +4584,9 @@ export default {
     deleteConfirm: 'Удалить эту запись безвозвратно?',
     add: 'Добавить',
     addPlaceholder: 'Одним предложением опишите, что ассистенту стоит запомнить',
+    addTitle: 'Добавить запись',
+    addKindLabel: 'Тип',
+    addContentLabel: 'Содержание',
     emptyTitle: 'Записей пока нет',
     emptyDescription: 'Скажите в разговоре «запомни: …» или добавьте запись выше.',
     kinds: {

@@ -53,6 +53,89 @@ func TestARewordedMemoryIsStillFound(t *testing.T) {
 	require.Equal(t, "回答直接给结论", recall.Items[0].Content)
 }
 
+// An interest is promoted from a subject label, so its topic and content hold
+// the same string. Joining them sent "WeKnora混合检索：WeKnora混合检索" to the
+// embedder, which is not a sentence any question resembles.
+func TestEmbeddedTextDoesNotRepeatTheSubject(t *testing.T) {
+	require.Equal(t, "WeKnora混合检索", embeddableText(&types.MemoryItem{
+		Kind: types.MemoryKindInterest, Topic: "WeKnora混合检索", Content: "WeKnora混合检索",
+	}, nil))
+	require.Equal(t, "数据库：生产库用 PostgreSQL 17", embeddableText(&types.MemoryItem{
+		Kind: types.MemoryKindFact, Topic: "数据库", Content: "生产库用 PostgreSQL 17",
+	}, nil), "a topic that adds something still has to be kept")
+}
+
+// A one-word interest is a weak vector. The other wordings this person used
+// for the same subject widen what a question can match, and they cost nothing
+// in the prompt because they never leave the vector.
+func TestInterestEmbedsTheOtherWordingsOfItsSubject(t *testing.T) {
+	text := embeddableText(&types.MemoryItem{
+		Kind: types.MemoryKindInterest, Topic: "WeKnora混合检索", Content: "WeKnora混合检索",
+	}, []string{"混合检索调优", "WeKnora混合检索", "", "召回率优化"})
+
+	require.Equal(t, "WeKnora混合检索；混合检索调优；召回率优化", text,
+		"aliases are appended once each, and the subject is not repeated")
+}
+
+// The aliases have to reach the embedder from the topic tracker, not just from
+// a caller that already happens to hold them.
+func TestPromotedInterestIsEmbeddedWithItsOtherWordings(t *testing.T) {
+	svc, tenantRepo, models := newVectorHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	tenantRepo.set(1, &types.MemoryConfig{
+		Enabled: true, WriteMode: types.MemoryWriteAuto, InterestThreshold: 2,
+	})
+
+	require.Empty(t, svc.ObserveQuestionTopics(ctx, []string{"门店排班管理"}))
+	require.Equal(t, []string{"门店排班管理"},
+		svc.ObserveQuestionTopics(ctx, []string{"连锁门店排班管理"}),
+		"the second wording is the same subject, so it promotes")
+
+	var embedded string
+	for _, text := range models.embedder.texts {
+		if strings.Contains(text, "门店排班管理") {
+			embedded = text
+		}
+	}
+	require.Contains(t, embedded, "连锁门店排班管理",
+		"the wording the user also used has to be part of what the interest matches")
+}
+
+// A vector is written once, at promotion. A wording that arrives later would
+// otherwise never make it in, which would leave this feature working only for
+// subjects whose every wording appeared before they were promoted.
+func TestALaterWordingRebuildsTheInterestVector(t *testing.T) {
+	svc, tenantRepo, _ := newVectorHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	tenantRepo.set(1, &types.MemoryConfig{
+		Enabled: true, WriteMode: types.MemoryWriteAuto, InterestThreshold: 2,
+	})
+	scope := scopeFor(t, ctx)
+
+	svc.ObserveQuestionTopics(ctx, []string{"门店排班管理"})
+	require.NotEmpty(t, svc.ObserveQuestionTopics(ctx, []string{"门店排班管理"}))
+
+	items, err := svc.repo.ListActiveByKinds(ctx, scope, []string{types.MemoryKindInterest}, 10)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	vectors, err := svc.repo.ItemEmbeddings(ctx, scope, []string{items[0].ID})
+	require.NoError(t, err)
+	require.NotEmpty(t, vectors, "promotion embeds the interest")
+
+	svc.ObserveQuestionTopics(ctx, []string{"连锁门店排班管理"})
+
+	vectors, err = svc.repo.ItemEmbeddings(ctx, scope, []string{items[0].ID})
+	require.NoError(t, err)
+	require.Empty(t, vectors,
+		"the stale vector is dropped so the maintenance backfill rebuilds it")
+
+	cfg := &types.MemoryConfig{Enabled: true, WriteMode: types.MemoryWriteAuto}
+	require.Equal(t, 1, svc.backfillEmbeddings(ctx, scope, cfg))
+	vectors, err = svc.repo.ItemEmbeddings(ctx, scope, []string{items[0].ID})
+	require.NoError(t, err)
+	require.NotEmpty(t, vectors, "and it comes back")
+}
+
 // Recall used to make no model call at all. Adding one has to be free to fail:
 // an embedding endpoint being slow or down must cost a slightly worse memory
 // selection, never a slow or broken answer.

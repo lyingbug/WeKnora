@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Tencent/WeKnora/internal/event"
+	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -52,14 +53,26 @@ func (p *PluginMemoryRecall) OnEvent(ctx context.Context,
 	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
 	if p.memoryService == nil {
+		pipelineInfo(ctx, "MemoryRecall", "skip", map[string]interface{}{
+			"session_id": chatManage.SessionID,
+			"reason":     "no_service",
+		})
 		return next()
 	}
+
+	pipelineInfo(ctx, "MemoryRecall", "input", map[string]interface{}{
+		"session_id":    chatManage.SessionID,
+		"query_len":     len(chatManage.Query),
+		"query_preview": langfuse.TruncateRunes(chatManage.Query, 200),
+	})
 
 	recall := p.memoryService.Recall(ctx, chatManage.Query)
 	if recall.Prompt == "" {
 		pipelineInfo(ctx, "MemoryRecall", "output", map[string]interface{}{
 			"session_id": chatManage.SessionID,
 			"items":      0,
+			"injected":   false,
+			"note":       "interest memories apply in query_understand, not here",
 		})
 		return next()
 	}
@@ -68,9 +81,19 @@ func (p *PluginMemoryRecall) OnEvent(ctx context.Context,
 	chatManage.UsedMemories = types.UsedMemoriesFromItems(recall.Items)
 	emitMemoryRecalled(ctx, chatManage.EventBus, chatManage.SessionID, chatManage.UsedMemories)
 
+	memoryIDs := make([]string, 0, len(recall.Items))
+	for _, item := range recall.Items {
+		if item != nil && item.ID != "" {
+			memoryIDs = append(memoryIDs, item.ID)
+		}
+	}
 	pipelineInfo(ctx, "MemoryRecall", "output", map[string]interface{}{
-		"session_id": chatManage.SessionID,
-		"items":      len(chatManage.UsedMemories),
+		"session_id":    chatManage.SessionID,
+		"items":         len(chatManage.UsedMemories),
+		"injected":      true,
+		"prompt_runes":  len([]rune(recall.Prompt)),
+		"memory_ids":    memoryIDs,
+		"query_preview": langfuse.TruncateRunes(chatManage.Query, 200),
 	})
 	return next()
 }

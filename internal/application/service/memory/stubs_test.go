@@ -325,10 +325,12 @@ type stubEmbedder struct {
 	fail    bool
 	delay   time.Duration
 	calls   int
+	texts   []string
 }
 
 func (e *stubEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
 	e.calls++
+	e.texts = append(e.texts, text)
 	if e.delay > 0 {
 		select {
 		case <-time.After(e.delay):

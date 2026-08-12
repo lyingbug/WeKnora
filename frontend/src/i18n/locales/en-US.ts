@@ -1376,6 +1376,9 @@ export default {
     deleteConfirm: 'Permanently delete this memory?',
     add: 'Add',
     addPlaceholder: 'Write one sentence you want the assistant to remember',
+    addTitle: 'Add a memory',
+    addKindLabel: 'Kind',
+    addContentLabel: 'Content',
     emptyTitle: 'No memories yet',
     emptyDescription: 'Say "remember that ..." in a conversation, or add one directly above.',
     kinds: {

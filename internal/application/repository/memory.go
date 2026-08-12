@@ -255,7 +255,7 @@ func (r *memoryRepository) ListActiveByKinds(
 
 // ListActiveResident returns what the resident block is built from.
 //
-// Stable traits qualify by kind. An explicitly requested memory qualifies
+// Standing traits qualify by kind. An explicitly requested memory qualifies
 // regardless of kind: the user said "remember this", and making that depend on
 // their later question happening to share words with it is the fastest way to
 // lose their trust in the feature.
@@ -266,7 +266,7 @@ func (r *memoryRepository) ListActiveResident(
 	query := notExpired(r.scoped(ctx, scope).
 		Where("status = ?", types.MemoryStatusActive).
 		Where("kind IN ? OR origin = ?",
-			[]string{types.MemoryKindProfile, types.MemoryKindPreference},
+			types.ResidentMemoryKinds,
 			types.MemoryOriginExplicit)).
 		Order("importance DESC, valid_from DESC")
 	if limit > 0 {
@@ -565,6 +565,18 @@ func (r *memoryRepository) UpsertItemEmbedding(
 		Create(embedding).Error
 }
 
+// DeleteItemEmbedding drops one memory's vector so the backfill rebuilds it.
+func (r *memoryRepository) DeleteItemEmbedding(
+	ctx context.Context, scope interfaces.MemoryScope, itemID string,
+) error {
+	if itemID == "" {
+		return nil
+	}
+	return r.scoped(ctx, scope).
+		Where("item_id = ?", itemID).
+		Delete(&types.MemoryItemEmbedding{}).Error
+}
+
 func (r *memoryRepository) ItemEmbeddings(
 	ctx context.Context, scope interfaces.MemoryScope, itemIDs []string,
 ) (map[string][]float32, error) {
@@ -778,6 +790,26 @@ func (r *memoryRepository) MarkTopicPromoted(
 		Model(&types.MemoryTopicStat{}).
 		Where("normalized_key = ?", normalizedKey).
 		Updates(map[string]interface{}{"promoted_at": now, "updated_at": now}).Error
+}
+
+// TopicByKey returns one subject's statistics, or nil when it is not tracked.
+func (r *memoryRepository) TopicByKey(
+	ctx context.Context, scope interfaces.MemoryScope, normalizedKey string,
+) (*types.MemoryTopicStat, error) {
+	if normalizedKey == "" {
+		return nil, nil
+	}
+	var stat types.MemoryTopicStat
+	err := r.scoped(ctx, scope).
+		Where("normalized_key = ?", normalizedKey).
+		First(&stat).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &stat, nil
 }
 
 func (r *memoryRepository) TopTopics(

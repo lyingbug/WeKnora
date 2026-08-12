@@ -354,14 +354,22 @@ func (p *PluginQueryUnderstand) memoryBackground(ctx context.Context, chatManage
 	}
 	b.WriteString("\n</asker_background>")
 
-	chatManage.UsedMemories = types.MergeUsedMemories(
-		chatManage.UsedMemories, types.UsedMemoriesFromItems(memCtx.Items))
-
-	pipelineInfo(ctx, "QueryUnderstand", "memory_background", map[string]interface{}{
+	// Deliberately does not add to chatManage.UsedMemories. What this reads is
+	// the whole standing background, unfiltered — that is the right input for a
+	// rewriter, but reporting it would claim every turn recalled memories that
+	// have nothing to do with the question. Which memories this turn actually
+	// used is decided in MEMORY_RECALL, by relevance, and the profile entries
+	// here are already reported from there.
+	fields := map[string]interface{}{
 		"session_id": chatManage.SessionID,
 		"interests":  len(memCtx.Interests),
 		"documents":  len(memCtx.Documents),
-	})
+		"items":      len(memCtx.Items),
+	}
+	if len(memCtx.Interests) > 0 {
+		fields["interest_previews"] = memCtx.Interests
+	}
+	pipelineInfo(ctx, "QueryUnderstand", "memory_background", fields)
 	return b.String()
 }
 

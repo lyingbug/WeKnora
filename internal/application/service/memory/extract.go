@@ -906,7 +906,7 @@ func (s *Service) narrowToRelevant(
 		query.WriteString("\n")
 	}
 
-	ranking := s.vectorRanking(ctx, scope, cfg, query.String(), existing)
+	ranking, _ := s.vectorRanking(ctx, scope, cfg, query.String(), existing)
 	if len(ranking) == 0 {
 		logger.Infof(ctx,
 			"memory: no semantic ranking available, showing the %d most important of %d memories",

@@ -335,16 +335,13 @@ const memoryItems = computed(() => {
 
 const hasMemory = computed(() => memoryItems.value.length > 0)
 
+const MEMORY_KINDS = ['profile', 'preference', 'fact', 'task', 'interest'] as const
+
 const memoryKindLabel = (kind: string) => {
-  switch (kind) {
-    case 'profile':
-    case 'preference':
-    case 'fact':
-    case 'task':
-      return t(`memorySettings.kinds.${kind}`)
-    default:
-      return t('memorySettings.kinds.fact')
+  if ((MEMORY_KINDS as readonly string[]).includes(kind)) {
+    return t(`memorySettings.kinds.${kind}`)
   }
+  return t('memorySettings.kinds.fact')
 }
 
 const toggleMemory = () => {
@@ -738,6 +735,15 @@ onBeforeUnmount(() => {
   padding-left: 0;
   margin-top: 0;
   margin-left: 10px;
+}
+
+// Without a collapsed root — a turn still streaming, or a reloaded turn whose
+// only surviving row is the memory one, since steps are not persisted — the
+// timeline is the outermost element and nothing supplies the gap that
+// .tree-container otherwise leaves. The last row zeroes its own margin, so the
+// rows would sit directly against the answer text.
+.rag-pipeline-progress > .tree-children {
+  margin-bottom: 8px;
 }
 
 .tree-children-expanded {

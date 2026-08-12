@@ -97,6 +97,11 @@ type MemoryRepository interface {
 	MarkConsolidated(ctx context.Context, scope MemoryScope) error
 	// UpsertItemEmbedding stores or replaces the vector for one memory.
 	UpsertItemEmbedding(ctx context.Context, scope MemoryScope, embedding *types.MemoryItemEmbedding) error
+	// DeleteItemEmbedding drops one memory's vector. What a memory embeds to
+	// can change after it is written — an interest embeds the other wordings
+	// of its subject — and dropping the vector is how the existing backfill is
+	// asked to rebuild it.
+	DeleteItemEmbedding(ctx context.Context, scope MemoryScope, itemID string) error
 	// ItemEmbeddings loads the vectors for the given items, keyed by item id.
 	// Items with no vector are simply absent.
 	ItemEmbeddings(ctx context.Context, scope MemoryScope, itemIDs []string) (map[string][]float32, error)
@@ -122,6 +127,10 @@ type MemoryRepository interface {
 	MarkTopicPromoted(ctx context.Context, scope MemoryScope, normalizedKey string) error
 	// TopTopics returns the most-asked topics, newest activity first.
 	TopTopics(ctx context.Context, scope MemoryScope, limit int) ([]*types.MemoryTopicStat, error)
+	// TopicByKey returns one subject's statistics, or nil when it is not
+	// tracked. It exists so an interest can be embedded together with the
+	// other wordings this person has used for the same subject.
+	TopicByKey(ctx context.Context, scope MemoryScope, normalizedKey string) (*types.MemoryTopicStat, error)
 
 	// BumpDocAffinity records that an answer for this person drew on a document.
 	BumpDocAffinity(ctx context.Context, scope MemoryScope, docs []types.MemoryDocAffinity) error

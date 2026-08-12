@@ -72,6 +72,16 @@ const (
 	// MemoryRecallMaxItems bounds how many situational items one turn can pull
 	// in, independent of the rune budget.
 	MemoryRecallMaxItems = 5
+	// MemoryResidentInterestMaxItems bounds how many interests the resident
+	// block may carry.
+	//
+	// Interests are not filtered away by relevance — a question about the
+	// person ("what am I working on") shares no words with the interest's own
+	// text, so relevance would drop exactly the memories that answer it. But a
+	// long-running user accumulates dozens of them, and the resident block is
+	// not a place to list all of them, so the cap applies and relevance
+	// decides which ones survive it.
+	MemoryResidentInterestMaxItems = 5
 	// MemoryContentMaxRunes bounds a single stored memory. Memories are meant
 	// to be one sentence; anything longer is a summary that belongs in the
 	// chat history knowledge base instead.
@@ -92,10 +102,28 @@ var MemoryKinds = []string{
 	MemoryKindInterest,
 }
 
+// ResidentMemoryKinds are the stable traits that make up the always-injected
+// block, as opposed to the situational kinds that are matched against a query.
+//
+// Interest belongs here despite being derived rather than stated: it is a
+// standing property of the person, and it is the answer to questions about the
+// person themselves ("what am I working on"), which share no words with the
+// interest's own text and so can never be reached by query matching.
+var ResidentMemoryKinds = []string{
+	MemoryKindProfile,
+	MemoryKindPreference,
+	MemoryKindInterest,
+}
+
 // IsResidentMemoryKind reports whether items of this kind belong in the
 // always-injected block rather than in query-matched recall.
 func IsResidentMemoryKind(kind string) bool {
-	return kind == MemoryKindProfile || kind == MemoryKindPreference
+	for _, k := range ResidentMemoryKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // IsValidMemoryKind validates a kind coming from an LLM response or the API.
@@ -834,6 +862,7 @@ var memoryKindLabels = map[string]string{
 	MemoryKindPreference: "Preferences",
 	MemoryKindFact:       "Relevant facts",
 	MemoryKindTask:       "Ongoing tasks",
+	MemoryKindInterest:   "Long-term focus",
 }
 
 // RenderMemoryBlock renders items as the resident block stored on the subject.

@@ -475,6 +475,69 @@ func TestResidentBlockSurvivesCacheLoss(t *testing.T) {
 		"an empty block cache must not silently drop the user's memories")
 }
 
+// An interest is a standing property of the person, so it has to be present
+// whatever they ask. The case that forced this: "what am I focused on" shares
+// no words with "小微SDK设备接入", so query matching can never reach it, and
+// the assistant claimed to know nothing about a memory the user could see
+// listed in the memory manager.
+func TestInterestIsPresentRegardlessOfTheQuestion(t *testing.T) {
+	svc, _, tenantRepo := newMemoryHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	_, err := svc.CreateItem(ctx, types.MemoryKindInterest, "小微SDK设备接入", 3)
+	require.NoError(t, err)
+
+	require.Contains(t, svc.Recall(ctx, "我关注哪些事情？").Prompt, "小微SDK设备接入")
+	require.Contains(t, svc.Recall(ctx, "我关注哪些事情？").Prompt, "Long-term focus")
+	require.Contains(t, svc.Recall(ctx, "今天天气怎么样").Prompt, "小微SDK设备接入")
+}
+
+// Being injected and being reported are different things. An interest that is
+// present only because the cap left room is standing background; listing it as
+// a memory this answer recalled would put something unrelated to the question
+// on the chat timeline every single turn.
+func TestUnrelatedInterestIsInjectedButNotReported(t *testing.T) {
+	svc, _, tenantRepo := newMemoryHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	_, err := svc.CreateItem(ctx, types.MemoryKindInterest, "小微SDK设备接入", 3)
+	require.NoError(t, err)
+
+	unrelated := svc.Recall(ctx, "今天天气怎么样")
+	require.Contains(t, unrelated.Prompt, "小微SDK设备接入")
+	require.Empty(t, unrelated.Items)
+
+	related := svc.Recall(ctx, "小微SDK怎么接入设备")
+	require.Contains(t, related.Prompt, "小微SDK设备接入")
+	require.Len(t, related.Items, 1, "an interest the question matches is a real recall")
+}
+
+// Relevance does not decide whether interests appear, it decides which ones
+// survive the cap.
+func TestInterestsBeyondTheCapAreChosenByRelevance(t *testing.T) {
+	svc, _, tenantRepo := newMemoryHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+	topics := []string{
+		"医学影像分割", "数据库调优", "前端构建速度", "指标监控告警",
+		"日志采集链路", "小微SDK设备接入",
+	}
+	for _, topic := range topics {
+		_, err := svc.CreateItem(ctx, types.MemoryKindInterest, topic, 3)
+		require.NoError(t, err)
+	}
+
+	recall := svc.Recall(ctx, "小微SDK怎么接入设备")
+	require.Contains(t, recall.Prompt, "小微SDK设备接入",
+		"the interest the question is about must not be the one dropped by the cap")
+
+	var injected int
+	for _, topic := range topics {
+		if strings.Contains(recall.Prompt, topic) {
+			injected++
+		}
+	}
+	require.Equal(t, types.MemoryResidentInterestMaxItems, injected,
+		"the block carries at most the cap, not every interest ever promoted")
+}
+
 func TestCreateItemFromManagerGoesThroughTheWritePath(t *testing.T) {
 	svc, _, tenantRepo := newMemoryHarness(t)
 	ctx := enabledCtx(t, tenantRepo, 1, "alice")

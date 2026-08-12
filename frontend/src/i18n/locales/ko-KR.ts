@@ -4584,6 +4584,9 @@ export default {
     deleteConfirm: '이 기억을 영구 삭제할까요?',
     add: '추가',
     addPlaceholder: '어시스턴트가 기억했으면 하는 내용을 한 문장으로 적어 주세요',
+    addTitle: '기억 추가',
+    addKindLabel: '유형',
+    addContentLabel: '내용',
     emptyTitle: '아직 기억이 없습니다',
     emptyDescription: '대화에서 "기억해 줘: ..."라고 말하거나 위에서 직접 추가하세요.',
     kinds: {

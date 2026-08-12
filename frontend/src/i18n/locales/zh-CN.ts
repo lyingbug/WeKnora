@@ -4584,6 +4584,9 @@ export default {
     deleteConfirm: '永久删除这条记忆？',
     add: '添加',
     addPlaceholder: '用一句话写下你希望助手记住的事',
+    addTitle: '添加记忆',
+    addKindLabel: '类型',
+    addContentLabel: '内容',
     emptyTitle: '还没有记忆',
     emptyDescription: '在对话里说「记住：……」，或者在上面直接添加一条。',
     kinds: {

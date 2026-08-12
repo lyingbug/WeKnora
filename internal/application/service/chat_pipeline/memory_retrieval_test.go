@@ -62,8 +62,11 @@ func TestWhoIsAskingReachesTheQueryRewriter(t *testing.T) {
 	require.Contains(t, userPrompt, "分割模型调参手册")
 	require.Contains(t, userPrompt, "分割怎么调参", "the question itself must survive")
 
-	require.Len(t, chatManage.UsedMemories, 1,
-		"memory that shaped the search has to be visible, not applied invisibly")
+	// Conditioning the rewriter is not a recall. The background is fed in
+	// whole, relevant or not, so counting it as "memories this answer used"
+	// would report unrelated memories on every single turn. That list is
+	// MEMORY_RECALL's to build, from what the question actually matched.
+	require.Empty(t, chatManage.UsedMemories)
 }
 
 func TestQueryRewriterIsUnchangedWithoutMemory(t *testing.T) {

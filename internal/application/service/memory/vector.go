@@ -107,7 +107,8 @@ func (s *Service) storeItemEmbedding(
 	if !ok {
 		return
 	}
-	vector := s.embedText(ctx, modelID, embeddableText(item), embedWriteTimeout)
+	text := embeddableText(item, s.embedAliases(ctx, scope, item))
+	vector := s.embedText(ctx, modelID, text, embedWriteTimeout)
 	if len(vector) == 0 {
 		return
 	}
@@ -127,39 +128,88 @@ func (s *Service) storeItemEmbedding(
 // Topic and content together, because the topic carries the subject the
 // statement is about and the statement alone is often too terse to place —
 // "PostgreSQL 17" means little without "生产数据库".
-func embeddableText(item *types.MemoryItem) string {
+//
+// An interest is promoted from a subject label, so its topic and content are
+// the same string. Joining them would embed "X：X", which is not the sentence
+// any question resembles.
+//
+// aliases are the other wordings this person has used for the same subject.
+// They widen what a question can match without widening what the model is
+// told: they exist only in the vector, never in the injected block.
+func embeddableText(item *types.MemoryItem, aliases []string) string {
 	if item == nil {
 		return ""
 	}
 	topic := types.SanitizeMemoryTopic(item.Topic)
 	content := types.SanitizeMemoryContent(item.Content)
-	if topic == "" {
-		return content
+	text := content
+	if topic != "" && topic != content {
+		text = topic + "：" + content
 	}
-	return topic + "：" + content
+	if text == "" {
+		return ""
+	}
+	seen := map[string]bool{text: true, content: true, topic: true}
+	for _, alias := range aliases {
+		alias = types.SanitizeMemoryTopic(alias)
+		if alias == "" || seen[alias] {
+			continue
+		}
+		seen[alias] = true
+		text += "；" + alias
+	}
+	return text
+}
+
+// embedAliases returns the other wordings this person has used for an
+// interest's subject.
+//
+// Only interests: every other kind already carries a sentence of its own, and
+// its topic is a heading rather than a subject the topic tracker follows. Best
+// effort — a lookup failure costs a slightly narrower vector, nothing else.
+func (s *Service) embedAliases(
+	ctx context.Context, scope interfaces.MemoryScope, item *types.MemoryItem,
+) []string {
+	if item == nil || item.Kind != types.MemoryKindInterest {
+		return nil
+	}
+	key := types.NormalizeTopicKey(item.Topic)
+	if key == "" {
+		return nil
+	}
+	stat, err := s.repo.TopicByKey(ctx, scope, key)
+	if err != nil {
+		logger.Warnf(ctx, "memory: load topic aliases failed: %v", err)
+		return nil
+	}
+	if stat == nil {
+		return nil
+	}
+	return stat.Aliases
 }
 
 // vectorRanking scores candidates against a query by cosine similarity and
 // returns them best-first. An empty result means semantic scoring was
 // unavailable, not that nothing matched — callers fall back rather than
-// treating it as an empty match set.
+// treating it as an empty match set. skipReason is set when vector recall was
+// not attempted or could not run.
 func (s *Service) vectorRanking(
 	ctx context.Context,
 	scope interfaces.MemoryScope,
 	cfg *types.MemoryConfig,
 	query string,
 	candidates []*types.MemoryItem,
-) []int {
+) ([]int, string) {
 	if len(candidates) == 0 {
-		return nil
+		return nil, "no_candidates"
 	}
 	modelID, ok := s.embedder(ctx, cfg)
 	if !ok {
-		return nil
+		return nil, "vector_disabled"
 	}
 	queryVector := s.embedText(ctx, modelID, query, embedTimeout)
 	if len(queryVector) == 0 {
-		return nil
+		return nil, "embed_failed"
 	}
 
 	ids := make([]string, 0, len(candidates))
@@ -177,10 +227,10 @@ func (s *Service) vectorRanking(
 	vectors, err := s.repo.ItemEmbeddings(ctx, scope, ids)
 	if err != nil {
 		logger.Warnf(ctx, "memory: load embeddings failed: %v", err)
-		return nil
+		return nil, "load_embeddings_failed"
 	}
 	if len(vectors) == 0 {
-		return nil
+		return nil, "no_stored_vectors"
 	}
 
 	type scored struct {
@@ -205,7 +255,10 @@ func (s *Service) vectorRanking(
 	for _, entry := range ranked {
 		out = append(out, entry.index)
 	}
-	return out
+	if len(out) == 0 {
+		return nil, "below_similarity_threshold"
+	}
+	return out, ""
 }
 
 // fuseRankings combines two ranked id lists by reciprocal rank fusion.
@@ -251,7 +304,8 @@ func (s *Service) backfillEmbeddings(
 	}
 	filled := 0
 	for _, item := range items {
-		vector := s.embedText(ctx, modelID, embeddableText(item), embedWriteTimeout)
+		text := embeddableText(item, s.embedAliases(ctx, scope, item))
+		vector := s.embedText(ctx, modelID, text, embedWriteTimeout)
 		if len(vector) == 0 {
 			// The model just failed; the rest of this batch will fail too.
 			break

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
@@ -110,33 +111,66 @@ func (s *Service) enabledScope(ctx context.Context) (interfaces.MemoryScope, *ty
 // and never returns an error: memory is an enhancement, so any failure has to
 // degrade into an ordinary answer rather than into a failed request.
 func (s *Service) Recall(ctx context.Context, query string) interfaces.MemoryRecall {
-	scope, cfg, ok := s.enabledScope(ctx)
+	recallCtx, recallSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
+		Name: "memory.recall",
+		Input: map[string]interface{}{
+			"query": langfuse.TruncateRunes(query, recallQueryPreviewRunes),
+		},
+	})
+
+	scope, cfg, ok := s.enabledScope(recallCtx)
 	if !ok {
+		reason := s.scopeDisableReason(recallCtx)
+		logger.Infof(recallCtx, "memory: recall skipped (%s)", reason)
+		recallSpan.Finish(langfuse.SummarizeMemoryRecallOutput(map[string]interface{}{
+			"outcome": "disabled",
+			"reason":  reason,
+		}, nil), nil, nil)
 		return interfaces.MemoryRecall{}
 	}
 
-	subject, err := s.repo.GetSubject(ctx, scope)
+	subject, err := s.repo.GetSubject(recallCtx, scope)
 	if err != nil || subject == nil {
+		reason := "no_subject"
+		if err != nil {
+			reason = "subject_load_failed"
+			logger.Warnf(recallCtx, "memory: load subject for recall failed: %v", err)
+		}
+		logger.Infof(recallCtx, "memory: recall skipped (%s)", reason)
+		recallSpan.Finish(langfuse.SummarizeMemoryRecallOutput(map[string]interface{}{
+			"outcome":    "empty",
+			"reason":     reason,
+			"subject_id": scope.SubjectID,
+		}, nil), map[string]interface{}{
+			"tenant_id": scope.TenantID,
+		}, nil)
 		return interfaces.MemoryRecall{}
 	}
 
-	residentItems, err := s.repo.ListActiveResident(ctx, scope, 60)
+	residentItems, err := s.repo.ListActiveResident(recallCtx, scope, 60)
 	if err != nil {
-		logger.Warnf(ctx, "memory: load resident items failed: %v", err)
+		logger.Warnf(recallCtx, "memory: load resident items failed: %v", err)
 		residentItems = nil
 	}
-	block := subject.BlockText
-	if block == "" && len(residentItems) > 0 {
-		// The cache is rebuilt on every write, so an empty cache with items
-		// present means the row predates a write failure. Render inline rather
-		// than silently dropping the user's memories.
-		block = types.RenderMemoryBlock(residentItems)
+	standing, interests := splitResidentInterests(residentItems)
+	selectedInterests, relevantInterests := selectResidentInterests(
+		query, interests, types.MemoryResidentInterestMaxItems)
+	blockItems := append(append([]*types.MemoryItem(nil), standing...), selectedInterests...)
+
+	// Render from the items rather than from subject.BlockText. The cached
+	// block saves nothing here — the items were just loaded either way — and
+	// trusting it means any change that alters what belongs in the block
+	// (a write that failed, a new resident kind) stays invisible until the
+	// user's next write. The cache is only a fallback for a failed load.
+	block := types.RenderMemoryBlock(blockItems)
+	if block == "" {
+		block = subject.BlockText
 	}
 
-	situational, err := s.repo.ListActiveByKinds(ctx, scope,
+	situational, err := s.repo.ListActiveByKinds(recallCtx, scope,
 		[]string{types.MemoryKindFact, types.MemoryKindTask}, 400)
 	if err != nil {
-		logger.Warnf(ctx, "memory: load situational items failed: %v", err)
+		logger.Warnf(recallCtx, "memory: load situational items failed: %v", err)
 		situational = nil
 	}
 	// Resident items are already in the block; matching them again would print
@@ -151,18 +185,62 @@ func (s *Service) Recall(ctx context.Context, query string) interfaces.MemoryRec
 			candidates = append(candidates, item)
 		}
 	}
-	matched := s.selectRecall(ctx, scope, cfg, query, candidates)
+
+	logger.Infof(recallCtx,
+		"memory: recall start subject=%s resident=%d candidates=%d block_runes=%d",
+		scope.SubjectID, len(residentItems), len(candidates), len([]rune(block)))
+
+	matched, rankTrace := s.selectRecallWithTrace(recallCtx, scope, cfg, query, candidates)
 
 	prompt := types.WrapMemoryForPrompt(block, types.RenderMemoryRecall(matched))
 	if prompt == "" {
+		emptyMeta := s.recallEmptyMeta(scope, len(residentItems), len(candidates), rankTrace)
+		emptyMeta["block_runes"] = len([]rune(block))
+		logger.Infof(recallCtx,
+			"memory: recall empty subject=%s resident=%d candidates=%d mode=%s",
+			scope.SubjectID, len(residentItems), len(candidates), rankTrace.Mode)
+		recallSpan.Finish(langfuse.SummarizeMemoryRecallOutput(emptyMeta, nil), map[string]interface{}{
+			"tenant_id": scope.TenantID,
+		}, nil)
 		return interfaces.MemoryRecall{}
 	}
 
-	// The resident block is rendered from a truncated list, so report the
-	// items that actually fit rather than everything that was loaded: the chat
-	// UI promises "these are the memories this answer saw".
-	used := append(residentItemsWithinBlock(residentItems, block), matched...)
-	s.touchAsync(ctx, scope, used)
+	// What was injected and what is reported are deliberately not the same set.
+	// An interest that rode along because the cap left room is standing
+	// background, not something this question pulled in, and reporting it would
+	// put a memory unrelated to the answer on the chat timeline every turn.
+	//
+	// The block is also rendered from a truncated list, so report the items
+	// that actually fit rather than everything that was loaded.
+	used := residentItemsWithinBlock(standing, block)
+	used = append(used, residentItemsWithinBlock(relevantInterests, block)...)
+	used = append(used, matched...)
+	s.touchAsync(recallCtx, scope, used)
+
+	logger.Infof(recallCtx,
+		"memory: recall done subject=%s used=%d matched=%d interest_injected=%d interest_relevant=%d mode=%s prompt_runes=%d",
+		scope.SubjectID, len(used), len(matched), len(selectedInterests), len(relevantInterests),
+		rankTrace.Mode, len([]rune(prompt)))
+	recallSpan.Finish(langfuse.SummarizeMemoryRecallOutput(map[string]interface{}{
+		"outcome":           "ok",
+		"subject_id":        scope.SubjectID,
+		"resident_count":    len(residentItems),
+		"block_runes":       len([]rune(block)),
+		"candidate_count":   len(candidates),
+		"lexical_hits":      rankTrace.LexicalHits,
+		"vector_hits":       rankTrace.VectorHits,
+		"vector_skip":       rankTrace.VectorSkipReason,
+		"ranking_mode":      rankTrace.Mode,
+		"fused_candidates":  rankTrace.FusedCandidates,
+		"matched_count":     len(matched),
+		"interest_total":    len(interests),
+		"interest_injected": len(selectedInterests),
+		"interest_relevant": len(relevantInterests),
+		"used_count":        len(used),
+		"prompt_runes":      len([]rune(prompt)),
+	}, used), map[string]interface{}{
+		"tenant_id": scope.TenantID,
+	}, nil)
 
 	return interfaces.MemoryRecall{Prompt: prompt, Items: used}
 }
@@ -604,15 +682,32 @@ const retrievalBackgroundRuneBudget = 240
 // Like Recall this makes no model call: it is two indexed reads plus string
 // assembly, because it runs before the first token of every retrieval turn.
 func (s *Service) RetrievalContextFor(ctx context.Context) interfaces.RetrievalContext {
-	scope, cfg, ok := s.enabledScope(ctx)
+	condCtx, condSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
+		Name: "memory.retrieval_context",
+	})
+	scope, cfg, ok := s.enabledScope(condCtx)
 	if !ok || !cfg.RetrievalConditioningEnabled() {
+		reason := "disabled"
+		if !ok {
+			reason = s.scopeDisableReason(condCtx)
+		} else if !cfg.RetrievalConditioningEnabled() {
+			reason = "retrieval_conditioning_disabled"
+		}
+		condSpan.Finish(map[string]interface{}{
+			"outcome": "skipped",
+			"reason":  reason,
+		}, nil, nil)
 		return interfaces.RetrievalContext{}
 	}
 
-	items, err := s.repo.ListActiveByKinds(ctx, scope,
+	items, err := s.repo.ListActiveByKinds(condCtx, scope,
 		[]string{types.MemoryKindProfile, types.MemoryKindInterest}, 30)
 	if err != nil {
-		logger.Warnf(ctx, "memory: load retrieval context failed: %v", err)
+		logger.Warnf(condCtx, "memory: load retrieval context failed: %v", err)
+		condSpan.Finish(map[string]interface{}{
+			"outcome": "error",
+			"error":   err.Error(),
+		}, nil, err)
 		return interfaces.RetrievalContext{}
 	}
 
@@ -643,14 +738,23 @@ func (s *Service) RetrievalContextFor(ctx context.Context) interfaces.RetrievalC
 		background = append(background, line)
 	}
 
-	documents := s.topDocumentTitles(ctx, scope)
+	documents := s.topDocumentTitles(condCtx, scope)
 
-	return interfaces.RetrievalContext{
+	retrievalCtx := interfaces.RetrievalContext{
 		Background: strings.Join(background, "；"),
 		Interests:  interests,
 		Documents:  documents,
 		Items:      used,
 	}
+	logger.Infof(condCtx,
+		"memory: retrieval context subject=%s interests=%d documents=%d items=%d",
+		scope.SubjectID, len(interests), len(documents), len(used))
+	condSpan.Finish(langfuse.SummarizeRetrievalContextOutput(
+		retrievalCtx.Background, retrievalCtx.Interests, retrievalCtx.Documents, retrievalCtx.Items,
+	), map[string]interface{}{
+		"tenant_id": scope.TenantID,
+	}, nil)
+	return retrievalCtx
 }
 
 // topDocumentTitles gives the rewriter the vocabulary this person's answers
@@ -782,6 +886,7 @@ func (s *Service) observeTopics(
 		if key == "" {
 			continue
 		}
+		aliasesBefore := s.topicAliasCount(ctx, scope, key)
 		stat, err := s.repo.BumpTopic(ctx, scope, canonicalTopic, key, resolution.Surface)
 		if err != nil {
 			logger.Warnf(ctx, "memory: count topic %q failed: %v", canonicalTopic, err)
@@ -801,6 +906,12 @@ func (s *Service) observeTopics(
 			logger.Warnf(ctx,
 				"memory: topic %q names one question rather than a subject, so it will never "+
 					"recur and can never reach the threshold", canonicalTopic)
+		}
+		// A new wording changes what this subject's interest should embed to,
+		// and the vector was written once at promotion time. Drop it and let
+		// the maintenance backfill rebuild it with the wording included.
+		if len(stat.Aliases) > aliasesBefore {
+			s.invalidateInterestEmbedding(ctx, scope, canonicalTopic)
 		}
 		if resolution.MergedLabel != "" {
 			canonicalTopic, key = s.renameTopic(ctx, scope, stat, resolution.MergedLabel, key)
@@ -882,45 +993,49 @@ func (s *Service) renameInterestItem(
 			logger.Warnf(ctx, "memory: rename interest item failed: %v", err)
 			continue
 		}
+		// The vector still spells the old label, so semantic recall would keep
+		// matching a name this subject no longer goes by.
+		if err := s.repo.DeleteItemEmbedding(ctx, scope, item.ID); err != nil {
+			logger.Warnf(ctx, "memory: drop renamed interest embedding failed: %v", err)
+		}
 		s.rebuildBlock(ctx, scope)
 		return
 	}
 }
 
-// selectRecall picks the situational memories for this turn.
-//
-// Lexical matching alone cannot find a memory the user has since re-worded, and
-// most memories get re-worded — "回答直接给结论" and "别铺垫那么多" share no
-// tokens at all. Semantic similarity finds those; lexical still wins on exact
-// terms a model embeds poorly, like version numbers, error codes and product
-// names. So both run and the two rankings are fused rather than one replacing
-// the other.
-//
-// When semantic scoring is unavailable — no embedding model, a timeout, no
-// stored vectors yet — this is exactly the lexical behaviour that came before.
-func (s *Service) selectRecall(
-	ctx context.Context,
-	scope interfaces.MemoryScope,
-	cfg *types.MemoryConfig,
-	query string,
-	candidates []*types.MemoryItem,
-) []*types.MemoryItem {
-	lexical := lexicalRanking(query, candidates)
-	vector := s.vectorRanking(ctx, scope, cfg, query, candidates)
-	if len(vector) == 0 {
-		return takeWithinBudget(lexical, candidates,
-			types.MemoryRecallMaxItems, types.MemoryRecallRuneBudget)
+// topicAliasCount reports how many wordings a subject is already known by, so
+// the caller can tell whether a sighting added one.
+func (s *Service) topicAliasCount(
+	ctx context.Context, scope interfaces.MemoryScope, key string,
+) int {
+	stat, err := s.repo.TopicByKey(ctx, scope, key)
+	if err != nil || stat == nil {
+		return 0
 	}
+	return len(stat.Aliases)
+}
 
-	// The vector ranking scores every candidate that has a stored vector, so
-	// taking it whole would make every memory a match. Cut it to the same
-	// order of magnitude the lexical side produces before fusing.
-	if len(vector) > types.MemoryRecallMaxItems*2 {
-		vector = vector[:types.MemoryRecallMaxItems*2]
+// invalidateInterestEmbedding drops the vector of the interest promoted from
+// this subject, if there is one. Best effort: losing the vector for one
+// maintenance cycle costs semantic recall on one memory, and the item stays
+// reachable by wording the whole time.
+func (s *Service) invalidateInterestEmbedding(
+	ctx context.Context, scope interfaces.MemoryScope, topic string,
+) {
+	items, err := s.repo.ListActiveByKinds(ctx, scope, []string{types.MemoryKindInterest}, 100)
+	if err != nil {
+		logger.Warnf(ctx, "memory: load interests for re-embedding failed: %v", err)
+		return
 	}
-
-	return takeWithinBudget(fuseRankings(lexical, vector), candidates,
-		types.MemoryRecallMaxItems, types.MemoryRecallRuneBudget)
+	for _, item := range items {
+		if item == nil || item.Content != topic {
+			continue
+		}
+		if err := s.repo.DeleteItemEmbedding(ctx, scope, item.ID); err != nil {
+			logger.Warnf(ctx, "memory: drop interest embedding failed: %v", err)
+		}
+		return
+	}
 }
 
 // resolutionTier names which rule matched, for logs.

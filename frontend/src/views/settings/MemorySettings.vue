@@ -32,19 +32,54 @@
       <div class="list-header">
         <div class="list-title">
           <h3>{{ t('memorySettings.listTitle') }}</h3>
-          <span class="list-count">{{ t('memorySettings.listCount', { count: total }) }}</span>
+          <span class="list-count">{{ t('memorySettings.listCount', { count: totalAll }) }}</span>
         </div>
         <div class="list-actions">
-          <t-radio-group v-model="status" variant="default-filled" size="small" @change="reload">
-            <t-radio-button value="active">{{ t('memorySettings.statusActive') }}</t-radio-button>
-            <t-radio-button value="pending">
-              {{ t('memorySettings.statusPending') }}
-              <span v-if="pendingCount > 0" class="pending-badge">{{ pendingCount }}</span>
-            </t-radio-button>
-            <t-radio-button value="superseded">{{ t('memorySettings.statusSuperseded') }}</t-radio-button>
-            <t-radio-button value="archived">{{ t('memorySettings.statusArchived') }}</t-radio-button>
-          </t-radio-group>
-          <t-button size="small" theme="default" variant="outline" @click="handleExport">
+          <t-popup
+            v-model="addVisible"
+            trigger="click"
+            placement="bottom-end"
+            destroy-on-close
+            overlay-class-name="memory-add-popup-overlay"
+          >
+            <t-button size="small" variant="text" :disabled="!canWrite">
+              <template #icon><t-icon name="add" /></template>
+              {{ t('memorySettings.add') }}
+            </t-button>
+            <template #content>
+              <div class="add-popup" @click.stop>
+                <div class="add-popup-title">{{ t('memorySettings.addTitle') }}</div>
+                <label class="add-field">
+                  <span class="add-label">{{ t('memorySettings.addKindLabel') }}</span>
+                  <t-select
+                    v-model="draftKind"
+                    size="small"
+                    :popup-props="{ overlayClassName: 'memory-add-kind-popup' }"
+                  >
+                    <t-option v-for="kind in kinds" :key="kind" :value="kind" :label="kindLabel(kind)" />
+                  </t-select>
+                </label>
+                <label class="add-field">
+                  <span class="add-label">{{ t('memorySettings.addContentLabel') }}</span>
+                  <t-textarea
+                    v-model="draftContent"
+                    :placeholder="t('memorySettings.addPlaceholder')"
+                    :maxlength="300"
+                    :autosize="{ minRows: 3, maxRows: 6 }"
+                  />
+                </label>
+                <div class="add-popup-footer">
+                  <t-button size="small" variant="outline" @click="addVisible = false">
+                    {{ t('common.cancel') }}
+                  </t-button>
+                  <t-button size="small" theme="primary" :disabled="!draftContent.trim()" @click="handleCreate">
+                    {{ t('memorySettings.add') }}
+                  </t-button>
+                </div>
+              </div>
+            </template>
+          </t-popup>
+          <t-button size="small" variant="text" @click="handleExport">
             <template #icon><t-icon name="download" /></template>
             {{ t('memorySettings.export') }}
           </t-button>
@@ -56,7 +91,7 @@
             placement="left"
             @confirm="handleClear"
           >
-            <t-button size="small" theme="danger" variant="outline" :disabled="total === 0">
+            <t-button size="small" theme="danger" variant="text" :disabled="totalAll === 0">
               <template #icon><t-icon name="delete" /></template>
               {{ t('memorySettings.clear') }}
             </t-button>
@@ -64,22 +99,9 @@
         </div>
       </div>
 
-      <div class="add-row">
-        <t-select v-model="draftKind" size="small" class="add-kind" :disabled="!canWrite">
-          <t-option v-for="kind in kinds" :key="kind" :value="kind" :label="kindLabel(kind)" />
-        </t-select>
-        <t-input
-          v-model="draftContent"
-          size="small"
-          class="add-input"
-          :disabled="!canWrite"
-          :placeholder="t('memorySettings.addPlaceholder')"
-          @enter="handleCreate"
-        />
-        <t-button size="small" :disabled="!canWrite || !draftContent.trim()" @click="handleCreate">
-          {{ t('memorySettings.add') }}
-        </t-button>
-      </div>
+      <t-tabs :value="status" class="status-tabs" @change="handleStatusChange">
+        <t-tab-panel v-for="value in statuses" :key="value" :value="value" :label="statusLabel(value)" />
+      </t-tabs>
 
       <t-loading :loading="loading">
         <div v-if="items.length === 0" class="empty">
@@ -104,7 +126,12 @@
                 <t-tag size="small" :theme="kindTheme(item.kind)" variant="light">
                   {{ kindLabel(item.kind) }}
                 </t-tag>
-                <span v-if="item.topic" class="memory-topic">{{ item.topic }}</span>
+                <!-- An interest is promoted from a subject label, so its topic
+                     and content are the same string; showing both reads as a
+                     rendering bug. -->
+                <span v-if="item.topic && item.topic !== item.content" class="memory-topic">
+                  {{ item.topic }}
+                </span>
                 <t-tag size="small" variant="outline" theme="default">
                   {{ originLabel(item.origin) }}
                 </t-tag>
@@ -179,7 +206,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import {
@@ -212,12 +239,30 @@ const pageSize = 20
 
 const draftKind = ref<MemoryKind>('fact')
 const draftContent = ref('')
+const addVisible = ref(false)
 const editingId = ref('')
 const editingContent = ref('')
 const editingImportance = ref(3)
 
-const kinds: MemoryKind[] = ['profile', 'preference', 'fact', 'task']
-const pendingCount = ref(0)
+const kinds: MemoryKind[] = ['profile', 'preference', 'fact', 'task', 'interest']
+
+const statuses: MemoryStatus[] = ['active', 'pending', 'superseded', 'archived']
+const statusLabelKeys: Record<MemoryStatus, string> = {
+  active: 'memorySettings.statusActive',
+  pending: 'memorySettings.statusPending',
+  superseded: 'memorySettings.statusSuperseded',
+  archived: 'memorySettings.statusArchived',
+}
+const counts = ref<Record<MemoryStatus, number>>({
+  active: 0,
+  pending: 0,
+  superseded: 0,
+  archived: 0,
+})
+
+const statusLabel = (value: MemoryStatus) => `${t(statusLabelKeys[value])}(${counts.value[value]})`
+
+const totalAll = computed(() => statuses.reduce((sum, value) => sum + counts.value[value], 0))
 
 // Writing requires both switches; the list itself stays readable either way so
 // a user who just turned memory off can still review and delete what is stored.
@@ -278,20 +323,27 @@ const loadItems = async () => {
   }
 }
 
-// The count is loaded separately so the tab can advertise waiting inferences
-// while the user is looking at the active list.
-const loadPendingCount = async () => {
-  try {
-    const response = await listMemoryItems({ status: 'pending', limit: 1 })
-    pendingCount.value = response.total || 0
-  } catch (error: any) {
-    pendingCount.value = 0
-  }
+// Counts are loaded per status so every tab carries its own size, which is how
+// a user finds out an inference is waiting for them without switching tabs.
+const loadCounts = async () => {
+  const totals = await Promise.all(
+    statuses.map(async (value) => {
+      try {
+        const response = await listMemoryItems({ status: value, limit: 1 })
+        return response.total || 0
+      } catch (error: any) {
+        return 0
+      }
+    }),
+  )
+  statuses.forEach((value, index) => {
+    counts.value[value] = totals[index]
+  })
 }
 
 const reload = async () => {
   page.value = 1
-  await Promise.all([loadItems(), loadPendingCount()])
+  await Promise.all([loadItems(), loadCounts()])
 }
 
 const handleConfirm = async (item: MemoryItem) => {
@@ -314,6 +366,11 @@ const handleReject = async (item: MemoryItem) => {
   }
 }
 
+const handleStatusChange = async (value: string | number) => {
+  status.value = value as MemoryStatus
+  await reload()
+}
+
 const handlePageChange = async (current: number) => {
   page.value = current
   await loadItems()
@@ -333,12 +390,17 @@ const handleEnabledChange = async (value: boolean) => {
   }
 }
 
+watch(addVisible, (visible) => {
+  if (visible) draftContent.value = ''
+})
+
 const handleCreate = async () => {
   const content = draftContent.value.trim()
   if (!content) return
   try {
     await createMemoryItem({ kind: draftKind.value, content })
     draftContent.value = ''
+    addVisible.value = false
     status.value = 'active'
     await reload()
     await loadSettings()
@@ -370,7 +432,7 @@ const handleSaveEdit = async (item: MemoryItem) => {
 const handleDelete = async (item: MemoryItem) => {
   try {
     await deleteMemoryItem(item.id)
-    await loadItems()
+    await Promise.all([loadItems(), loadCounts()])
     await loadSettings()
     MessagePlugin.success(t('memorySettings.toasts.deleted'))
   } catch (error: any) {
@@ -408,24 +470,11 @@ const handleExport = async () => {
 
 onMounted(async () => {
   await loadSettings()
-  await Promise.all([loadItems(), loadPendingCount()])
+  await Promise.all([loadItems(), loadCounts()])
 })
 </script>
 
 <style lang="less" scoped>
-.pending-badge {
-  display: inline-block;
-  min-width: 16px;
-  margin-left: 4px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--td-warning-color-1, #fff1e9);
-  color: var(--td-warning-color-6, #d4380d);
-  font-size: 11px;
-  line-height: 16px;
-  text-align: center;
-}
-
 .pending-hint {
   margin: 0 0 12px;
   color: var(--td-text-color-secondary, #86909c);
@@ -546,21 +595,27 @@ onMounted(async () => {
   flex-wrap: wrap;
 }
 
-.add-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+.status-tabs {
+  margin-bottom: 16px;
+
+  :deep(.t-tabs__nav-item) {
+    font-size: 13px;
+  }
+
+  :deep(.t-tabs__nav-item-wrapper) {
+    padding: 0 12px;
+    margin: 0;
+  }
+
+  :deep(.t-tabs__operations) {
+    display: none;
+  }
+
+  :deep(.t-tabs__content) {
+    display: none;
+  }
 }
 
-.add-kind {
-  width: 120px;
-  flex-shrink: 0;
-}
-
-.add-input {
-  flex: 1;
-}
 
 .memory-list {
   list-style: none;
@@ -655,5 +710,68 @@ onMounted(async () => {
   font-size: 13px;
   color: var(--td-text-color-placeholder);
   margin: 0;
+}
+</style>
+
+<!-- t-popup renders into body, so the add form has to be styled globally. -->
+<style lang="less">
+.memory-add-popup-overlay {
+  z-index: 3050;
+
+  .t-popup__content {
+    padding: 14px 16px !important;
+    width: 320px;
+    max-width: calc(100vw - 24px);
+    border-radius: 12px !important;
+    background: var(--td-bg-color-container) !important;
+    border: 0.5px solid var(--td-component-stroke) !important;
+    box-shadow:
+      0 0 0 0.5px rgba(0, 0, 0, 0.03),
+      0 2px 4px rgba(0, 0, 0, 0.04),
+      0 8px 24px rgba(0, 0, 0, 0.1) !important;
+  }
+
+  .add-popup {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .add-popup-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+
+  .add-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .add-label {
+    font-size: 12px;
+    color: var(--td-text-color-secondary);
+  }
+
+  .add-popup-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+}
+
+/* The kind dropdown mounts to body too, above the popup that opened it. */
+.memory-add-kind-popup {
+  z-index: 6200;
+}
+
+:root[theme-mode='dark'] .memory-add-popup-overlay .t-popup__content {
+  background: rgba(36, 36, 36, 0.92) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.05),
+    0 2px 4px rgba(0, 0, 0, 0.12),
+    0 8px 32px rgba(0, 0, 0, 0.28) !important;
 }
 </style>
