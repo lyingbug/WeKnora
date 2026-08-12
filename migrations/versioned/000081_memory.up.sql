@@ -141,3 +141,19 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS used_memories JSONB;
 ALTER TABLE memory_subjects ADD COLUMN IF NOT EXISTS consolidated_at TIMESTAMP WITH TIME ZONE;
 
 ALTER TABLE memory_topic_stats ADD COLUMN IF NOT EXISTS aliases JSONB NOT NULL DEFAULT '[]';
+
+-- Vectors live apart from the items so that listing, capacity enforcement and
+-- the resident block never pay to load them.
+CREATE TABLE IF NOT EXISTS memory_item_embeddings (
+    item_id VARCHAR(36) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    subject_id VARCHAR(512) NOT NULL,
+    model_id VARCHAR(64) NOT NULL DEFAULT '',
+    dims INTEGER NOT NULL DEFAULT 0,
+    vector BYTEA,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_emb_scope
+    ON memory_item_embeddings (tenant_id, subject_id);

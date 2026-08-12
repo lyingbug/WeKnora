@@ -74,6 +74,11 @@ func (s *Service) consolidateIfDue(
 		merged = s.mergeRedundant(ctx, scope, cfg, modelID, items)
 	}
 
+	// Vectors for anything written before an embedding model existed, or while
+	// it was unreachable. Bounded per run, so a large backlog drains over days
+	// instead of stalling one maintenance pass.
+	s.backfillEmbeddings(ctx, scope, cfg)
+
 	if err := s.repo.MarkConsolidated(ctx, scope); err != nil {
 		logger.Warnf(ctx, "memory: mark consolidated failed: %v", err)
 	}

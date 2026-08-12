@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/models/chat"
+	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/hibiken/asynq"
@@ -137,7 +138,9 @@ type stubModelService struct {
 	// lastThinking is the thinking flag the last call passed.
 	lastThinking *bool
 	// workspaceModels backs ListModels.
-	workspaceModels  []*types.Model
+	workspaceModels []*types.Model
+	// embedder backs GetEmbeddingModel.
+	embedder         *stubEmbedder
 	requestedModelID string
 	lastPrompt       string
 	// prompts records every transcript the model was asked about, so a test
@@ -156,6 +159,17 @@ func (s *stubModelService) ListModels(context.Context) ([]*types.Model, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.workspaceModels, nil
+}
+
+func (s *stubModelService) GetEmbeddingModel(
+	_ context.Context, _ string,
+) (embedding.Embedder, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.embedder == nil {
+		return nil, errors.New("no embedding model configured")
+	}
+	return s.embedder, nil
 }
 
 func (s *stubModelService) GetChatModel(_ context.Context, modelID string) (chat.Chat, error) {
@@ -184,6 +198,21 @@ func (s *stubModelService) lastThinkingAsked() *bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.lastThinking
+}
+
+// lastPromptContaining returns the most recent prompt carrying a marker, so a
+// test can pin the extraction call specifically. One run can also make topic
+// adjudication and consolidation calls, and whichever ran last would otherwise
+// be what an assertion measured.
+func (s *stubModelService) lastPromptContaining(marker string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.prompts) - 1; i >= 0; i-- {
+		if strings.Contains(s.prompts[i], marker) {
+			return s.prompts[i]
+		}
+	}
+	return ""
 }
 
 // seenTranscripts concatenates every prompt the model received.
@@ -288,3 +317,55 @@ func (s *stubEnqueuer) pop() *asynq.Task {
 	s.tasks = s.tasks[1:]
 	return task
 }
+
+// stubEmbedder returns a deterministic vector per phrase, so a test can state
+// which statements are semantically close without needing a real model.
+type stubEmbedder struct {
+	vectors map[string][]float32
+	fail    bool
+	delay   time.Duration
+	calls   int
+}
+
+func (e *stubEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	e.calls++
+	if e.delay > 0 {
+		select {
+		case <-time.After(e.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if e.fail {
+		return nil, errors.New("stub embedder outage")
+	}
+	for phrase, vector := range e.vectors {
+		if strings.Contains(text, phrase) {
+			return vector, nil
+		}
+	}
+	// Anything unrecognised is orthogonal to everything named.
+	return []float32{0, 0, 1}, nil
+}
+
+func (e *stubEmbedder) BatchEmbed(ctx context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		vector, err := e.Embed(ctx, text)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, vector)
+	}
+	return out, nil
+}
+
+func (e *stubEmbedder) BatchEmbedWithPool(
+	ctx context.Context, _ embedding.Embedder, texts []string,
+) ([][]float32, error) {
+	return e.BatchEmbed(ctx, texts)
+}
+
+func (e *stubEmbedder) GetModelName() string { return "stub-embedder" }
+func (e *stubEmbedder) GetDimensions() int   { return 3 }
+func (e *stubEmbedder) GetModelID() string   { return "embed-1" }

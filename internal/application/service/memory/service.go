@@ -110,7 +110,7 @@ func (s *Service) enabledScope(ctx context.Context) (interfaces.MemoryScope, *ty
 // and never returns an error: memory is an enhancement, so any failure has to
 // degrade into an ordinary answer rather than into a failed request.
 func (s *Service) Recall(ctx context.Context, query string) interfaces.MemoryRecall {
-	scope, _, ok := s.enabledScope(ctx)
+	scope, cfg, ok := s.enabledScope(ctx)
 	if !ok {
 		return interfaces.MemoryRecall{}
 	}
@@ -151,7 +151,7 @@ func (s *Service) Recall(ctx context.Context, query string) interfaces.MemoryRec
 			candidates = append(candidates, item)
 		}
 	}
-	matched := selectRecallItems(query, candidates, types.MemoryRecallMaxItems, types.MemoryRecallRuneBudget)
+	matched := s.selectRecall(ctx, scope, cfg, query, candidates)
 
 	prompt := types.WrapMemoryForPrompt(block, types.RenderMemoryRecall(matched))
 	if prompt == "" {
@@ -326,6 +326,10 @@ func (s *Service) write(
 
 	s.enforceCapacity(ctx, scope, cfg)
 	s.rebuildBlock(ctx, scope)
+	// A memory with no vector is invisible to semantic recall, so this runs on
+	// every write. It is best effort: failing to embed must not fail the write,
+	// and the backfill pass picks up whatever this missed.
+	s.storeItemEmbedding(ctx, scope, cfg, stored)
 	return stored, nil
 }
 
@@ -881,6 +885,42 @@ func (s *Service) renameInterestItem(
 		s.rebuildBlock(ctx, scope)
 		return
 	}
+}
+
+// selectRecall picks the situational memories for this turn.
+//
+// Lexical matching alone cannot find a memory the user has since re-worded, and
+// most memories get re-worded — "回答直接给结论" and "别铺垫那么多" share no
+// tokens at all. Semantic similarity finds those; lexical still wins on exact
+// terms a model embeds poorly, like version numbers, error codes and product
+// names. So both run and the two rankings are fused rather than one replacing
+// the other.
+//
+// When semantic scoring is unavailable — no embedding model, a timeout, no
+// stored vectors yet — this is exactly the lexical behaviour that came before.
+func (s *Service) selectRecall(
+	ctx context.Context,
+	scope interfaces.MemoryScope,
+	cfg *types.MemoryConfig,
+	query string,
+	candidates []*types.MemoryItem,
+) []*types.MemoryItem {
+	lexical := lexicalRanking(query, candidates)
+	vector := s.vectorRanking(ctx, scope, cfg, query, candidates)
+	if len(vector) == 0 {
+		return takeWithinBudget(lexical, candidates,
+			types.MemoryRecallMaxItems, types.MemoryRecallRuneBudget)
+	}
+
+	// The vector ranking scores every candidate that has a stored vector, so
+	// taking it whole would make every memory a match. Cut it to the same
+	// order of magnitude the lexical side produces before fusing.
+	if len(vector) > types.MemoryRecallMaxItems*2 {
+		vector = vector[:types.MemoryRecallMaxItems*2]
+	}
+
+	return takeWithinBudget(fuseRankings(lexical, vector), candidates,
+		types.MemoryRecallMaxItems, types.MemoryRecallRuneBudget)
 }
 
 // resolutionTier names which rule matched, for logs.

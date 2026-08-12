@@ -101,3 +101,17 @@ ALTER TABLE messages ADD COLUMN used_memories TEXT;
 ALTER TABLE memory_subjects ADD COLUMN consolidated_at DATETIME;
 
 ALTER TABLE memory_topic_stats ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]';
+
+CREATE TABLE IF NOT EXISTS memory_item_embeddings (
+    item_id VARCHAR(36) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    subject_id VARCHAR(512) NOT NULL,
+    model_id VARCHAR(64) NOT NULL DEFAULT '',
+    dims INTEGER NOT NULL DEFAULT 0,
+    vector BLOB,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_mem_emb_scope
+    ON memory_item_embeddings (tenant_id, subject_id);

@@ -159,20 +159,62 @@ const minRecallScore = 0.15
 // selectRecallItems takes the best matches within both the count and rune
 // budgets.
 func selectRecallItems(query string, items []*types.MemoryItem, maxItems, runeBudget int) []*types.MemoryItem {
-	selected := make([]*types.MemoryItem, 0, maxItems)
-	used := 0
-	for _, entry := range scoreItems(query, items) {
-		if len(selected) >= maxItems {
-			break
+	return takeWithinBudget(lexicalRanking(query, items), items, maxItems, runeBudget)
+}
+
+// lexicalRanking returns the indexes of the items that clear the lexical bar,
+// best first.
+//
+// Indexes rather than ids because a ranking is only ever meaningful against the
+// candidate slice it was produced from, and because an item is not guaranteed
+// to carry an id — keying on one silently collapses every id-less item onto the
+// same entry.
+func lexicalRanking(query string, items []*types.MemoryItem) []int {
+	index := make(map[*types.MemoryItem]int, len(items))
+	for i, item := range items {
+		if item != nil {
+			index[item] = i
 		}
+	}
+	scored := scoreItems(query, items)
+	ranked := make([]int, 0, len(scored))
+	for _, entry := range scored {
 		if entry.score < minRecallScore {
 			break
 		}
-		cost := len([]rune(entry.item.Content)) + 3
+		if i, ok := index[entry.item]; ok {
+			ranked = append(ranked, i)
+		}
+	}
+	return ranked
+}
+
+// takeWithinBudget materialises a ranking into items, stopping at the item cap
+// and skipping anything that no longer fits the rune budget.
+//
+// Skipping rather than stopping on an over-budget item is deliberate: one long
+// memory should not shut out the several short ones behind it.
+func takeWithinBudget(
+	ranking []int, items []*types.MemoryItem, maxItems, runeBudget int,
+) []*types.MemoryItem {
+	selected := make([]*types.MemoryItem, 0, maxItems)
+	used := 0
+	for _, index := range ranking {
+		if len(selected) >= maxItems {
+			break
+		}
+		if index < 0 || index >= len(items) {
+			continue
+		}
+		item := items[index]
+		if item == nil {
+			continue
+		}
+		cost := len([]rune(item.Content)) + 3
 		if used+cost > runeBudget {
 			continue
 		}
-		selected = append(selected, entry.item)
+		selected = append(selected, item)
 		used += cost
 	}
 	return selected

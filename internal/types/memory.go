@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql/driver"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -313,6 +315,18 @@ type MemoryConfig struct {
 	// before it becomes a stored interest. 0 means the default. Setting it to 1
 	// records every topic on first sight, which is usually too noisy.
 	InterestThreshold int `json:"interest_threshold"`
+	// EmbeddingModelID is the model used to score memory against a question.
+	// Blank means "use the workspace's embedding model", the same convention
+	// the extraction model follows.
+	EmbeddingModelID string `json:"embedding_model_id"`
+	// VectorRecall adds semantic similarity to memory recall. Nil means on
+	// when an embedding model is reachable.
+	//
+	// Lexical matching alone cannot find a memory the user has re-worded, which
+	// is most of them: "回答直接给结论" and "别铺垫那么多" share no tokens. The
+	// cost is one embedding call per turn, bounded and degraded to lexical on
+	// failure, so the feature never becomes a reason a chat is slow.
+	VectorRecall *bool `json:"vector_recall"`
 	// RetrievalConditioning lets memory shape retrieval — query rewriting and
 	// per-document ranking — rather than only being appended to the answer
 	// prompt. This is where memory earns its keep in a knowledge-base product.
@@ -324,6 +338,14 @@ const (
 	DefaultMemoryInterestThreshold = 3
 	MaxMemoryInterestThreshold     = 20
 )
+
+// VectorRecallEnabled reports whether recall may use semantic similarity.
+func (c *MemoryConfig) VectorRecallEnabled() bool {
+	if c == nil || !c.Enabled {
+		return false
+	}
+	return c.VectorRecall == nil || *c.VectorRecall
+}
 
 // RetrievalConditioningEnabled reports whether memory may shape retrieval.
 // Nil means on: a memory feature that cannot improve retrieval is most of the
@@ -1188,4 +1210,72 @@ func TopicLabelIsAnImprovement(canonical, incoming, proposed string) bool {
 // instead of only in a trace someone happens to open.
 func TopicLooksLikeOneQuestion(topic string) bool {
 	return len([]rune(NormalizeTopicKey(topic))) > 24
+}
+
+// MemoryItemEmbedding is the vector for one memory, kept in its own table.
+//
+// Separate from memory_items on purpose: the manager, the resident block and
+// capacity enforcement all list items constantly, and none of them want to drag
+// a few kilobytes of float per row along for the ride. Only the code that
+// actually scores similarity loads these.
+type MemoryItemEmbedding struct {
+	ItemID    string `json:"item_id"   gorm:"primaryKey;type:varchar(36)"`
+	TenantID  uint64 `json:"tenant_id" gorm:"not null;index:idx_mem_emb_scope,priority:1"`
+	SubjectID string `json:"subject_id" gorm:"type:varchar(512);not null;index:idx_mem_emb_scope,priority:2"`
+	// ModelID records which model produced this vector. Vectors from different
+	// models are not comparable, so a model change has to invalidate them
+	// rather than silently score nonsense.
+	ModelID string `json:"model_id" gorm:"type:varchar(64);not null;default:''"`
+	Dims    int    `json:"dims"     gorm:"not null;default:0"`
+	// Vector is little-endian float32. JSON would be four times the size for
+	// no benefit: nothing but this package ever reads it.
+	Vector    []byte    `json:"-"          gorm:"type:bytea"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (MemoryItemEmbedding) TableName() string { return "memory_item_embeddings" }
+
+// EncodeEmbedding packs a vector as little-endian float32.
+func EncodeEmbedding(vector []float32) []byte {
+	if len(vector) == 0 {
+		return nil
+	}
+	out := make([]byte, len(vector)*4)
+	for i, value := range vector {
+		binary.LittleEndian.PutUint32(out[i*4:], math.Float32bits(value))
+	}
+	return out
+}
+
+// DecodeEmbedding unpacks a vector written by EncodeEmbedding.
+func DecodeEmbedding(raw []byte) []float32 {
+	if len(raw) < 4 {
+		return nil
+	}
+	out := make([]float32, len(raw)/4)
+	for i := range out {
+		out[i] = math.Float32frombits(binary.LittleEndian.Uint32(raw[i*4:]))
+	}
+	return out
+}
+
+// CosineSimilarity scores two vectors in [-1, 1]. Mismatched lengths score 0:
+// vectors from different models are not comparable, and guessing is worse than
+// declining to answer.
+func CosineSimilarity(a, b []float32) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		x, y := float64(a[i]), float64(b[i])
+		dot += x * y
+		normA += x * x
+		normB += y * y
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }

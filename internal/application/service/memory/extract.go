@@ -43,6 +43,18 @@ const (
 	// in-flight claim is stale. Without it, a worker that died between claiming
 	// and running would wedge the subject permanently.
 	extractInFlightGrace = 10 * time.Minute
+	// extractCandidatePool is how many stored memories are considered before
+	// narrowing, and extractRelevantCandidates is how many the model actually
+	// sees.
+	//
+	// Showing everything was the original behaviour and it does not survive a
+	// store of any size: the model has to hold dozens of unrelated notes in
+	// mind to decide whether one sentence updates any of them, the prompt grows
+	// without bound, and unrelated memories invite spurious update and delete
+	// decisions. mem0 shows 10 by vector similarity, Graphiti at most 15 per
+	// entity — a small, relevant set is the shape that works.
+	extractCandidatePool      = 200
+	extractRelevantCandidates = 15
 	// extractShownTopics bounds the tracked subjects shown to the extraction
 	// call. The resolver still considers more; this is about anchoring, not
 	// cost — the longer the list, the likelier the model files a question under
@@ -306,10 +318,11 @@ func (s *Service) Handle(ctx context.Context, task *asynq.Task) error {
 	// extraction quality falls apart, and it also destroys attribution.
 	var newCursor time.Time
 	for _, segment := range segments {
-		existing, err := s.repo.ListActiveByKinds(ctx, scope, types.MemoryKinds, 60)
+		existing, err := s.repo.ListActiveByKinds(ctx, scope, types.MemoryKinds, extractCandidatePool)
 		if err != nil {
 			return fmt.Errorf("load existing memories: %w", err)
 		}
+		existing = s.narrowToRelevant(ctx, scope, cfg, segment, existing)
 		forgotten, err := s.repo.ListTombstones(ctx, scope, 30)
 		if err != nil {
 			logger.Warnf(ctx, "memory: load tombstones failed: %v", err)
@@ -849,6 +862,9 @@ func (s *Service) extractionModelID(
 // for background work, and silently picking one is only acceptable if it is
 // visible afterwards.
 func (s *Service) workspaceChatModelID(ctx context.Context) string {
+	if s.modelService == nil {
+		return ""
+	}
 	models, err := s.modelService.ListModels(ctx)
 	if err != nil {
 		logger.Warnf(ctx, "memory: list models for extraction fallback failed: %v", err)
@@ -865,6 +881,51 @@ func (s *Service) workspaceChatModelID(ctx context.Context) string {
 		return model.ID
 	}
 	return ""
+}
+
+// narrowToRelevant cuts the stored memories down to the ones this segment
+// could plausibly be about.
+//
+// Falls back to a plain prefix when semantic scoring is unavailable, which is
+// still an improvement on showing everything: the list is ordered by importance
+// and recency, so the prefix is at least the memories most likely to matter.
+func (s *Service) narrowToRelevant(
+	ctx context.Context,
+	scope interfaces.MemoryScope,
+	cfg *types.MemoryConfig,
+	segment transcriptSegment,
+	existing []*types.MemoryItem,
+) []*types.MemoryItem {
+	if len(existing) <= extractRelevantCandidates {
+		return existing
+	}
+
+	var query strings.Builder
+	for _, line := range segment.lines {
+		query.WriteString(line.content)
+		query.WriteString("\n")
+	}
+
+	ranking := s.vectorRanking(ctx, scope, cfg, query.String(), existing)
+	if len(ranking) == 0 {
+		logger.Infof(ctx,
+			"memory: no semantic ranking available, showing the %d most important of %d memories",
+			extractRelevantCandidates, len(existing))
+		return existing[:extractRelevantCandidates]
+	}
+
+	narrowed := make([]*types.MemoryItem, 0, extractRelevantCandidates)
+	for _, index := range ranking {
+		if len(narrowed) >= extractRelevantCandidates {
+			break
+		}
+		if index >= 0 && index < len(existing) && existing[index] != nil {
+			narrowed = append(narrowed, existing[index])
+		}
+	}
+	logger.Infof(ctx, "memory: narrowed %d memories to %d relevant ones for extraction",
+		len(existing), len(narrowed))
+	return narrowed
 }
 
 // callExtractionModel runs the single LLM call in the write path.

@@ -95,6 +95,14 @@ type MemoryRepository interface {
 	// MarkConsolidated records that this subject's whole store was just
 	// reviewed, so the next review waits out the interval.
 	MarkConsolidated(ctx context.Context, scope MemoryScope) error
+	// UpsertItemEmbedding stores or replaces the vector for one memory.
+	UpsertItemEmbedding(ctx context.Context, scope MemoryScope, embedding *types.MemoryItemEmbedding) error
+	// ItemEmbeddings loads the vectors for the given items, keyed by item id.
+	// Items with no vector are simply absent.
+	ItemEmbeddings(ctx context.Context, scope MemoryScope, itemIDs []string) (map[string][]float32, error)
+	// ItemsMissingEmbeddings returns active items that have no vector yet, so a
+	// background pass can fill them in.
+	ItemsMissingEmbeddings(ctx context.Context, scope MemoryScope, modelID string, limit int) ([]*types.MemoryItem, error)
 	// ListLive returns items of one kind that the user can see: in use plus
 	// proposed and awaiting a decision.
 	ListLive(ctx context.Context, scope MemoryScope, kind string, limit int) ([]*types.MemoryItem, error)

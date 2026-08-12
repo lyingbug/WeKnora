@@ -544,6 +544,79 @@ func (r *memoryRepository) ExpireOverdue(
 	return result.RowsAffected, result.Error
 }
 
+func (r *memoryRepository) UpsertItemEmbedding(
+	ctx context.Context, scope interfaces.MemoryScope, embedding *types.MemoryItemEmbedding,
+) error {
+	if embedding == nil || embedding.ItemID == "" || len(embedding.Vector) == 0 {
+		return nil
+	}
+	embedding.TenantID = scope.TenantID
+	embedding.SubjectID = scope.SubjectID
+	now := time.Now()
+	embedding.UpdatedAt = now
+	if embedding.CreatedAt.IsZero() {
+		embedding.CreatedAt = now
+	}
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "item_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"model_id", "dims", "vector", "updated_at"}),
+		}).
+		Create(embedding).Error
+}
+
+func (r *memoryRepository) ItemEmbeddings(
+	ctx context.Context, scope interfaces.MemoryScope, itemIDs []string,
+) (map[string][]float32, error) {
+	if len(itemIDs) == 0 {
+		return nil, nil
+	}
+	var rows []*types.MemoryItemEmbedding
+	err := r.scoped(ctx, scope).
+		Model(&types.MemoryItemEmbedding{}).
+		Where("item_id IN ?", itemIDs).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	vectors := make(map[string][]float32, len(rows))
+	for _, row := range rows {
+		if vector := types.DecodeEmbedding(row.Vector); len(vector) > 0 {
+			vectors[row.ItemID] = vector
+		}
+	}
+	return vectors, nil
+}
+
+// ItemsMissingEmbeddings finds the backlog.
+//
+// Every memory written before an embedding model was configured, and every one
+// written while the model was unreachable, has no vector — and a memory with no
+// vector is invisible to semantic recall. Without a backfill the feature would
+// only ever work for memories created after it was switched on.
+func (r *memoryRepository) ItemsMissingEmbeddings(
+	ctx context.Context, scope interfaces.MemoryScope, modelID string, limit int,
+) ([]*types.MemoryItem, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	var items []*types.MemoryItem
+	err := r.scoped(ctx, scope).
+		Model(&types.MemoryItem{}).
+		Where("status IN ?", []string{types.MemoryStatusActive, types.MemoryStatusPending}).
+		Where(`id NOT IN (
+			SELECT item_id FROM memory_item_embeddings
+			WHERE tenant_id = ? AND subject_id = ? AND model_id = ?
+		)`, scope.TenantID, scope.SubjectID, modelID).
+		Order("valid_from DESC").
+		Limit(limit).
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *memoryRepository) MarkConsolidated(
 	ctx context.Context, scope interfaces.MemoryScope,
 ) error {
