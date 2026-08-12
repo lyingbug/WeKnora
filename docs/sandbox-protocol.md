@@ -19,6 +19,8 @@
 
 `docker` 与 `local` 的“一次性”不是遗漏而是它们的边界：把会话级持久沙箱做在单机 Docker 上，等于自己实现一遍控制面（生命周期、空闲回收、跨副本绑定、孤儿清理、多租户隔离），而这些正是 E2B 兼容实现已经提供的东西。因此这两个后端保持现状，能力矩阵在 `internal/sandbox/capabilities.go` 中显式表达，agent 侧据此决定是否注册 shell/文件类工具。
 
+这一立场正在重新评估中：[Docker 沙箱后端重做调研](./sandbox-docker-backend.md) 用一份实测 PoC 说明，Docker Engine API 足以承载 `RemoteSandboxClient` 契约与快照工作流，代价是空闲回收、执行超时、快照 GC、跨主机分发这几项控制面职责要由 WeKnora 承担。文档同时列出了当前 `docker` 后端的具体缺陷（超时不终止负载、工作目录只读、容器化部署下 bind mount 语义错位）。
+
 ## 可直接使用的开源实现
 
 | 实现 | 隔离方式 | 部署前提 | 适用场景 |
