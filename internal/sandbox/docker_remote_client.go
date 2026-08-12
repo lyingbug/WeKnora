@@ -52,9 +52,24 @@ import (
 // and outside /tmp so a tmpfs mount cannot hide it.
 const dockerActivityMarker = "/var/lib/weknora-sandbox-activity"
 
-// dockerSandboxEntrypoint keeps the container alive without running anything.
-// The container is a place to exec into, not a service.
-var dockerSandboxEntrypoint = []string{"sleep", "infinity"}
+// dockerSandboxEntrypoint keeps the container alive without running anything —
+// the container is a place to exec into, not a service — and prepares the
+// activity marker on the way.
+//
+// The marker has to be writable by every account that can exec, because
+// scripts run as the unprivileged sandbox user while shell commands and
+// filesystem helpers run as root. Creating it here, in the container's own
+// entrypoint, is the only way to get that without spending an extra API round
+// trip per sandbox: whoever PID 1 runs as owns the file, and the chmod that
+// follows lets the other account refresh it. Without this the idle sweeper
+// would see a session that only ever ran scripts as untouched, and reclaim it
+// out from under the user.
+var dockerSandboxEntrypoint = []string{
+	"/bin/sh", "-c",
+	"touch " + dockerActivityMarker + " 2>/dev/null; " +
+		"chmod 666 " + dockerActivityMarker + " 2>/dev/null; " +
+		"exec sleep infinity",
+}
 
 // DockerRemoteClient implements RemoteSandboxClient on top of one Docker
 // daemon. It is safe for concurrent use: the moby client is, and this type

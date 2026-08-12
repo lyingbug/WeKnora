@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -234,6 +235,105 @@ time.sleep(60)
 			t.Fatalf("timeout left %s 'sleep 120' process(es) running: %#v", got, survivors)
 		}
 	})
+}
+
+// The idle sweeper reclaims a container by the mtime of its activity marker,
+// and skill scripts run as the unprivileged sandbox user. A session that only
+// ever runs scripts must still count as active, or it gets deleted underneath
+// the user who is actively using it.
+func TestDockerBackendScriptExecutionRefreshesActivityMarkerIntegration(t *testing.T) {
+	cfg := dockerIntegrationConfig(t)
+	manager := newDockerIntegrationManager(t, cfg)
+
+	ctx, cancel := context.WithTimeout(
+		types.WithSandboxTenantID(context.Background(), dockerIntegrationTenantID),
+		5*time.Minute,
+	)
+	defer cancel()
+
+	sessionID := fmt.Sprintf("docker-activity-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(
+			types.WithSandboxTenantID(context.Background(), dockerIntegrationTenantID),
+			time.Minute,
+		)
+		defer cleanupCancel()
+		_ = manager.DestroySession(cleanupCtx, sessionID)
+	})
+
+	first := runDockerScript(t, ctx, manager, sessionID, `print('one')`)
+	if !first.IsSuccess() {
+		t.Fatalf("first execution failed: %#v", first)
+	}
+	client, err := NewDockerRemoteClient(cfg)
+	if err != nil {
+		t.Fatalf("build docker client: %v", err)
+	}
+	summaries, err := client.List(ctx, RemoteListFilter{
+		Metadata: map[string]string{remoteMetadataSessionID: sessionID},
+	})
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("expected exactly one container: %v %#v", err, summaries)
+	}
+	handle, err := client.Connect(ctx, summaries[0].ID)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	// The container entrypoint makes the marker world-writable on purpose.
+	// Leaving it to whatever umask the daemon happens to run with would work
+	// on a host with umask 000 and silently stop tracking script executions on
+	// a host with umask 022.
+	if mode := dockerActivityMarkerStat(t, ctx, summaries[0].ID).Mode.Perm(); mode != 0o666 {
+		t.Fatalf("activity marker is %v, want 0666 so both root and %s can refresh it",
+			mode, DefaultSandboxExecUser)
+	}
+	before := dockerActivityMarkerMTime(t, ctx, summaries[0].ID)
+
+	// Exec directly as the unprivileged account, with no root-run step in
+	// between: WeKnora happens to prepare the artifact directory as root
+	// before each script today, and leaning on that would let the marker
+	// silently stop tracking the account that actually runs user code.
+	// The marker has one-second resolution on most filesystems.
+	time.Sleep(2 * time.Second)
+	result, err := client.Exec(ctx, handle, RemoteExecRequest{
+		Command: "echo",
+		Args:    []string{"as-sandbox-user"},
+		User:    DefaultSandboxExecUser,
+		Timeout: 30 * time.Second,
+	})
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("exec as %s failed: %v %#v", DefaultSandboxExecUser, err, result)
+	}
+	after := dockerActivityMarkerMTime(t, ctx, summaries[0].ID)
+
+	if !after.After(before) {
+		t.Fatalf("an exec as %s did not refresh the activity marker: before=%s after=%s",
+			DefaultSandboxExecUser, before, after)
+	}
+}
+
+func dockerActivityMarkerMTime(t *testing.T, ctx context.Context, containerID string) time.Time {
+	t.Helper()
+	return dockerActivityMarkerStat(t, ctx, containerID).Mtime
+}
+
+func dockerActivityMarkerStat(
+	t *testing.T, ctx context.Context, containerID string,
+) container.PathStat {
+	t.Helper()
+	api, err := sharedDockerEngineClients.get(dockerEndpoint{
+		Host:    strings.TrimSpace(os.Getenv("DOCKER_INTEGRATION_HOST")),
+		Timeout: DefaultDockerHTTPTimeout,
+	})
+	if err != nil {
+		t.Fatalf("docker client: %v", err)
+	}
+	stat, err := api.ContainerStatPath(ctx, containerID,
+		client.ContainerStatPathOptions{Path: dockerActivityMarker})
+	if err != nil {
+		t.Fatalf("stat activity marker: %v", err)
+	}
+	return stat.Stat
 }
 
 // A session must survive the container being stopped underneath it: the

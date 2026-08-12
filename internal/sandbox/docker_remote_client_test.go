@@ -293,7 +293,13 @@ func TestDockerClientCreateAppliesIsolationAndMetadata(t *testing.T) {
 
 	require.Len(t, engine.created, 1)
 	created := engine.created[0]
-	require.Equal(t, []string{"sleep", "infinity"}, created.Config.Cmd)
+	// PID 1 both keeps the container alive and prepares the activity marker so
+	// that root and the unprivileged sandbox user can each refresh it; the
+	// idle sweeper reads nothing else.
+	require.Equal(t, "/bin/sh", created.Config.Cmd[0])
+	require.Contains(t, created.Config.Cmd[2], "touch "+dockerActivityMarker)
+	require.Contains(t, created.Config.Cmd[2], "chmod 666 "+dockerActivityMarker)
+	require.Contains(t, created.Config.Cmd[2], "exec sleep infinity")
 	require.Equal(t, SessionWorkspaceRoot, created.Config.WorkingDir)
 	require.Equal(t, []string{"FOO=bar"}, created.Config.Env)
 	require.Equal(t, "true", created.Config.Labels[dockerManagedLabel])
