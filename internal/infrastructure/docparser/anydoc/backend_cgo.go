@@ -42,6 +42,7 @@ func backendConvert(data []byte, opts Options) (*Result, error) {
 	// caller has no better recovery than the text it already has.
 	document, err := upstream.ToDocument(data, format)
 	if err != nil {
+		result.AssetsError = fmt.Errorf("anydoc: image extraction failed: %w", err)
 		return result, nil
 	}
 	result.Assets = collectAssets(document)

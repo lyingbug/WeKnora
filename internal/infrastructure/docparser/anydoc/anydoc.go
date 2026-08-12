@@ -28,6 +28,11 @@ type Result struct {
 	// Always empty for PDF, which anydoc renders straight to Markdown
 	// without a document model.
 	Assets []Asset
+	// AssetsError explains why Assets is empty when images were asked for.
+	// Extracting images is a second, independent parse; when only that pass
+	// fails the text is still worth indexing, so the conversion succeeds and
+	// the caller decides whether to log or ignore the loss.
+	AssetsError error
 }
 
 // Asset is one image embedded in a document.

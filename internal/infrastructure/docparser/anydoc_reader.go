@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser/anydoc"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -34,7 +35,7 @@ func NewAnydocReader(overrides map[string]string) *AnydocReader {
 }
 
 // Read converts the document carried by the request.
-func (r *AnydocReader) Read(_ context.Context, req *types.ReadRequest) (*types.ReadResult, error) {
+func (r *AnydocReader) Read(ctx context.Context, req *types.ReadRequest) (*types.ReadResult, error) {
 	if req.URL != "" && len(req.FileContent) == 0 {
 		return nil, fmt.Errorf("anydoc engine reads uploaded documents, not URLs")
 	}
@@ -50,6 +51,10 @@ func (r *AnydocReader) Read(_ context.Context, req *types.ReadRequest) (*types.R
 	})
 	if err != nil {
 		return nil, fmt.Errorf("anydoc conversion failed for %q: %w", req.FileName, err)
+	}
+	if converted.AssetsError != nil {
+		logger.Warnf(ctx, "[anydoc] %q parsed as text but its images were dropped: %v",
+			req.FileName, converted.AssetsError)
 	}
 
 	markdown, imageRefs := appendAnydocAssets(converted.Markdown, converted.Assets)
