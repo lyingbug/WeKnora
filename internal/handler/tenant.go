@@ -1783,6 +1783,10 @@ func (h *TenantHandler) updateTenantMemoryConfigInternal(c *gin.Context) {
 			types.MaxMemoryExtractMinIntervalSeconds)))
 		return
 	}
+	if len(cfg.EmbeddingModelID) > 64 {
+		c.Error(errors.NewBadRequestError("embedding_model_id is too long"))
+		return
+	}
 	if cfg.InterestThreshold < 0 || cfg.InterestThreshold > types.MaxMemoryInterestThreshold {
 		c.Error(errors.NewBadRequestError(fmt.Sprintf(
 			"interest_threshold must be between 1 and %d", types.MaxMemoryInterestThreshold)))

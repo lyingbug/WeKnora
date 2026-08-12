@@ -104,6 +104,16 @@
 
       <div v-if="config.enabled" class="setting-row">
         <div class="setting-info">
+          <label>{{ t('memoryWorkspaceSettings.vectorRecallLabel') }}</label>
+          <p class="desc">{{ t('memoryWorkspaceSettings.vectorRecallDescription') }}</p>
+        </div>
+        <div class="setting-control">
+          <t-switch v-model="config.vector_recall" :disabled="!canEdit" @change="debouncedSave" />
+        </div>
+      </div>
+
+      <div v-if="config.enabled" class="setting-row">
+        <div class="setting-info">
           <label>{{ t('memoryWorkspaceSettings.conditioningLabel') }}</label>
           <p class="desc">{{ t('memoryWorkspaceSettings.conditioningDescription') }}</p>
         </div>
@@ -191,6 +201,8 @@ const config = reactive<MemoryConfig>({
   extract_instructions: '',
   interest_threshold: 3,
   retrieval_conditioning: true,
+  embedding_model_id: '',
+  vector_recall: true,
 })
 const isInitializing = ref(true)
 
@@ -209,6 +221,8 @@ const loadConfig = async () => {
       config.extract_instructions = response.data.extract_instructions || ''
       config.interest_threshold = response.data.interest_threshold || 3
       config.retrieval_conditioning = response.data.retrieval_conditioning !== false
+      config.embedding_model_id = response.data.embedding_model_id || ''
+      config.vector_recall = response.data.vector_recall !== false
     }
   } catch (error: any) {
     console.error('Failed to load memory config:', error)

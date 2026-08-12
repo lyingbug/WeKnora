@@ -1419,6 +1419,8 @@ export default {
     extractDelayDescription: 'How long a finished turn waits before distillation runs. Waiting lets one model call cover the several messages a user usually sends in a row.',
     extractMinIntervalLabel: 'Minimum interval between runs',
     extractMinIntervalDescription: 'The floor between two distillation runs for one person, used to bound cost. Messages produced inside the interval are not dropped — they are carried over to the next run.',
+    vectorRecallLabel: 'Match memory by meaning',
+    vectorRecallDescription: 'Adds semantic matching on top of wording, so a memory still surfaces after the user re-phrases the subject — and most memories get re-phrased eventually. Costs one embedding call per turn, and falls back to wording-only matching on timeout.',
     conditioningLabel: 'Let memory shape retrieval',
     conditioningDescription: 'Memory takes part in query rewriting and document ranking rather than only being appended to the answer prompt. This is where memory earns its keep in a knowledge-base product.',
     interestThresholdLabel: 'Questions before a topic becomes an interest',

@@ -204,3 +204,26 @@ func existingNotesBlock(prompt string) string {
 	}
 	return rest
 }
+
+// Without a similarity floor, every memory that has a vector enters the
+// ranking — including the ones scoring zero — and fusion then pulls them into
+// the prompt. The feature would go straight from "cannot find a re-worded
+// memory" to "recalls everything", which is worse.
+func TestUnrelatedMemoriesAreNotPulledInByVectorRecall(t *testing.T) {
+	svc, tenantRepo, _ := newVectorHarness(t)
+	ctx := enabledCtx(t, tenantRepo, 1, "alice")
+
+	_, err := svc.Remember(ctx, types.MemoryItem{
+		Kind: types.MemoryKindFact, Topic: "回答风格", Content: "回答直接给结论",
+	})
+	require.NoError(t, err)
+	_, err = svc.Remember(ctx, types.MemoryItem{
+		Kind: types.MemoryKindFact, Topic: "数据库", Content: "生产库的连接池配置",
+	})
+	require.NoError(t, err)
+
+	recall := svc.Recall(ctx, "别铺垫那么多")
+	require.Len(t, recall.Items, 1,
+		"only the memory this question is about belongs in the prompt")
+	require.Equal(t, "回答直接给结论", recall.Items[0].Content)
+}

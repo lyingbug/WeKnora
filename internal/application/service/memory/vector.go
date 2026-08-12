@@ -28,6 +28,15 @@ const (
 	// below it. With candidate sets this small, the standard value keeps
 	// agreement between the two rankings meaningful.
 	rrfK = 60.0
+	// minCosine is the floor below which a vector match is not a match.
+	//
+	// Without it every memory that has a vector enters the ranking, including
+	// the ones scoring zero, and fusion then pulls them into the prompt — the
+	// feature would go from "cannot find a re-worded memory" straight to
+	// "recalls everything". Graphiti holds its equivalent at 0.6; this sits
+	// slightly lower because the lexical ranking is fused in alongside and can
+	// still rescue an exact-term match the model embedded poorly.
+	minCosine = 0.5
 	// vectorCandidateCap bounds how many stored vectors one recall loads.
 	vectorCandidateCap = 400
 	// backfillPerRun is how many missing vectors one maintenance pass fills.
@@ -184,10 +193,11 @@ func (s *Service) vectorRanking(
 		if !ok {
 			continue
 		}
-		ranked = append(ranked, scored{
-			index: indexByID[id],
-			score: types.CosineSimilarity(queryVector, vector),
-		})
+		similarity := types.CosineSimilarity(queryVector, vector)
+		if similarity < minCosine {
+			continue
+		}
+		ranked = append(ranked, scored{index: indexByID[id], score: similarity})
 	}
 	sortScoredDesc(ranked, func(i int) float64 { return ranked[i].score })
 

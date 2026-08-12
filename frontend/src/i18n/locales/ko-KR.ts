@@ -4627,6 +4627,8 @@ export default {
     extractDelayDescription: '대화가 끝난 뒤 정리를 시작하기까지의 대기 시간입니다. 잠시 기다리면 사용자가 연달아 보낸 여러 메시지를 모델 호출 한 번으로 처리할 수 있습니다.',
     extractMinIntervalLabel: '정리 간 최소 간격',
     extractMinIntervalDescription: '같은 사람에 대한 두 번의 정리 사이 최소 간격으로, 비용을 제한합니다. 간격 안에 생긴 메시지는 버려지지 않고 다음 정리로 넘어갑니다.',
+    vectorRecallLabel: '의미로 기억 검색',
+    vectorRecallDescription: '표현이 아니라 의미로도 검색합니다. 사용자가 다르게 표현해도 기존 기억을 찾을 수 있습니다. 턴마다 임베딩 호출이 한 번 추가되며, 시간 초과 시 표현 기반 검색으로 되돌아갑니다.',
     conditioningLabel: '검색에 기억 반영',
     conditioningDescription: '기억이 답변 프롬프트에만 붙는 것이 아니라 질의 재작성과 문서 순위에도 반영됩니다.',
     interestThresholdLabel: '장기 관심사가 되기까지의 질문 수',

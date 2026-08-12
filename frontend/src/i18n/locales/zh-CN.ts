@@ -4627,6 +4627,8 @@ export default {
     extractDelayDescription: '一轮对话结束后等待多久再挖掘。等一等可以让一次模型调用覆盖用户连着发的几条消息。',
     extractMinIntervalLabel: '两次挖掘的最小间隔',
     extractMinIntervalDescription: '同一个人两次挖掘之间至少间隔多久，用来控制成本。间隔内产生的消息不会被丢弃，会顺延到下一次挖掘一并处理。',
+    vectorRecallLabel: '按语义召回记忆',
+    vectorRecallDescription: '除了字面匹配，再按含义匹配。用户换个说法之后，原来那条记忆仍然能被找到——而多数记忆迟早会被换说法。每轮问答多一次向量调用，超时会自动退回字面匹配。',
     conditioningLabel: '让记忆参与检索',
     conditioningDescription: '开启后，记忆会参与查询改写和文档排序，而不只是附加到回答提示里。这是记忆在知识库产品里真正起作用的地方。',
     interestThresholdLabel: '成为长期关注的次数',

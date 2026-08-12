@@ -52,6 +52,10 @@ export interface MemoryConfig {
   interest_threshold: number
   /** Whether memory may shape retrieval, not only the answer prompt. */
   retrieval_conditioning: boolean
+  /** Model used to score memory against a question. Blank = workspace default. */
+  embedding_model_id: string
+  /** Whether recall also matches on meaning, not only on wording. */
+  vector_recall: boolean
 }
 
 // ---------------------------------------------------------------------------
