@@ -17,6 +17,22 @@ import (
 //
 //	scripts/build-anydoc-lib.sh && go test -tags anydoc ./internal/infrastructure/docparser/...
 
+// SupportedFileTypes is a static list, so that the engine can advertise its
+// file types in builds that link no converter. This is the check that it still
+// agrees with what the converter actually accepts, in either direction.
+func TestSupportedFileTypesMatchTheConverter(t *testing.T) {
+	for _, fileType := range SupportedFileTypes() {
+		format, ok := FormatForFile(fileType, "")
+		if !ok {
+			t.Errorf("%q is advertised but maps to no format", fileType)
+			continue
+		}
+		if _, err := upstreamFormat(format); err != nil {
+			t.Errorf("%q maps to format %q, which the converter rejects: %v", fileType, format, err)
+		}
+	}
+}
+
 func TestConvertCSV(t *testing.T) {
 	result, err := Convert([]byte("quarter,widgets\nQ1,12\nQ2,15\n"), Options{Format: "csv"})
 	if err != nil {
