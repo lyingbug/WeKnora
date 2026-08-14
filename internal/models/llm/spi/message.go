@@ -113,6 +113,12 @@ type Options struct {
 	PresencePenalty     float64 `json:"presence_penalty"`
 	// Thinking is the neutral reasoning toggle; nil defers to the model.
 	Thinking *bool `json:"thinking"`
+	// ThinkingMode is the three-state reasoning control: "on", "off", or
+	// "auto". It exists because a boolean cannot reach the mode several
+	// vendors document, where the model decides per request — Volcengine's
+	// `auto` and Anthropic's adaptive thinking. It takes precedence over
+	// Thinking, which remains for the callers that only need on/off.
+	ThinkingMode string `json:"thinking_mode,omitempty"`
 	// ThinkingEffort and ThinkingBudget are the depth controls, empty or zero
 	// when the caller has no opinion. A value a vendor does not accept is
 	// reported in the plan rather than sent.
@@ -155,11 +161,7 @@ func (o *Options) ParamValues() map[ParamID]Value {
 	if maxTokens := o.EffectiveMaxTokens(); maxTokens > 0 {
 		values[ParamMaxTokens] = IntValue(maxTokens)
 	}
-	if o.Thinking != nil {
-		mode := ThinkingOff
-		if *o.Thinking {
-			mode = ThinkingOn
-		}
+	if mode := o.EffectiveThinkingMode(); mode != "" {
 		values[ParamThinkingMode] = EnumValue(mode)
 	}
 	if o.ThinkingEffort != "" {
@@ -175,6 +177,28 @@ func (o *Options) ParamValues() map[ParamID]Value {
 		values[ParamParallelToolCalls] = BoolValue(*o.ParallelToolCalls)
 	}
 	return values
+}
+
+// EffectiveThinkingMode reports the requested reasoning mode, or empty when
+// the caller had no opinion and the model's own default should stand.
+//
+// The explicit three-state field wins over the boolean, so a caller that
+// upgrades to it does not have to also clear the older one.
+func (o *Options) EffectiveThinkingMode() string {
+	if o == nil {
+		return ""
+	}
+	switch o.ThinkingMode {
+	case ThinkingOn, ThinkingOff, ThinkingAuto:
+		return o.ThinkingMode
+	}
+	if o.Thinking == nil {
+		return ""
+	}
+	if *o.Thinking {
+		return ThinkingOn
+	}
+	return ThinkingOff
 }
 
 // EffectiveMaxTokens reports the output ceiling, accepting either spelling the
