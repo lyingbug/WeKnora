@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/models/llm/spi"
 	"github.com/Tencent/WeKnora/internal/models/provider"
 	"github.com/Tencent/WeKnora/internal/types"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
@@ -32,10 +33,16 @@ type RemoteAPIChat struct {
 	// customHeaders 为用户在模型配置中指定的自定义 HTTP 请求头（类似 OpenAI Python SDK 的 extra_headers）。
 	customHeaders map[string]string
 
-	// adapter 承载所有 provider 特定行为（thinking / 参数特判 / endpoint / 鉴权 / 消息变换）。
+	// adapter carries the transport-level provider behavior (endpoint, auth,
+	// message transform, tool-call metadata).
 	adapter providerAdapter
-	// thinkingOverride 来自 extra_config.thinking_control，非 nil 时覆盖 adapter.Thinking()。
-	thinkingOverride ThinkingStrategy
+	// descriptor is the resolved model plugin. It supplies every parameter
+	// disposition — the thinking field, forbidden sampling knobs, pinned
+	// values, renamed ceilings — so this type no longer knows any of them.
+	// It is absent only for a provider with no registered plugin, in which
+	// case the request is sent exactly as the caller built it.
+	descriptor    *spi.Descriptor
+	hasDescriptor bool
 }
 
 // NewRemoteAPIChat 创建远程 API 聊天实例
@@ -98,19 +105,28 @@ func NewRemoteAPIChat(chatConfig *ChatConfig) (*RemoteAPIChat, error) {
 		}
 	}
 
-	return &RemoteAPIChat{
-		modelName:        modelName,
-		client:           openai.NewClientWithConfig(config),
-		modelID:          chatConfig.ModelID,
-		baseURL:          strings.TrimRight(config.BaseURL, "/"),
-		apiKey:           apiKey,
-		provider:         providerName,
-		appID:            chatConfig.AppID,
-		appSecret:        chatConfig.AppSecret,
-		customHeaders:    chatConfig.CustomHeaders,
-		adapter:          resolveProvider(providerName, modelName),
-		thinkingOverride: parseThinkingOverride(chatConfig.ExtraConfig),
-	}, nil
+	remote := &RemoteAPIChat{
+		modelName:     modelName,
+		client:        openai.NewClientWithConfig(config),
+		modelID:       chatConfig.ModelID,
+		baseURL:       strings.TrimRight(config.BaseURL, "/"),
+		apiKey:        apiKey,
+		provider:      providerName,
+		appID:         chatConfig.AppID,
+		appSecret:     chatConfig.AppSecret,
+		customHeaders: chatConfig.CustomHeaders,
+		adapter:       resolveProvider(providerName, modelName),
+	}
+	// Resolve against the model name actually sent, which an override may have
+	// changed: a descriptor's model matcher must see the same name the vendor
+	// will.
+	resolveConfig := *chatConfig
+	resolveConfig.Provider = string(providerName)
+	resolveConfig.ModelName = modelName
+	if desc, ok := resolveDescriptor(&resolveConfig); ok {
+		remote.descriptor, remote.hasDescriptor = &desc, true
+	}
+	return remote, nil
 }
 
 // authCreds bundles the credentials passed to the adapter's Auth method.
@@ -119,40 +135,95 @@ func (c *RemoteAPIChat) authCreds() authCreds {
 }
 
 // shapedRequest builds the standard request and applies the adapter's message
-// transform and parameter shaping (but not thinking, which may wrap the body).
+// transform.
 func (c *RemoteAPIChat) shapedRequest(messages []Message, opts *ChatOptions, isStream bool) openai.ChatCompletionRequest {
 	req := c.BuildChatCompletionRequest(messages, opts, isStream)
 	req.Messages = c.adapter.TransformMessages(req.Messages)
-	c.adapter.ShapeRequest(&req, opts, isStream)
 	return req
 }
 
 // buildOutbound assembles the final outbound request: the body to send, the
-// endpoint override (empty for the standard endpoint), and whether the raw HTTP
-// path is required. This is the single place that composes adapter + thinking,
-// replacing the former buildRequestCustomizer plumbing.
+// endpoint override (empty for the standard endpoint), and whether the raw
+// HTTP path is required.
+//
+// The vendor plan decides the body. Applying it to the SDK request's own JSON
+// and comparing the result is what selects the transport: an unchanged body
+// means the plugin had nothing vendor-specific to add, so the SDK path stays
+// available, while any difference must be sent verbatim because the SDK type
+// cannot carry the fields the plan wrote. Deriving that from the actual bytes
+// beats maintaining a second list of which providers "need raw HTTP".
 func (c *RemoteAPIChat) buildOutbound(
 	messages []Message, opts *ChatOptions, isStream bool,
 ) (body any, endpoint string, useRawHTTP bool, err error) {
 	req := c.shapedRequest(messages, opts, isStream)
 
-	thinking := c.thinkingOverride
-	if thinking == nil {
-		thinking = c.adapter.Thinking()
-	}
-	customBody, useRaw := thinking.Apply(&req, opts, isStream)
-
 	body = &req
-	if customBody != nil {
-		body = customBody
+	planChangedBody := false
+	if c.hasDescriptor {
+		planned, changed, planErr := c.applyPlan(&req, opts, isStream)
+		if planErr != nil {
+			return nil, "", false, planErr
+		}
+		if changed {
+			body, planChangedBody = planned, true
+		}
 	}
+
 	body, err = c.shapeProviderRequest(body, req, messages)
 	if err != nil {
 		return nil, "", false, err
 	}
 	endpoint = c.adapter.Endpoint(c.baseURL, c.modelID, isStream)
-	useRawHTTP = useRaw || c.adapter.ForceRawHTTP() || endpoint != ""
+	useRawHTTP = planChangedBody || c.adapter.ForceRawHTTP() || endpoint != ""
 	return body, endpoint, useRawHTTP, nil
+}
+
+// applyPlan resolves the vendor plan and applies it to the SDK request's JSON
+// form, reporting the resulting body and whether it differs.
+func (c *RemoteAPIChat) applyPlan(
+	req *openai.ChatCompletionRequest, opts *ChatOptions, isStream bool,
+) (map[string]any, bool, error) {
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal request: %w", err)
+	}
+	var canonical map[string]any
+	if err := json.Unmarshal(encoded, &canonical); err != nil {
+		return nil, false, fmt.Errorf("decode request: %w", err)
+	}
+	// Re-marshal from the map before comparing. A struct marshals in field
+	// order while a map marshals in key order, so comparing against the
+	// struct's own bytes would report a difference on every request and force
+	// the raw path for all of them.
+	before, err := json.Marshal(canonical)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal canonical request: %w", err)
+	}
+
+	plan, err := c.descriptor.Plan(spi.Request{
+		Model:  c.modelName,
+		Stream: isStream,
+		Values: opts.ParamValues(),
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	draft := spi.NewDraft(c.descriptor.Protocol, c.modelName, isStream)
+	draft.Body = canonical
+	if err := plan.Apply(draft); err != nil {
+		return nil, false, err
+	}
+
+	after, err := json.Marshal(draft.Body)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal planned request: %w", err)
+	}
+	// Only a change to the bytes forces the raw path. Notes are diagnostics: a
+	// pinned value the caller already matched, or a parameter the vendor does
+	// not offer, both leave the body untouched and should not cost the SDK
+	// path.
+	return draft.Body, !bytes.Equal(before, after), nil
 }
 
 // logRequest 记录请求日志

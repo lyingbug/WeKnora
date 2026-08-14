@@ -3,170 +3,142 @@ package chat
 import (
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/models/llm/encoding"
+	"github.com/Tencent/WeKnora/internal/models/llm/spi"
 	"github.com/Tencent/WeKnora/internal/models/provider"
-	"github.com/sashabaranov/go-openai"
 )
 
-// ExtraConfigThinkingControl is the model parameters.extra_config key for
-// selecting how ChatOptions.Thinking is translated to provider HTTP fields.
-// The accepted values mirror the strings the frontend writes (see
-// ModelEditorDialog.vue): "none", "enable_thinking", "thinking_type",
-// "chat_template_kwargs".
-const ExtraConfigThinkingControl = "thinking_control"
+// Model configuration keys read from parameters.extra_config.
+const (
+	// ExtraConfigThinkingControl was the manual override selecting how the
+	// thinking toggle reached a provider. The plugin descriptors now derive
+	// that from the vendor's documentation, so the key is honored only to keep
+	// existing configurations working: a stored value still forces the wire
+	// shape it names.
+	//
+	// Deprecated: leave it unset and let the resolved plugin decide.
+	ExtraConfigThinkingControl = "thinking_control"
 
-// Wire-format request bodies used by providers that express extended-thinking
-// through a non-standard top-level field. They embed the standard OpenAI
-// request so all other fields are marshalled unchanged.
+	// ExtraConfigProtocol pins the wire protocol for vendors that offer more
+	// than one, such as OpenAI's Chat Completions and Responses APIs. Empty
+	// selects the vendor's default.
+	ExtraConfigProtocol = "protocol"
+)
 
-// QwenChatCompletionRequest adds Aliyun Qwen's `enable_thinking` boolean.
-type QwenChatCompletionRequest struct {
-	openai.ChatCompletionRequest
-	EnableThinking *bool `json:"enable_thinking,omitempty"`
+// ThinkingControlNone is the reported control for a model whose plugin sends
+// no thinking field at all.
+const ThinkingControlNone = "none"
+
+// legacyThinkingEncoders maps the historical thinking_control values onto the
+// encoders they selected, so a stored override keeps doing what it did.
+var legacyThinkingEncoders = map[string]spi.Encoder{
+	"enable_thinking": encoding.EnableThinkingBool{Key: "enable_thinking"},
+	"thinking_type": encoding.ThinkingObject{
+		Key: "thinking", On: "enabled", Off: "disabled",
+	},
+	"chat_template_kwargs": encoding.ChatTemplateKwargs{
+		Key: "chat_template_kwargs", Arg: "enable_thinking",
+	},
 }
 
-// ThinkingConfig is the `{ "type": "enabled"|"disabled" }` block used by
-// LKEAP / Volcengine style providers.
-type ThinkingConfig struct {
-	Type string `json:"type"`
-}
-
-// ThinkingChatCompletionRequest adds the `thinking` object for providers that
-// use the `{ "thinking": { "type": ... } }` wire format.
-type ThinkingChatCompletionRequest struct {
-	openai.ChatCompletionRequest
-	Thinking *ThinkingConfig `json:"thinking,omitempty"`
-}
-
-// ThinkingStrategy encodes how ChatOptions.Thinking is mapped onto a provider's
-// HTTP request. Apply returns (customBody, useRawHTTP):
-//   - (nil, false) means "send the standard OpenAI request unchanged" (the
-//     caller keeps using the SDK path).
-//   - a non-nil customBody must be sent verbatim over raw HTTP because it
-//     carries fields the OpenAI SDK would strip.
+// applyLegacyThinkingOverride honors a stored extra_config.thinking_control by
+// rewriting the resolved descriptor's thinking encoder.
 //
-// When opts.Thinking is nil most strategies emit nothing, deferring to the
-// model's own default; the exception is enableThinking{alwaysSend: true}
-// (Aliyun Qwen), which must always pin the field.
-type ThinkingStrategy interface {
-	Apply(req *openai.ChatCompletionRequest, opts *ChatOptions, isStream bool) (customBody any, useRawHTTP bool)
+// The override predates the plugin catalog and exists because the catalog used
+// to be a guess; keeping it working means an operator who pinned a wire format
+// against a misdetected provider does not silently start sending a different
+// one after this refactor. Descriptors are values, so the override produces a
+// copy and never mutates the registry.
+func applyLegacyThinkingOverride(desc spi.Descriptor, extraConfig map[string]string) spi.Descriptor {
+	control := strings.ToLower(strings.TrimSpace(extraConfig[ExtraConfigThinkingControl]))
+	if control == "" {
+		return desc
+	}
+
+	params := make([]spi.Param, 0, len(desc.Params)+1)
+	var mode *spi.Param
+	for _, p := range desc.Params {
+		if p.ID == spi.ParamThinkingMode {
+			clone := p
+			mode = &clone
+			continue
+		}
+		params = append(params, p)
+	}
+
+	if control == ThinkingControlNone {
+		// "none" means send no thinking field, so the parameter goes away
+		// entirely rather than becoming a knob that does nothing.
+		desc.Params = params
+		return desc
+	}
+
+	encoder, ok := legacyThinkingEncoders[control]
+	if !ok {
+		return desc
+	}
+	if mode == nil {
+		// The override also enables the toggle on a model whose plugin does
+		// not declare one, which is the case it was originally added for.
+		mode = &spi.Param{}
+		*mode = encoding.ThinkingMode(encoder, spi.ThinkingOn, spi.ThinkingOff)
+	} else {
+		mode.Encode = encoder
+		// A vendor default belongs to the vendor's own field; forcing another
+		// one should not also force a value the caller never asked for.
+		mode.Default = nil
+	}
+	desc.Params = append([]spi.Param{*mode}, params...)
+	return desc
 }
 
-// noThinking sends no thinking-related fields at all.
-type noThinking struct{}
-
-func (noThinking) Apply(*openai.ChatCompletionRequest, *ChatOptions, bool) (any, bool) {
-	return nil, false
-}
-
-// enableThinking encodes thinking via Qwen's `enable_thinking` boolean.
+// EffectiveThinkingControl reports the wire field that will carry the thinking
+// toggle for a model, or "none" when the model has no toggle.
 //
-//   - alwaysSend: pin the field even when opts.Thinking is nil (Aliyun Qwen
-//     thinking models require it on every request; default value is false).
-//   - disableOnNonStream: force enable_thinking=false for non-stream requests
-//     (Qwen3 rejects thinking in non-stream mode).
-type enableThinking struct {
-	alwaysSend         bool
-	disableOnNonStream bool
-}
-
-func (s enableThinking) Apply(req *openai.ChatCompletionRequest, opts *ChatOptions, isStream bool) (any, bool) {
-	thinking := false
-	switch {
-	case opts != nil && opts.Thinking != nil:
-		thinking = *opts.Thinking
-	case !s.alwaysSend:
-		return nil, false
-	}
-	if s.disableOnNonStream && !isStream {
-		thinking = false
-	}
-	qwenReq := QwenChatCompletionRequest{ChatCompletionRequest: *req}
-	qwenReq.EnableThinking = &thinking
-	return qwenReq, true
-}
-
-// thinkingTypeField encodes thinking via the `{ "thinking": { "type": ... } }`
-// object (LKEAP / Volcengine). Emits nothing when opts.Thinking is unset.
-type thinkingTypeField struct{}
-
-func (thinkingTypeField) Apply(req *openai.ChatCompletionRequest, opts *ChatOptions, _ bool) (any, bool) {
-	if opts == nil || opts.Thinking == nil {
-		return nil, false
-	}
-	r := ThinkingChatCompletionRequest{ChatCompletionRequest: *req}
-	thinkingType := "disabled"
-	if *opts.Thinking {
-		thinkingType = "enabled"
-	}
-	r.Thinking = &ThinkingConfig{Type: thinkingType}
-	return r, true
-}
-
-// chatTemplateKwargs encodes thinking via the standard request's
-// `chat_template_kwargs.enable_thinking` (vLLM / NVIDIA / generic local
-// deployments). Emits nothing when opts.Thinking is unset.
-type chatTemplateKwargs struct{}
-
-func (chatTemplateKwargs) Apply(req *openai.ChatCompletionRequest, opts *ChatOptions, _ bool) (any, bool) {
-	if opts == nil || opts.Thinking == nil {
-		return nil, false
-	}
-	req.ChatTemplateKwargs = map[string]interface{}{
-		"enable_thinking": *opts.Thinking,
-	}
-	return req, true
-}
-
-// parseThinkingOverride reads extra_config.thinking_control and returns the
-// strategy it selects, or nil when unset (the provider adapter's default
-// strategy then applies). An unrecognized non-empty value falls back to
-// chat_template_kwargs, preserving the legacy default-mode behavior.
-func parseThinkingOverride(extraConfig map[string]string) ThinkingStrategy {
-	if extraConfig == nil {
-		return nil
-	}
-	switch strings.ToLower(strings.TrimSpace(extraConfig[ExtraConfigThinkingControl])) {
-	case "":
-		return nil
-	case "none":
-		return noThinking{}
-	case "enable_thinking":
-		return enableThinking{}
-	case "thinking_type":
-		return thinkingTypeField{}
-	default:
-		// "chat_template_kwargs" and any unknown non-empty value.
-		return chatTemplateKwargs{}
-	}
-}
-
-// EffectiveThinkingControl reports the provider field that will carry
-// ChatOptions.Thinking. It intentionally shares the same adapter/override
-// resolution as the real request path so diagnostics do not guess from the
-// frontend selection.
+// It resolves through the same registry and descriptor the request path uses,
+// so the answer is derived rather than predicted. That matters because this
+// value is what the model editor and the debug drawer show, and the previous
+// arrangement — a backend table plus a frontend copy of the same heuristics —
+// could disagree with what was actually sent.
 func EffectiveThinkingControl(config *ChatConfig) string {
-	if config == nil {
-		return "none"
+	desc, ok := resolveDescriptor(config)
+	if !ok {
+		return ThinkingControlNone
 	}
-	if override := parseThinkingOverride(config.ExtraConfig); override != nil {
-		return thinkingStrategyName(override)
+	param, ok := desc.Param(spi.ParamThinkingMode)
+	if !ok || param.Encode == nil || param.EffectiveSupport() == spi.SupportForbidden {
+		return ThinkingControlNone
 	}
-	providerName := provider.ProviderName(config.Provider)
-	if providerName == "" {
-		providerName = provider.DetectProvider(config.BaseURL)
-	}
-	return thinkingStrategyName(resolveProvider(providerName, config.ModelName).Thinking())
+	return param.Encode.ID()
 }
 
-func thinkingStrategyName(strategy ThinkingStrategy) string {
-	switch strategy.(type) {
-	case enableThinking:
-		return "enable_thinking"
-	case thinkingTypeField:
-		return "thinking_type"
-	case chatTemplateKwargs:
-		return "chat_template_kwargs"
-	default:
-		return "none"
+// SupportsThinking reports whether a model exposes a reasoning toggle. The UI
+// asks this before offering the control, instead of re-deriving it from a
+// provider name.
+func SupportsThinking(config *ChatConfig) bool {
+	return EffectiveThinkingControl(config) != ThinkingControlNone
+}
+
+// resolveDescriptor looks up the plugin backing a chat configuration, with any
+// stored legacy override already applied. Every caller — the request path, the
+// reporting helpers, the debug endpoint — goes through here, so none of them
+// can disagree about what will be sent.
+func resolveDescriptor(config *ChatConfig) (spi.Descriptor, bool) {
+	if config == nil {
+		return spi.Descriptor{}, false
 	}
+	name := provider.ProviderName(strings.TrimSpace(config.Provider))
+	if name == "" {
+		name = provider.DetectProvider(config.BaseURL)
+	}
+	desc, ok := spi.Resolve(spi.Query{
+		Vendor:   string(name),
+		Kind:     spi.KindChat,
+		Model:    config.ModelName,
+		Protocol: configuredProtocol(config),
+	})
+	if !ok {
+		return spi.Descriptor{}, false
+	}
+	return applyLegacyThinkingOverride(desc, config.ExtraConfig), true
 }

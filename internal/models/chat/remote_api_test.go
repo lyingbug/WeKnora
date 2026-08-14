@@ -168,42 +168,52 @@ func TestBuildChatCompletionRequest_GPT5MaxCompletionTokens(t *testing.T) {
 		{"AzureOpenAI gpt-4 (unchanged)", "azure_openai", "gpt-4", false},
 	}
 
+	// The assertions target the outbound body rather than the SDK struct: the
+	// reasoning dispositions are now declared by the OpenAI plugin and applied
+	// to the request that is actually sent, so the body is where the contract
+	// lives.
+	outbound := func(t *testing.T, c *RemoteAPIChat, opts *ChatOptions) map[string]any {
+		t.Helper()
+		body, _, _, err := c.buildOutbound(messages, opts, false)
+		require.NoError(t, err)
+		encoded, err := json.Marshal(body)
+		require.NoError(t, err)
+		var out map[string]any
+		require.NoError(t, json.Unmarshal(encoded, &out))
+		return out
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := build(t, tc.provider, tc.model)
-			opts := &ChatOptions{
+			req := outbound(t, c, &ChatOptions{
 				Temperature:      0.7,
 				TopP:             0.9,
 				MaxTokens:        128,
 				FrequencyPenalty: 0.1,
 				PresencePenalty:  0.2,
-			}
-			req := c.shapedRequest(messages, opts, false)
+			})
 
 			if tc.shouldRewriteMaxT {
-				assert.Equal(t, 0, req.MaxTokens, "MaxTokens must NOT be sent for GPT-5/o-series")
-				assert.Equal(t, 128, req.MaxCompletionTokens, "MaxCompletionTokens should be populated from MaxTokens")
-				assert.EqualValues(t, 0, req.Temperature, "temperature must be omitted")
-				assert.EqualValues(t, 0, req.TopP, "top_p must be omitted")
-				assert.EqualValues(t, 0, req.FrequencyPenalty, "frequency_penalty must be omitted")
-				assert.EqualValues(t, 0, req.PresencePenalty, "presence_penalty must be omitted")
+				assert.NotContains(t, req, "max_tokens", "max_tokens must NOT be sent for GPT-5/o-series")
+				assert.EqualValues(t, 128, req["max_completion_tokens"], "max_completion_tokens carries the ceiling")
+				assert.NotContains(t, req, "temperature", "temperature must be omitted")
+				assert.NotContains(t, req, "top_p", "top_p must be omitted")
+				assert.NotContains(t, req, "frequency_penalty", "frequency_penalty must be omitted")
+				assert.NotContains(t, req, "presence_penalty", "presence_penalty must be omitted")
 			} else {
-				assert.Equal(t, 128, req.MaxTokens)
-				assert.Equal(t, 0, req.MaxCompletionTokens)
-				assert.InDelta(t, 0.7, req.Temperature, 1e-6)
+				assert.EqualValues(t, 128, req["max_tokens"])
+				assert.NotContains(t, req, "max_completion_tokens")
+				assert.InDelta(t, 0.7, req["temperature"], 1e-6)
 			}
 		})
 	}
 
 	t.Run("MaxCompletionTokens takes precedence over MaxTokens", func(t *testing.T) {
 		c := build(t, "openai", "gpt-5.2")
-		opts := &ChatOptions{
-			MaxTokens:           128,
-			MaxCompletionTokens: 2048,
-		}
-		req := c.shapedRequest(messages, opts, false)
-		assert.Equal(t, 0, req.MaxTokens)
-		assert.Equal(t, 2048, req.MaxCompletionTokens)
+		req := outbound(t, c, &ChatOptions{MaxTokens: 128, MaxCompletionTokens: 2048})
+		assert.NotContains(t, req, "max_tokens")
+		assert.EqualValues(t, 2048, req["max_completion_tokens"])
 	})
 }
 

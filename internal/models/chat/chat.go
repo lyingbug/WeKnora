@@ -2,86 +2,42 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	"github.com/Tencent/WeKnora/internal/models/provider"
+	"github.com/Tencent/WeKnora/internal/models/llm/spi"
 	"github.com/Tencent/WeKnora/internal/models/utils/ollama"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// The request vocabulary lives in the model-plugin seam (internal/models/llm/spi)
+// so protocol drivers can render it without importing this package. These
+// aliases keep every existing caller working while leaving exactly one
+// definition of a message in the codebase.
+
 // Tool represents a function/tool definition
-type Tool struct {
-	Type     string      `json:"type"` // "function"
-	Function FunctionDef `json:"function"`
-}
+type Tool = spi.Tool
 
 // FunctionDef represents a function definition
-type FunctionDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters"`
-}
+type FunctionDef = spi.FunctionDef
 
 // ChatOptions 聊天选项
-type ChatOptions struct {
-	Temperature         float64         `json:"temperature"`                   // 温度参数
-	TopP                float64         `json:"top_p"`                         // Top P 参数
-	Seed                int             `json:"seed"`                          // 随机种子
-	MaxTokens           int             `json:"max_tokens"`                    // 最大 token 数
-	MaxCompletionTokens int             `json:"max_completion_tokens"`         // 最大完成 token 数
-	FrequencyPenalty    float64         `json:"frequency_penalty"`             // 频率惩罚
-	PresencePenalty     float64         `json:"presence_penalty"`              // 存在惩罚
-	Thinking            *bool           `json:"thinking"`                      // 是否启用思考
-	Tools               []Tool          `json:"tools,omitempty"`               // 可用工具列表
-	ToolChoice          string          `json:"tool_choice,omitempty"`         // "auto", "required", "none", or specific tool
-	ParallelToolCalls   *bool           `json:"parallel_tool_calls,omitempty"` // 是否允许并行工具调用（默认 nil 表示由模型决定）
-	Format              json.RawMessage `json:"format,omitempty"`              // 响应格式定义
-}
+type ChatOptions = spi.Options
 
 // MessageContentPart represents a part of multi-content message
-type MessageContentPart struct {
-	Type     string    `json:"type"`                // "text" or "image_url"
-	Text     string    `json:"text,omitempty"`      // For type="text"
-	ImageURL *ImageURL `json:"image_url,omitempty"` // For type="image_url"
-}
+type MessageContentPart = spi.MessageContentPart
 
 // ImageURL represents the image URL structure
-type ImageURL struct {
-	URL    string `json:"url"`              // URL or base64 data URI
-	Detail string `json:"detail,omitempty"` // "auto", "low", "high"
-}
+type ImageURL = spi.ImageURL
 
 // Message 表示聊天消息
-type Message struct {
-	Role         string               `json:"role"`                    // 角色：system, user, assistant, tool
-	Content      string               `json:"content"`                 // 消息内容
-	MultiContent []MessageContentPart `json:"multi_content,omitempty"` // 多内容消息（文本+图片）
-	Name         string               `json:"name,omitempty"`          // Function/tool name (for tool role)
-	ToolCallID   string               `json:"tool_call_id,omitempty"`  // Tool call ID (for tool role)
-	ToolCalls    []ToolCall           `json:"tool_calls,omitempty"`    // Tool calls (for assistant role)
-	Images       []string             `json:"images,omitempty"`        // Image URLs for multimodal (only for current user message)
-	// ReasoningContent 是 assistant 推理类模型（DeepSeek thinking、小米 MiMo、vLLM reasoning 等）
-	// 上一轮输出的思考内容。部分供应商（MiMo、DeepSeek V3.2/V4 thinking 模式）要求多轮对话中
-	// 把 assistant 的 reasoning_content 原样回传，否则会以 400 拒绝请求；其他不要求的供应商
-	// 会忽略未知字段，无副作用。
-	ReasoningContent string `json:"reasoning_content,omitempty"`
-}
+type Message = spi.Message
 
 // ToolCall represents a tool call in a message
-type ToolCall struct {
-	ID               string                 `json:"id"`
-	Type             string                 `json:"type"` // "function"
-	Function         FunctionCall           `json:"function"`
-	ProviderMetadata types.ToolCallMetadata `json:"provider_metadata,omitempty"`
-}
+type ToolCall = spi.ToolCall
 
 // FunctionCall represents a function call
-type FunctionCall struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"` // JSON string
-}
+type FunctionCall = spi.FunctionCall
 
 // Chat 定义了聊天接口
 type Chat interface {
@@ -157,16 +113,23 @@ func NewChat(config *ChatConfig, ollamaService *ollama.OllamaService) (Chat, err
 	return wrapChatConcurrency(c, config.MaxConcurrency, err)
 }
 
-// NewRemoteChat 根据 provider 创建远程聊天实例。
-// Anthropic 走独立的 Messages 协议实现；其余 OpenAI 兼容供应商统一由
-// RemoteAPIChat 处理，provider 特定行为在构造时通过 providerAdapter 解析。
+// NewRemoteChat 根据解析出的模型插件创建远程聊天实例。
+//
+// Protocol selection is the plugin's, not a provider name's: a descriptor
+// declares the wire it speaks, so Anthropic Messages and OpenAI Responses go
+// through the plugin client that implements them, while the OpenAI-compatible
+// majority keeps the established RemoteAPIChat transport. Either way the
+// vendor's parameter dispositions come from the same descriptor.
 func NewRemoteChat(config *ChatConfig) (Chat, error) {
-	providerName := provider.ProviderName(config.Provider)
-	if providerName == "" {
-		providerName = provider.DetectProvider(config.BaseURL)
-	}
-	if providerName == provider.ProviderAnthropic {
-		return NewAnthropicChat(config)
+	desc, ok := resolveDescriptor(config)
+	if ok && desc.Protocol != spi.ProtocolOpenAIChat {
+		client, resolved, err := NewPluginChat(config)
+		if err != nil {
+			return nil, err
+		}
+		if resolved {
+			return client, nil
+		}
 	}
 	return NewRemoteAPIChat(config)
 }

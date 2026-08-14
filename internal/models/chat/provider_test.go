@@ -11,9 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestResolveProvider pins the provider+model routing table, including the
-// sub-model matchers (reasoning models, Qwen thinking, LKEAP DeepSeek V3) and
-// the baseProvider fallback for everything else.
+// TestResolveProvider pins the transport-level adapter table. It is short
+// because parameter behavior moved to the model plugins: what remains here is
+// only what a declaration cannot express — signing, a non-derived endpoint, a
+// message rewrite, and tool-call metadata.
 func TestResolveProvider(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -21,21 +22,12 @@ func TestResolveProvider(t *testing.T) {
 		model string
 		want  providerAdapter
 	}{
-		{"deepseek", provider.ProviderDeepSeek, "deepseek-chat", deepseekProvider{}},
-		{"lkeap v3", provider.ProviderLKEAP, "deepseek-v3.1", lkeapProvider{}},
-		{"lkeap r1 falls back", provider.ProviderLKEAP, "deepseek-r1", baseProvider{}},
-		{"qwen thinking", provider.ProviderAliyun, "qwen3-32b", qwenThinkingProvider{}},
-		{"generic", provider.ProviderGeneric, "anything", genericProvider{}},
-		{"gemini", provider.ProviderGemini, "gemini-3-flash-preview", geminiProvider{}},
-		{"nvidia", provider.ProviderNvidia, "anything", nvidiaProvider{}},
-		{"volcengine", provider.ProviderVolcengine, "doubao", volcengineProvider{}},
-		{"openai non-reasoning falls back", provider.ProviderOpenAI, "gpt-4o", baseProvider{}},
-		{"openai reasoning", provider.ProviderOpenAI, "gpt-5", openAIReasoningProvider{}},
-		{"azure non-reasoning", provider.ProviderAzureOpenAI, "gpt-4", azureProvider{}},
-		{"azure reasoning", provider.ProviderAzureOpenAI, "gpt-5-mini", azureReasoningProvider{}},
-		{"moonshot fixed temp", provider.ProviderMoonshot, "moonshot-v1-8k", moonshotProvider{}},
-		{"moonshot other falls back", provider.ProviderMoonshot, "kimi-latest", baseProvider{}},
-		{"weknora cloud", provider.ProviderWeKnoraCloud, "anything", weKnoraCloudProvider{}},
+		{"deepseek keeps the raw path for cache counters", provider.ProviderDeepSeek, "deepseek-chat", deepseekProvider{}},
+		{"gemini carries thought signatures", provider.ProviderGemini, "gemini-3-flash-preview", geminiProvider{}},
+		{"azure authenticates with api-key", provider.ProviderAzureOpenAI, "gpt-4", azureProvider{}},
+		{"weknora cloud signs its requests", provider.ProviderWeKnoraCloud, "anything", weKnoraCloudProvider{}},
+		{"openai needs no transport adapter", provider.ProviderOpenAI, "gpt-5", baseProvider{}},
+		{"aliyun needs no transport adapter", provider.ProviderAliyun, "qwen3-32b", baseProvider{}},
 		{"unknown falls back", provider.ProviderName("nope"), "x", baseProvider{}},
 	}
 	for _, tc := range cases {
@@ -59,13 +51,22 @@ func newOutboundChat(t *testing.T, providerName, model string, extra map[string]
 	return c
 }
 
-// TestBuildOutbound_Thinking is the characterization suite for the merged
-// thinking-control path: it asserts that buildOutbound produces the same wire
-// formats the pre-refactor provider customizers did.
+// TestBuildOutbound_Thinking asserts the wire format each vendor's plugin
+// produces through the OpenAI-compatible transport. The expectations match the
+// ones this path produced before the plugin seam existed, so a regression in
+// the new resolution shows up as a changed body rather than as silence.
 func TestBuildOutbound_Thinking(t *testing.T) {
 	msgs := []Message{{Role: "user", Content: "hi"}}
 
-	t.Run("generic explicit thinking_type overrides legacy kwargs", func(t *testing.T) {
+	t.Run("generic deployment uses chat_template_kwargs", func(t *testing.T) {
+		c := newOutboundChat(t, string(provider.ProviderGeneric), "qwen", nil)
+		body, _, useRaw, err := c.buildOutbound(msgs, &ChatOptions{Thinking: ptrBool(false)}, true)
+		require.NoError(t, err)
+		require.True(t, useRaw)
+		assert.Contains(t, mustJSON(t, body), "chat_template_kwargs")
+	})
+
+	t.Run("stored thinking_type override wins over the plugin default", func(t *testing.T) {
 		c := newOutboundChat(t, string(provider.ProviderGeneric), "deepseek-v4-flash",
 			map[string]string{ExtraConfigThinkingControl: "thinking_type"})
 		body, _, useRaw, err := c.buildOutbound(msgs, &ChatOptions{Thinking: ptrBool(false)}, true)
@@ -77,15 +78,7 @@ func TestBuildOutbound_Thinking(t *testing.T) {
 		assert.NotContains(t, js, "chat_template_kwargs")
 	})
 
-	t.Run("generic legacy chat_template_kwargs", func(t *testing.T) {
-		c := newOutboundChat(t, string(provider.ProviderGeneric), "qwen", nil)
-		body, _, useRaw, err := c.buildOutbound(msgs, &ChatOptions{Thinking: ptrBool(false)}, true)
-		require.NoError(t, err)
-		require.True(t, useRaw)
-		assert.Contains(t, mustJSON(t, body), "chat_template_kwargs")
-	})
-
-	t.Run("none keeps the standard SDK request", func(t *testing.T) {
+	t.Run("stored none override sends no thinking field", func(t *testing.T) {
 		c := newOutboundChat(t, string(provider.ProviderGeneric), "x",
 			map[string]string{ExtraConfigThinkingControl: "none"})
 		body, _, useRaw, err := c.buildOutbound(msgs, &ChatOptions{Thinking: ptrBool(false)}, true)
@@ -128,7 +121,7 @@ func TestBuildOutbound_Thinking(t *testing.T) {
 		assert.Contains(t, mustJSON(t, body), `"thinking"`)
 	})
 
-	t.Run("lkeap r1 left untouched", func(t *testing.T) {
+	t.Run("lkeap r1 reasons unconditionally and takes no toggle", func(t *testing.T) {
 		c := newOutboundChat(t, string(provider.ProviderLKEAP), "deepseek-r1", nil)
 		body, _, useRaw, err := c.buildOutbound(msgs, &ChatOptions{Thinking: ptrBool(false)}, true)
 		require.NoError(t, err)
@@ -138,9 +131,9 @@ func TestBuildOutbound_Thinking(t *testing.T) {
 	})
 }
 
-// TestBuildOutbound_ShapeRequest covers the param-shaping providers that used
-// to live inline in BuildChatCompletionRequest.
-func TestBuildOutbound_ShapeRequest(t *testing.T) {
+// TestBuildOutbound_ParameterDispositions covers the vendors whose plugins
+// forbid or pin a standard parameter.
+func TestBuildOutbound_ParameterDispositions(t *testing.T) {
 	msgs := []Message{{Role: "user", Content: "hi"}}
 
 	t.Run("deepseek strips tool_choice", func(t *testing.T) {
@@ -157,9 +150,20 @@ func TestBuildOutbound_ShapeRequest(t *testing.T) {
 		c := newOutboundChat(t, string(provider.ProviderMoonshot), "moonshot-v1-8k", nil)
 		body, _, _, err := c.buildOutbound(msgs, &ChatOptions{Temperature: 0.7, TopP: 0.9}, false)
 		require.NoError(t, err)
-		req := body.(*openai.ChatCompletionRequest)
-		assert.EqualValues(t, 1, req.Temperature)
-		assert.EqualValues(t, 0, req.TopP)
+		js := mustJSON(t, body)
+		assert.Contains(t, js, `"temperature":1`)
+	})
+
+	t.Run("openai reasoning model drops sampling and renames the ceiling", func(t *testing.T) {
+		c := newOutboundChat(t, string(provider.ProviderOpenAI), "o3-mini", nil)
+		body, _, useRaw, err := c.buildOutbound(msgs, &ChatOptions{Temperature: 0.7, MaxTokens: 4096}, false)
+		require.NoError(t, err)
+		require.True(t, useRaw)
+		request, ok := body.(map[string]any)
+		require.True(t, ok)
+		assert.NotContains(t, request, "temperature")
+		assert.NotContains(t, request, "max_tokens")
+		assert.EqualValues(t, 4096, request["max_completion_tokens"])
 	})
 }
 

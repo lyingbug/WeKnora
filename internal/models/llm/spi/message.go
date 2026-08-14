@@ -179,12 +179,15 @@ func (o *Options) ParamValues() map[ParamID]Value {
 
 // EffectiveMaxTokens reports the output ceiling, accepting either spelling the
 // caller may have used.
+//
+// MaxCompletionTokens wins when both are set: it is the more specific field,
+// and a caller who filled it in was addressing a model that requires it.
 func (o *Options) EffectiveMaxTokens() int {
 	if o == nil {
 		return 0
 	}
-	if o.MaxTokens > 0 {
-		return o.MaxTokens
+	if o.MaxCompletionTokens > 0 {
+		return o.MaxCompletionTokens
 	}
-	return o.MaxCompletionTokens
+	return o.MaxTokens
 }
