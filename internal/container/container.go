@@ -84,6 +84,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/models/limiter"
 	"github.com/Tencent/WeKnora/internal/models/utils/ollama"
+	"github.com/Tencent/WeKnora/internal/plugin"
 	"github.com/Tencent/WeKnora/internal/router"
 	"github.com/Tencent/WeKnora/internal/storageallowlist"
 	"github.com/Tencent/WeKnora/internal/stream"
@@ -247,9 +248,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewEmbedChannelService))
 
 	// Web search service (needed by AgentService)
-	logger.Debugf(ctx, "[Container] Registering web search registry and providers...")
-	must(container.Provide(infra_web_search.NewRegistry))
-	must(container.Invoke(registerWebSearchProviders))
+	logger.Debugf(ctx, "[Container] Registering the plugin registry and web search plugins...")
+	must(container.Provide(func() *plugin.Registry { return providePluginRegistry(ctx) }))
 	must(container.Provide(repository.NewWebSearchProviderRepository))
 	must(container.Provide(repository.NewVectorStoreRepository))
 	must(container.Provide(repository.NewStorageBackendRepository))
@@ -1593,20 +1593,6 @@ func NewDuckDB() (*sql.DB, error) {
 // registerWebSearchProviders registers all web search provider types to the registry.
 // Each provider type is registered with its factory function that accepts parameters.
 // Provider instances are created on-demand when tenants configure them.
-func registerWebSearchProviders(registry *infra_web_search.Registry) {
-	registry.Register("duckduckgo", infra_web_search.NewDuckDuckGoProvider)
-	registry.Register("google", infra_web_search.NewGoogleProvider)
-	registry.Register("bing", infra_web_search.NewBingProvider)
-	registry.Register("tavily", infra_web_search.NewTavilyProvider)
-	registry.Register("ollama", infra_web_search.NewOllamaProvider)
-	registry.Register("baidu", infra_web_search.NewBaiduProvider)
-	registry.Register("searxng", infra_web_search.NewSearxngProvider)
-	registry.Register("keenable", infra_web_search.NewKeenableProvider)
-	registry.Register("zhipu", infra_web_search.NewZhipuProvider)
-	registry.Register("exa", infra_web_search.NewExaProvider)
-	registry.Register("metaso", infra_web_search.NewMetasoProvider)
-}
-
 // registerIMService registers adapter factories, loads enabled channels, and
 // wires the process-lifetime shutdown hook. Each platform's factory lives in
 // its own subpackage to keep this file focused on wiring.
@@ -1755,4 +1741,30 @@ func startAuditLogRetention(
 		runner.Stop()
 		return nil
 	})
+}
+
+// providePluginRegistry builds the plugin registry: the manifests compiled
+// into the binary, plus whatever an operator has dropped into the plugin
+// directory, which is then watched so a file added or removed later takes
+// effect without a restart.
+//
+// The directory is optional. A deployment that installs nothing simply runs
+// with the built-in plugins.
+func providePluginRegistry(ctx context.Context) *plugin.Registry {
+	registry := plugin.NewRegistry()
+
+	builtin := infra_web_search.Install(registry)
+	logger.Infof(ctx, "[Plugin] %d built-in plugin(s) available", builtin)
+
+	dir := strings.TrimSpace(os.Getenv("WEKNORA_PLUGIN_DIR"))
+	if dir == "" {
+		dir = "./plugins"
+	}
+	watcher := plugin.NewWatcher(registry, "user", dir)
+	if err := watcher.Start(ctx); err != nil {
+		// A watch that cannot start costs hot reload, not the server: the
+		// built-in plugins and anything already on disk still work.
+		logger.Warnf(ctx, "[Plugin] not watching %s for changes: %v", dir, err)
+	}
+	return registry
 }

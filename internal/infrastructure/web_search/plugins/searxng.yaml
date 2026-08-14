@@ -1,0 +1,38 @@
+apiVersion: weknora/v1
+kind: websearch
+id: searxng
+name: SearXNG
+description: Self-hosted metasearch engine.
+docURL: https://docs.searxng.org/dev/search_api.html
+
+config:
+  - id: base_url
+    type: string
+    label: Instance URL
+    help: The root URL of your SearXNG instance, for example https://searx.example.com
+    placeholder: https://searx.example.com
+    required: true
+  - id: language
+    type: string
+    label: Language filter
+    help: SearXNG's documented value for no filtering is "all".
+    default: all
+
+runtime:
+  type: http
+  request:
+    method: GET
+    url: ${config.base_url}/search
+    query:
+      q: ${input.query}
+      format: json
+      language: ${config.language}
+    headers:
+      User-Agent: WeKnora/1.0
+  response:
+    items: results
+    fields:
+      title: title
+      url: url
+      snippet: content
+      published_at: publishedDate

@@ -1,0 +1,55 @@
+apiVersion: weknora/v1
+kind: websearch
+id: zhipu
+name: Zhipu Web Search
+description: Zhipu AI standalone web search API.
+docURL: https://docs.bigmodel.cn/cn/guide/tools/web-search
+
+config:
+  - id: api_key
+    type: string
+    label: API Key
+    required: true
+    secret: true
+  - id: search_engine
+    type: enum
+    label: Search engine
+    default: search_std
+    options:
+      - value: search_std
+        label: Standard
+      - value: search_pro
+        label: Pro
+      - value: search_pro_sogou
+        label: Pro (Sogou)
+      - value: search_pro_quark
+        label: Pro (Quark)
+  - id: content_size
+    type: enum
+    label: Content length
+    default: medium
+    options:
+      - value: medium
+        label: Medium
+      - value: high
+        label: High
+
+runtime:
+  type: http
+  request:
+    method: POST
+    url: https://open.bigmodel.cn/api/paas/v4/web_search
+    headers:
+      Authorization: Bearer ${config.api_key}
+    body:
+      search_query: ${input.query}
+      search_engine: ${config.search_engine}
+      count: ${input.max_results}
+      content_size: ${config.content_size}
+  response:
+    items: search_result
+    errorPath: error.message
+    fields:
+      title: title
+      url: link
+      snippet: content

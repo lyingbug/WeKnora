@@ -10,6 +10,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/config"
 	infra_web_search "github.com/Tencent/WeKnora/internal/infrastructure/web_search"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/plugin"
 	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -19,7 +20,7 @@ import (
 // It resolves provider configurations from the database and creates provider
 // instances on-demand via the infrastructure registry.
 type WebSearchService struct {
-	registry     *infra_web_search.Registry
+	plugins      *plugin.Registry
 	providerRepo interfaces.WebSearchProviderRepository
 	timeout      int
 }
@@ -28,7 +29,7 @@ type WebSearchService struct {
 // The registry holds provider type factories; the providerRepo loads tenant-specific configurations.
 func NewWebSearchService(
 	cfg *config.Config,
-	registry *infra_web_search.Registry,
+	plugins *plugin.Registry,
 	providerRepo interfaces.WebSearchProviderRepository,
 ) (interfaces.WebSearchService, error) {
 	timeout := 10 // default timeout in seconds
@@ -37,7 +38,7 @@ func NewWebSearchService(
 	}
 
 	return &WebSearchService{
-		registry:     registry,
+		plugins:      plugins,
 		providerRepo: providerRepo,
 		timeout:      timeout,
 	}, nil
@@ -106,7 +107,7 @@ func (s *WebSearchService) resolveProvider(
 		}
 
 		params := mergeProxyFromWebSearchConfig(entity.Parameters, cfg)
-		provider, err := s.registry.CreateProvider(string(entity.Provider), params)
+		provider, err := infra_web_search.Open(ctx, s.plugins, string(entity.Provider), params)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create provider %s (%s): %w", entity.Name, entity.Provider, err)
 		}
@@ -119,7 +120,7 @@ func (s *WebSearchService) resolveProvider(
 		params := mergeProxyFromWebSearchConfig(types.WebSearchProviderParameters{
 			APIKey: cfg.APIKey,
 		}, cfg)
-		provider, err := s.registry.CreateProvider(cfg.Provider, params)
+		provider, err := infra_web_search.Open(ctx, s.plugins, cfg.Provider, params)
 		if err != nil {
 			return nil, fmt.Errorf("web search provider %s is not available: %w", cfg.Provider, err)
 		}
