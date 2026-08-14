@@ -2312,8 +2312,8 @@ export default {
       maxConcurrencyLabel: '백그라운드 동시 실행 상한',
       maxConcurrencyPlaceholder: '0이면 전역 기본값 사용',
       maxConcurrencyDesc: '문서 인덱싱/보강 등 백그라운드 작업이 이 모델을 호출하는 동시 실행 수를 제한합니다(모델별로 모든 복제본이 공유). 0 또는 비워 두면 전역 기본값을 사용하며, 대화형 채팅에는 영향을 주지 않습니다.',
-      thinkingControlLabel: '사고 모드 매개변수 형식',
-      thinkingControlDesc: '에이전트 「사고 모드」 켜기/끄기 시 API에 어떻게 기록할지 결정합니다. 벤더/모델에 따라 미리 선택되며, 실제 API와 다르면 문서에 맞게 수정하세요. 「전송 안 함」을 선택하면 에이전트 「사고 모드」 스위치가 효과가 없습니다.',
+      thinkingControlLabel: '사고 모드 파라미터 형식 (고급)',
+      thinkingControlDesc: '백엔드의 모델 플러그인이 공급업체 공식 문서에 따라 결정합니다. 자동 인식이 실제와 다를 때만 수동으로 지정하세요.',
       dimensionHint: '모델이 선택되었습니다. "차원 감지" 버튼을 클릭하여 벡터 차원을 자동으로 가져옵니다',
       loadModelListFailed: '모델 목록 로드 실패',
       listRefreshed: '목록이 새로고침되었습니다',
@@ -2443,6 +2443,12 @@ export default {
         baseUrlInvalid: 'Base URL 형식이 올바르지 않습니다. 유효한 URL을 입력해주세요'
       },
       thinkingControl: {
+        auto: {
+          label: '모델 플러그인 따르기 (권장)',
+          hint: '백엔드가 공급업체 문서에 따라 필드를 선택합니다'
+        },
+        autoField: '현재 전송 필드: {field}',
+        autoNone: '이 모델에는 사고 전환 스위치가 없습니다',
         thinkingType: {
           label: 'thinking.type',
           hint: 'Volcengine Ark; Tencent LKEAP (DeepSeek V3 등, LKEAP 기본값; R1은 「전송 안 함」)'

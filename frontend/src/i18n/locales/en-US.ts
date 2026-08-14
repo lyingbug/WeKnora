@@ -3939,9 +3939,15 @@ export default {
       maxConcurrencyLabel: 'Background concurrency limit',
       maxConcurrencyPlaceholder: '0 = use global default',
       maxConcurrencyDesc: 'Caps concurrent background (ingestion/enrichment) calls to this model, shared per model across all replicas. 0 or empty falls back to the global default; interactive chat is never affected.',
-      thinkingControlLabel: 'Thinking mode request format',
-      thinkingControlDesc: 'Controls how the agent’s “Thinking mode” on/off switch is written to the API. We pre-select based on vendor/model when possible; change it to match your API docs. With “Do not send”, the agent Thinking mode switch has no effect.',
+      thinkingControlLabel: 'Thinking parameter format (advanced)',
+      thinkingControlDesc: "The backend's model plugin picks this from the vendor documentation. Override it only when the detected format does not match your deployment. Choosing \"do not send\" disables the agent thinking switch.",
       thinkingControl: {
+        auto: {
+          label: 'Follow the model plugin (recommended)',
+          hint: 'The backend picks the field from the vendor documentation'
+        },
+        autoField: 'Currently writes: {field}',
+        autoNone: 'This model has no thinking toggle',
         none: {
           label: 'Do not send thinking fields',
           hint: 'Agent “Thinking mode” switch has no effect; thinking parameters are not sent in requests'

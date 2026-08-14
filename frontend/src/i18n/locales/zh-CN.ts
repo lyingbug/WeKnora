@@ -2314,8 +2314,8 @@ export default {
       maxConcurrencyLabel: '后台并发上限',
       maxConcurrencyPlaceholder: '0 表示使用全局默认',
       maxConcurrencyDesc: '限制文档入库/富化等后台任务对该模型的并发调用数（按模型全副本共享）。0 或留空表示沿用全局默认；不影响交互式对话。',
-      thinkingControlLabel: '思考模式参数格式',
-      thinkingControlDesc: '决定智能体「思考模式」开/关时如何写入 API。已尝试按厂商/模型预选，若与实际情况不符请按 API 文档手动修改；选「不写入」时，智能体「思考模式」开关不生效。',
+      thinkingControlLabel: '思考模式参数格式（高级）',
+      thinkingControlDesc: '默认由后端的模型插件按厂商官方文档决定；只有当自动识别与实际情况不符时才需要手动指定。选「不写入」时，智能体「思考模式」开关不生效。',
       dimensionHint: '模型已选择，点击"检测维度"按钮自动获取向量维度',
       loadModelListFailed: '加载模型列表失败',
       listRefreshed: '列表已刷新',
@@ -2445,6 +2445,12 @@ export default {
         baseUrlInvalid: 'Base URL 格式不正确，请输入有效的 URL'
       },
       thinkingControl: {
+        auto: {
+          label: '跟随模型插件（推荐）',
+          hint: '由后端按厂商官方文档决定写入哪个字段'
+        },
+        autoField: '当前将写入：{field}',
+        autoNone: '该模型没有思考开关',
         thinkingType: {
           label: 'thinking.type',
           hint: '火山引擎 Ark；腾讯云 LKEAP（DeepSeek V3 等，选 LKEAP 时默认此项；R1 请改「不写入」）'

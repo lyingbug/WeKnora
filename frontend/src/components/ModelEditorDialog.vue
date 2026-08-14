@@ -359,8 +359,7 @@
             v-model="formData.thinkingControl"
             :key="`thinking-${formData.id}-${formData.thinkingControl}`"
             :popup-props="{ overlayClassName: 'thinking-control-select-popup' }"
-            @change="onThinkingControlManualPick"
-          >
+            >
             <t-option
               v-for="opt in thinkingControlOptions"
               :key="opt.value"
@@ -402,15 +401,16 @@ import {
   getWeKnoraCloudStatus,
   putModelCredentials,
   deleteModelCredentialField,
+  fetchModelCapabilities,
   type ModelCredentialField,
 } from '@/api/model'
 import { useI18n } from 'vue-i18n'
 import { useUIStore } from '@/stores/ui'
 import {
-  defaultThinkingControl,
-  resolveThinkingControl,
-  type ThinkingControlValue,
-} from '@/utils/thinkingControl'
+  THINKING_CONTROL_NONE,
+  thinkingControlOf,
+  type ModelCapabilities,
+} from '@/utils/modelCapabilities'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import CredentialResource, {
   type CredentialFieldDef,
@@ -668,45 +668,61 @@ const showThinkingControlField = computed(() =>
   activeModelType.value === 'chat' && formData.value.source === 'remote',
 )
 
-const resolvedThinkingControl = (): ThinkingControlValue =>
-  defaultThinkingControl(
-    formData.value.provider || '',
-    formData.value.modelName || '',
-  )
+/**
+ * The capability manifest for the provider and model currently in the form.
+ *
+ * It is fetched from the backend, which renders it from the same plugin that
+ * builds the request. The editor no longer predicts what a provider does; it
+ * asks, and shows the answer.
+ */
+const capabilities = ref<ModelCapabilities | null>(null)
 
-/** 用户是否手动改过思考参数格式（改过则不再自动覆盖，直到换服务商） */
-const thinkingControlManual = ref(false)
+/** The request field this model's thinking toggle will use, or 'none'. */
+const resolvedThinkingWireField = computed(() => thinkingControlOf(capabilities.value))
+
+const refreshCapabilities = async () => {
+  if (!showThinkingControlField.value) {
+    capabilities.value = null
+    return
+  }
+  capabilities.value = await fetchModelCapabilities({
+    provider: formData.value.provider || '',
+    model: formData.value.modelName || '',
+    baseUrl: formData.value.baseUrl || '',
+  })
+}
+
 /** 正在从 modelData 灌入表单，忽略厂商/来源控件的程序化 change 副作用 */
 const hydratingForm = ref(false)
 
-const onThinkingControlManualPick = () => {
-  thinkingControlManual.value = true
-}
-
-const syncThinkingControlToForm = (force = false) => {
-  if (!showThinkingControlField.value) return
-  if (!force && !isEdit.value && thinkingControlManual.value) return
-  formData.value.thinkingControl = resolvedThinkingControl()
-}
-
 const applyThinkingControlFromModelData = () => {
   if (!props.modelData || activeModelType.value !== 'chat' || formData.value.source !== 'remote') return
-  thinkingControlManual.value = !!props.modelData.thinkingControl
-  formData.value.thinkingControl = resolveThinkingControl(
-    props.modelData.thinkingControl,
-    formData.value.provider || props.modelData.provider || '',
-    formData.value.modelName || props.modelData.modelName || '',
-  )
+  // An empty value means "follow the plugin", which is the default now that
+  // the backend derives the wire format from the vendor's documentation.
+  formData.value.thinkingControl = props.modelData.thinkingControl || ''
 }
 
+/**
+ * The override options. The first entry defers to the plugin and is what
+ * almost every model should use; the rest exist because a deployment may have
+ * pinned a format against a misdetected provider, and the backend still
+ * honors those.
+ */
 const thinkingControlOptions = computed(() => {
+  const auto = {
+    value: '',
+    label: t('model.editor.thinkingControl.auto.label'),
+    hint: resolvedThinkingWireField.value === THINKING_CONTROL_NONE
+      ? t('model.editor.thinkingControl.autoNone')
+      : t('model.editor.thinkingControl.autoField', { field: resolvedThinkingWireField.value }),
+  }
   const keys = ['none', 'chatTemplateKwargs', 'enableThinking', 'thinkingType'] as const
   const values = ['none', 'chat_template_kwargs', 'enable_thinking', 'thinking_type'] as const
-  return keys.map((key, i) => ({
+  return [auto, ...keys.map((key, i) => ({
     value: values[i],
     label: t(`model.editor.thinkingControl.${key}.label`),
     hint: t(`model.editor.thinkingControl.${key}.hint`),
-  }))
+  }))]
 })
 
 // Header icon for the SettingDrawer — uses the same TDesign icon name table
@@ -875,7 +891,7 @@ const formData = ref<ModelFormData>({
   isDefault: false,
   supportsVision: false,
   maxConcurrency: undefined,
-  thinkingControl: defaultThinkingControl('generic', ''),
+  thinkingControl: '',
   customHeaders: [],
   appSecret: '',
   lkeapRegion: 'ap-guangzhou',
@@ -1011,7 +1027,6 @@ const selectModelType = async (type: EditorModelType) => {
   }
   if (type !== 'chat') {
     formData.value.supportsVision = false
-    thinkingControlManual.value = false
   }
   remoteChecked.value = false
   remoteAvailable.value = false
@@ -1026,8 +1041,6 @@ const selectModelType = async (type: EditorModelType) => {
     handleProviderChange(formData.value.provider || 'generic')
   }
   if (showThinkingControlField.value && !isEdit.value) {
-    thinkingControlManual.value = false
-    syncThinkingControlToForm(true)
   }
 }
 
@@ -1087,8 +1100,6 @@ watch(() => props.visible, (val) => {
       }
 
       if (showThinkingControlField.value && !isEdit.value) {
-        thinkingControlManual.value = false
-        syncThinkingControlToForm(true)
       }
     } finally {
       nextTick(() => {
@@ -1100,7 +1111,6 @@ watch(() => props.visible, (val) => {
 
 // 重置表单
 const resetForm = () => {
-  thinkingControlManual.value = false
   formData.value = {
     id: generateId(),
     name: '', // 保留字段但不使用，保存时用 modelName
@@ -1116,7 +1126,7 @@ const resetForm = () => {
     isDefault: false,
     supportsVision: false,
     maxConcurrency: undefined,
-    thinkingControl: defaultThinkingControl('generic', ''),
+    thinkingControl: '',
     customHeaders: [],
     appSecret: '',
     lkeapRegion: 'ap-guangzhou',
@@ -1159,38 +1169,25 @@ const handleProviderChange = (value: string) => {
   if (hydratingForm.value) return
   if (activeModelType.value !== 'chat' || formData.value.source !== 'remote') return
   if (!isEdit.value) {
-    thinkingControlManual.value = false
-    syncThinkingControlToForm(true)
     return
   }
   // 编辑时仅用户主动换厂商才跟随默认
-  thinkingControlManual.value = false
-  syncThinkingControlToForm(true)
 }
 
+// Refresh the capability manifest whenever the fields identifying the model
+// change. The editor no longer recomputes a default here: the plugin owns the
+// wire format, and the form only reports it.
 watch(
-  () => [formData.value.source, formData.value.provider, formData.value.modelName] as const,
-  ([source, provider, modelName], [prevSource, prevProvider, prevModelName]) => {
-    if (hydratingForm.value || isEdit.value) return
-    if (activeModelType.value !== 'chat' || source !== 'remote') return
-    if (source === prevSource && provider === prevProvider && modelName === prevModelName) return
-
-    const providerChanged = provider !== prevProvider
-
-    if (providerChanged) {
-      thinkingControlManual.value = false
-      syncThinkingControlToForm(true)
-      return
-    }
-    if (!thinkingControlManual.value) {
-      syncThinkingControlToForm(true)
-      return
-    }
-    const prevDefault = defaultThinkingControl(prevProvider || '', prevModelName || '')
-    if (formData.value.thinkingControl === prevDefault) {
-      syncThinkingControlToForm(true)
-    }
+  () => [
+    formData.value.source,
+    formData.value.provider,
+    formData.value.modelName,
+    formData.value.baseUrl,
+  ] as const,
+  () => {
+    void refreshCapabilities()
   },
+  { immediate: true },
 )
 
 // 监听来源变化，重置校验状态（已合并到下面的 watch）
@@ -1675,8 +1672,6 @@ watch(() => formData.value.source, () => {
     && formData.value.source === 'remote'
     && activeModelType.value === 'chat'
   ) {
-    thinkingControlManual.value = false
-    syncThinkingControlToForm(true)
   }
 })
 

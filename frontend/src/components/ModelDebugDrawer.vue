@@ -197,9 +197,9 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import { copyWithToast } from '@/utils/clipboard'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
-import { debugModel, type ModelConfig, type ModelDebugResult } from '@/api/model'
+import { debugModel, fetchModelCapabilities, type ModelConfig, type ModelDebugResult } from '@/api/model'
 import { fileSizeVerification } from '@/utils'
-import { modelSupportsThinking } from '@/utils/thinkingControl'
+import { supportsThinking as capabilitiesSupportThinking } from '@/utils/modelCapabilities'
 
 const props = defineProps<{
   visible: boolean
@@ -242,7 +242,37 @@ let runSequence = 0
 const selectedModel = computed(() => props.models.find(model => model.id === selectedModelId.value))
 const filteredModels = computed(() => props.models.filter(model => model.type === selectedModelType.value))
 const isChat = computed(() => selectedModel.value?.type === 'KnowledgeQA')
-const supportsThinking = computed(() => selectedModel.value ? modelSupportsThinking(selectedModel.value) : false)
+/**
+ * Ask the backend whether a saved model has a thinking toggle. Only remote
+ * chat models can have one, and a stored legacy override still wins because
+ * the backend still honors it.
+ */
+async function resolveSupportsThinking(model: ModelConfig): Promise<boolean> {
+  if (model.type !== 'KnowledgeQA' || model.source !== 'remote') return false
+  const capabilities = await fetchModelCapabilities({
+    provider: model.parameters.provider || '',
+    model: model.name || '',
+    baseUrl: model.parameters.base_url || '',
+  })
+  return capabilitiesSupportThinking(
+    capabilities,
+    model.parameters.extra_config?.thinking_control,
+  )
+}
+
+// Whether the selected model has a thinking toggle is the backend's answer,
+// resolved from the model plugin, so the drawer cannot offer a switch the
+// model will ignore. It arrives asynchronously, hence a ref rather than a
+// computed.
+const supportsThinking = ref(false)
+watch(
+  selectedModel,
+  async (model) => {
+    supportsThinking.value = model ? await resolveSupportsThinking(model) : false
+    if (!supportsThinking.value) thinking.value = false
+  },
+  { immediate: true },
+)
 const needsFile = computed(() => ['VLLM', 'ASR'].includes(selectedModel.value?.type || ''))
 const documents = computed(() => documentsText.value.split('\n').map(item => item.trim()).filter(Boolean))
 const canRun = computed(() => {

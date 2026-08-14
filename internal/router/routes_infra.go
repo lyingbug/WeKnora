@@ -22,6 +22,9 @@ func RegisterModelRoutes(
 	{
 		// 获取模型厂商列表 — Viewer+
 		models.GET("/providers", g.Viewer(), handler.ListModelProviders)
+		// Capability manifest for one provider+model, used by the model editor
+		// to render the form from the same declaration the request path uses.
+		models.GET("/capabilities", g.Viewer(), handler.GetModelCapabilities)
 		// 创建模型 — Admin+
 		models.POST("", g.Admin(), handler.CreateModel)
 		// 获取模型列表 — Viewer+

@@ -259,3 +259,71 @@ export function getWeKnoraCloudStatus(): Promise<WeKnoraCloudStatusResult> {
       })
   })
 }
+
+// ---------------------------------------------------------------------------
+// Model capability manifest
+// ---------------------------------------------------------------------------
+
+import type { ModelCapabilities } from '@/utils/modelCapabilities'
+
+export interface CapabilityQuery {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  modelType?: string;
+  protocol?: string;
+}
+
+function capabilityCacheKey(query: CapabilityQuery): string {
+  return [
+    query.provider ?? '',
+    query.model ?? '',
+    query.baseUrl ?? '',
+    query.modelType ?? 'chat',
+    query.protocol ?? '',
+  ].join('|');
+}
+
+// Capabilities are a pure function of the query on the server, so caching them
+// avoids a request per keystroke while a user types a model name.
+const capabilityCache = new Map<string, Promise<ModelCapabilities | null>>();
+
+/**
+ * Fetch the capability manifest for a provider and model.
+ *
+ * Resolves to null when the backend has no plugin for the provider, which is a
+ * gap in the catalog rather than an error: the model still works through the
+ * generic transport, and the caller should fall back to its own defaults.
+ */
+export function fetchModelCapabilities(query: CapabilityQuery): Promise<ModelCapabilities | null> {
+  if (!query.provider && !query.baseUrl) {
+    return Promise.resolve(null);
+  }
+
+  const key = capabilityCacheKey(query);
+  const cached = capabilityCache.get(key);
+  if (cached) return cached;
+
+  const params: Record<string, string> = { model_type: query.modelType ?? 'chat' };
+  if (query.provider) params.provider = query.provider;
+  if (query.model) params.model = query.model;
+  if (query.baseUrl) params.base_url = query.baseUrl;
+  if (query.protocol) params.protocol = query.protocol;
+
+  const request = get('/models/capabilities', params)
+    .then((res: any) => (res?.data ?? null) as ModelCapabilities | null)
+    .catch(() => {
+      // A failed lookup must not block the editor; drop it so a later attempt
+      // can succeed.
+      capabilityCache.delete(key);
+      return null;
+    });
+
+  capabilityCache.set(key, request);
+  return request;
+}
+
+/** Clear the capability cache, for an explicit refresh. */
+export function clearCapabilityCache(): void {
+  capabilityCache.clear();
+}
