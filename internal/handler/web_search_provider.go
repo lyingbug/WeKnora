@@ -17,18 +17,16 @@ import (
 
 // WebSearchProviderHandler handles HTTP requests for web search provider CRUD
 type WebSearchProviderHandler struct {
-	repo     interfaces.WebSearchProviderRepository
-	service  interfaces.WebSearchProviderService
-	registry *infra_web_search.Registry
+	repo    interfaces.WebSearchProviderRepository
+	service interfaces.WebSearchProviderService
 }
 
 // NewWebSearchProviderHandler creates a new handler
 func NewWebSearchProviderHandler(
 	repo interfaces.WebSearchProviderRepository,
 	service interfaces.WebSearchProviderService,
-	registry *infra_web_search.Registry,
 ) *WebSearchProviderHandler {
-	return &WebSearchProviderHandler{repo: repo, service: service, registry: registry}
+	return &WebSearchProviderHandler{repo: repo, service: service}
 }
 
 // --- request DTOs ---
@@ -411,7 +409,7 @@ func (h *WebSearchProviderHandler) TestProviderRaw(c *gin.Context) {
 // via /test instead.
 func (h *WebSearchProviderHandler) doTestSearch(ctx context.Context, providerType string, params types.WebSearchProviderParameters) error {
 	logger.Infof(ctx, "[WebSearch][Test] testing provider type=%s", providerType)
-	searchProvider, err := h.registry.CreateProvider(providerType, params)
+	searchProvider, err := infra_web_search.Open(ctx, providerType, params)
 	if err != nil {
 		logger.Warnf(ctx, "[WebSearch][Test] failed to create provider: %v", err)
 		return fmt.Errorf("failed to create provider: %w", err)

@@ -17,18 +17,18 @@ import (
 
 // WebSearchService provides web search functionality.
 // It resolves provider configurations from the database and creates provider
-// instances on-demand via the infrastructure registry.
+// instances on-demand from the web-search plugin registry.
 type WebSearchService struct {
-	registry     *infra_web_search.Registry
 	providerRepo interfaces.WebSearchProviderRepository
 	timeout      int
 }
 
 // NewWebSearchService creates a new web search service.
-// The registry holds provider type factories; the providerRepo loads tenant-specific configurations.
+// Providers self-register with the plugin kernel, which validates a stored
+// configuration against the provider's schema before building it; the
+// providerRepo loads those tenant-specific configurations.
 func NewWebSearchService(
 	cfg *config.Config,
-	registry *infra_web_search.Registry,
 	providerRepo interfaces.WebSearchProviderRepository,
 ) (interfaces.WebSearchService, error) {
 	timeout := 10 // default timeout in seconds
@@ -37,7 +37,6 @@ func NewWebSearchService(
 	}
 
 	return &WebSearchService{
-		registry:     registry,
 		providerRepo: providerRepo,
 		timeout:      timeout,
 	}, nil
@@ -106,7 +105,7 @@ func (s *WebSearchService) resolveProvider(
 		}
 
 		params := mergeProxyFromWebSearchConfig(entity.Parameters, cfg)
-		provider, err := s.registry.CreateProvider(string(entity.Provider), params)
+		provider, err := infra_web_search.Open(ctx, string(entity.Provider), params)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create provider %s (%s): %w", entity.Name, entity.Provider, err)
 		}
@@ -119,7 +118,7 @@ func (s *WebSearchService) resolveProvider(
 		params := mergeProxyFromWebSearchConfig(types.WebSearchProviderParameters{
 			APIKey: cfg.APIKey,
 		}, cfg)
-		provider, err := s.registry.CreateProvider(cfg.Provider, params)
+		provider, err := infra_web_search.Open(ctx, cfg.Provider, params)
 		if err != nil {
 			return nil, fmt.Errorf("web search provider %s is not available: %w", cfg.Provider, err)
 		}
