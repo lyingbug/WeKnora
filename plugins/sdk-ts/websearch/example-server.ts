@@ -1,3 +1,5 @@
+// Fallback only: use this when the search API already exists as a remote
+// HTTP service. New plugins should use serve.ts (stdio JSON-RPC).
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import type { SearchRequest, SearchResponse } from "./protocol.ts"
 

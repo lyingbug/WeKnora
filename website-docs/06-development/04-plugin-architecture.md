@@ -12,15 +12,15 @@ WeKnora 正在把「扩展点写进主仓库、注册写进 `container.go`」收
 - 依赖哪个服务 key（`inject`，例如 `web_search`）
 - 卸载时如何撤销注册（reversible effect）
 
-Go 不能像 TypeScript 那样 `pnpm add` 完在同一进程 `import()`。接近的手感是：往 `plugins.d/` 丢 `plugin.yaml` + `search.js`，或用 TS 写一个 HTTP sidecar。问答流水线里的 `chat_pipeline.Plugin` 仍是请求级 waterfall，暂时不动。
+Go 不能像 TypeScript 那样 `pnpm add` 完在同一进程 `import()`。接近的手感、也是 MCP / LSP / Dify 本地插件的做法：往 `plugins.d/` 丢 `plugin.yaml`，Host 拉起进程，在 **stdin/stdout** 上讲 JSON-RPC。作者实现 handler，不要自己开 HTTP。轻逻辑可以用 `runtime: js`（goja）。问答流水线里的 `chat_pipeline.Plugin` 仍是请求级 waterfall，暂时不动。
 
 ```mermaid
 flowchart TB
     D["WEKNORA_PLUGIN_DIR / plugins.d"] --> H["plugin.Host"]
     P["config/plugin_profile.yaml"] --> H
     B["bundle base"] --> H
+    ST["runtime: stdio  JSON-RPC"] --> D
     JS["runtime: js  search.js"] --> D
-    TS["runtime: http  TS sidecar"] --> D
     H --> R["web_search.Registry"]
     H --> T["GetWebSearchProviderTypes()"]
     R --> C["WebSearchService / Agent"]
@@ -43,7 +43,7 @@ flowchart TB
 | `WEKNORA_PLUGIN_PATCH` | 空 | 额外 overlay YAML |
 | `WEKNORA_PLUGINS` | 空 | 逗号分隔 factory id，insert-if-missing |
 
-仓库自带 `plugins.d/websearch-js-echo/`（丢文件即用）和 `plugins/sdk-ts/websearch/`（TS sidecar 协议）。
+仓库自带 `plugins.d/websearch-js-echo/`（进程内 JS）、`plugins.d/websearch-stdio-echo/`（Python stdio，默认关闭）和 `plugins/sdk-ts/websearch/`（`serve()`，stdin/stdout）。
 
 ## 4. 新增一个联网搜索插件
 
@@ -53,13 +53,13 @@ flowchart TB
 id: websearch.mysearch
 name: My Search
 seam: web_search
-runtime: js          # 或 http
-entry: search.js     # js
-# endpoint: http://127.0.0.1:9101/search   # http
+runtime: stdio          # 任意语言；轻脚本用 js
+command: node           # 或 python3
+entry: index.js
 provider: mysearch
 ```
 
-`search.js` 导出 `function search(query, maxResults, includeDate, params)`，需要出网时调用宿主给的 `httpRequest`（走 SSRF 白名单）。HTTP 运行时的 JSON 协议见 `plugins/sdk-ts/websearch/README.md`。
+stdio 插件在 stdin 读一行 JSON-RPC，在 stdout 写一行应答；日志打 stderr。TS 用 `plugins/sdk-ts/websearch` 的 `serve({ search })`。`search.js`（`runtime: js`）导出 `function search(...)`，出网走宿主 `httpRequest`（SSRF 白名单）。`runtime: http` 只留给已经在跑的远程服务。
 
 **内置引擎：** `internal/plugin/websearch` 的 `builtins()` 加一行。不要改 `container.go`。
 

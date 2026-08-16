@@ -404,7 +404,7 @@ func builtins() []spec {
 }
 ```
 
-树外插件优先丢 `plugins.d/mysearch/plugin.yaml`（`runtime: js` 或 `http`），无需重新编译；见[插件化架构](./04-plugin-architecture.md)。
+树外插件优先丢 `plugins.d/mysearch/plugin.yaml`（`runtime: stdio` 或 `js`），无需重新编译；见[插件化架构](./04-plugin-architecture.md)。
 
 4. 前端的 provider 下拉与参数表单如需展示新引擎，同步 `frontend/` 相应配置页组件；租户配置持久化在 `web_search_providers` 表。
 

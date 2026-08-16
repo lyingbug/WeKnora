@@ -35,7 +35,7 @@ func newDiskPlugin(m plugin.Manifest, cfg plugin.Config) (plugin.Plugin, error) 
 			if err != nil {
 				return err
 			}
-			factory, err := providerFactory(m, cfg)
+			factory, closer, err := providerFactory(m, cfg)
 			if err != nil {
 				return err
 			}
@@ -51,6 +51,9 @@ func newDiskPlugin(m plugin.Manifest, cfg plugin.Config) (plugin.Plugin, error) 
 				reg.Register(id, factory)
 				types.RegisterWebSearchProviderType(info)
 				return plugin.DisposeFunc(func() {
+					if closer != nil {
+						_ = closer.Close()
+					}
 					reg.Unregister(id)
 					types.UnregisterWebSearchProviderType(id)
 				})
@@ -59,9 +62,17 @@ func newDiskPlugin(m plugin.Manifest, cfg plugin.Config) (plugin.Plugin, error) 
 	}, nil
 }
 
-func providerFactory(m plugin.Manifest, cfg plugin.Config) (infra_web_search.ProviderFactory, error) {
+func providerFactory(m plugin.Manifest, cfg plugin.Config) (infra_web_search.ProviderFactory, ioCloser, error) {
 	timeout := clampTimeout(m.Timeout())
 	switch m.Runtime {
+	case plugin.RuntimeStdio:
+		session, err := newStdioSession(m)
+		if err != nil {
+			return nil, nil, err
+		}
+		return func(params types.WebSearchProviderParameters) (interfaces.WebSearchProvider, error) {
+			return session.withParams(params), nil
+		}, session, nil
 	case plugin.RuntimeHTTP:
 		endpoint := cfg.String("endpoint")
 		if endpoint == "" {
@@ -69,25 +80,29 @@ func providerFactory(m plugin.Manifest, cfg plugin.Config) (infra_web_search.Pro
 		}
 		base, err := newHTTPProvider(m.ProviderID(), endpoint, timeout)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		return func(params types.WebSearchProviderParameters) (interfaces.WebSearchProvider, error) {
 			return base.withParams(params), nil
-		}, nil
+		}, nil, nil
 	case plugin.RuntimeJS:
 		path := m.EntryPath()
 		src, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("plugin %s: read %s: %w", m.ID, path, err)
+			return nil, nil, fmt.Errorf("plugin %s: read %s: %w", m.ID, path, err)
 		}
 		base, err := newJSProvider(m.ProviderID(), string(src), timeout)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		return func(params types.WebSearchProviderParameters) (interfaces.WebSearchProvider, error) {
 			return base.withParams(params), nil
-		}, nil
+		}, nil, nil
 	default:
-		return nil, fmt.Errorf("plugin %s: runtime %q", m.ID, m.Runtime)
+		return nil, nil, fmt.Errorf("plugin %s: runtime %q", m.ID, m.Runtime)
 	}
+}
+
+type ioCloser interface {
+	Close() error
 }

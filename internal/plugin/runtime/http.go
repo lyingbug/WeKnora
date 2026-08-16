@@ -11,13 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/plugin/protocol"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-// httpProvider calls an operator-defined HTTP endpoint. The endpoint comes
-// from plugin.yaml (trusted), so loopback / docker DNS are allowed; user
-// query text is only sent as JSON, never interpolated into the URL.
+// httpProvider is a fallback for a search API that already exists as a
+// remote service. New plugins should use stdio (JSON-RPC), not start HTTP.
+// The endpoint comes from plugin.yaml (trusted); user query is JSON only.
 type httpProvider struct {
 	name     string
 	endpoint string
@@ -58,7 +59,7 @@ func (p *httpProvider) search(
 	ctx context.Context, query string, maxResults int, includeDate bool,
 	params types.WebSearchProviderParameters,
 ) ([]*types.WebSearchResult, error) {
-	body, err := json.Marshal(SearchRequest{
+	body, err := json.Marshal(protocol.SearchRequest{
 		Query: query, MaxResults: maxResults, IncludeDate: includeDate, Parameters: params,
 	})
 	if err != nil {

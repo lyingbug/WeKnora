@@ -1,0 +1,11 @@
+# TypeScript / Node authors: implement handlers, do not listen on a port.
+id: websearch.node-echo
+name: Node Echo
+version: 0.1.0
+description: Node sample for runtime stdio. Off by default.
+seam: web_search
+runtime: stdio
+command: node
+entry: index.js
+provider: node-echo
+auto_enable: false

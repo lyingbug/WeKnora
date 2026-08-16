@@ -64,6 +64,24 @@ endpoint: http://127.0.0.1:9/b
 	}
 }
 
+func TestManifestStdioExecAndValidate(t *testing.T) {
+	m := Manifest{
+		ID: "websearch.py", Seam: ServiceWebSearch, Runtime: RuntimeStdio,
+		Command: "python3", Entry: "plugin.py", Args: []string{"-u"}, Dir: "/tmp/p",
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	name, args := m.Exec()
+	if name != "python3" || len(args) != 2 || args[0] != "-u" || args[1] != "/tmp/p/plugin.py" {
+		t.Fatalf("exec = %s %v", name, args)
+	}
+	bad := Manifest{ID: "x", Seam: ServiceWebSearch, Runtime: RuntimeStdio}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("expected command-or-entry")
+	}
+}
+
 func TestParsePluginDirs(t *testing.T) {
 	if got := ParsePluginDirs(""); len(got) != 1 || got[0] != "plugins.d" {
 		t.Fatalf("default = %v", got)

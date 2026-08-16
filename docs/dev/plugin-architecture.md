@@ -97,16 +97,44 @@ WeKnora 比 dsh 重的地方：它是带租户、迁移、RBAC、异步任务的
 | profile / bundle / patch | `config/plugin_profile.yaml` + 代码里的 `base` bundle + `WEKNORA_PLUGINS` |
 | `--dump-config` | `Host.Dump()`（启动 debug 日志会打印整棵树） |
 | capability seam | 继续用 `internal/types/interfaces` 当 Definition；插件只做 Provider |
-| TS 动态 `import()` | **不能进 Go 进程。** 用磁盘发现 + `runtime: js`（goja）或 `runtime: http`（TS sidecar）代替 blank import |
+| TS 动态 `import()` | **不能进 Go 进程。** 语言插件走同一套 ABI（JSON-RPC），绑定 `runtime: stdio`；轻脚本用 `runtime: js`（goja） |
 | `go plugin` `.so` | **不用。** 构建标签、libc、无法跨版本，社区插件会碎 |
 
-Go 没有 Node 那种「`pnpm add` 完同一进程就能 `import`」。接近 TS 手感的是三条路，按灵活度：
+Go 没有 Node 那种「`pnpm add` 完同一进程就能 `import`」。接近 TS 手感、且符合业界惯例的是：
 
-1. **`plugins.d/<id>/plugin.yaml` + `search.js`**：丢文件、重启，Host 扫目录挂上。脚本里的 `httpRequest` 走 SSRF 白名单。
-2. **`runtime: http`**：用 TypeScript 写一个小服务（见 `plugins/sdk-ts/websearch`），yaml 只写 endpoint。这是最像 npm 包的分发方式——插件继续是 TS，只是隔了一层 JSON。
+1. **`runtime: stdio`（推荐给任意语言）**：Host `exec` 你的进程，在 stdin/stdout 上讲 JSON-RPC 2.0。作者实现 `websearch.search`，**不要自己开端口**。MCP、LSP、Dify 本地插件、HashiCorp 系的「进程外插件」都是这条路。
+2. **`runtime: js`**：丢 `search.js`，goja 进程内执行。适合几行适配逻辑；出网走宿主 `httpRequest`（SSRF 白名单）。
 3. **Go `plugin.Register` + blank import**：只有要链进主二进制的实现才走这条。
+4. **`runtime: http`（fallback）**：对方**已经是**一个远程服务时才写 endpoint。不要为了写插件去起 sidecar。
 
 热重载 / `!!js` 配置表达式仍未做：改磁盘插件后需要重启进程。
+
+### 3.1 业界对照：为什么不把 HTTP 当主路径
+
+「让插件作者开一个 HTTP 服务」看起来语言无关，实际多了端口、健康检查、生命周期和「谁先起来」四个问题。业界把 **协议** 和 **传输绑定** 拆开，本地插件几乎都选字节流，而不是让作者当服务器：
+
+| 方案 | 代表 | 插件作者写什么 | 结论 |
+| --- | --- | --- | --- |
+| **stdin/stdout + JSON-RPC** | [MCP stdio](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)、LSP、[Dify 本地 runtime](https://github.com/langgenius/dify-plugin-daemon) | 读 stdin、写 stdout | **语言插件的标准。** 无端口、无 CORS、无鉴权；Host 拉起并回收进程 |
+| **子进程 + gRPC / 握手** | [HashiCorp go-plugin](https://github.com/hashicorp/go-plugin)、Terraform Provider、Grafana backend plugin | `plugin.Serve`；握手行打在 stdout，再听 unix/tcp | 适合重 SDK、强类型、双向 RPC。对「一个 search 函数」过重，且作者仍在听套接字 |
+| **进程内脚本** | Traefik Yaegi、Kong Lua/PDK、本仓库 goja | 一个函数 | 配置/轻逻辑最快；完整 SDK、原生依赖不合适 |
+| **进程内 WASM** | Envoy proxy-wasm、Kong/APISIX WASM | 编成 `.wasm`，同一 ABI | 沙箱最好；要自己养 WASI/host ABI。下一步可以让 WASM 走**同一套** JSON-RPC（WASI stdio），而不是新协议 |
+| **`.so` / `plugin.Open`** | Tyk 旧路径、Go plugin | 按本机编译器编共享库 | 编译器、libc、Go 版本钉死，社区插件会碎 |
+| **HTTP sidecar** | 早期 MCP HTTP+SSE（已弃用）、自研「插件=微服务」 | 自己 listen | 多一个服务器。MCP 2025-03 已弃用 HTTP+SSE；远程场景改走 Streamable HTTP，**本地场景仍是 stdio** |
+
+同领域的 Dify 也拆过这件事：API 和 daemon 之间可以是 HTTP，但 **daemon 拉起的本地插件走 STDIN/STDOUT**；HTTP 留给 serverless / 已经在跑的远程运行时。WeKnora 对齐的是「作者这一侧」，不是「再让每个人写一个小网站」。
+
+所以主路径是 **一份 ABI，多种绑定**：
+
+```text
+JSON-RPC 2.0  （方法：websearch.search / shutdown；一行一条）
+    ├─ stdio   Host exec，stdin/stdout     ← 任意语言（推荐）
+    ├─ js      goja 进程内                 ← 轻脚本
+    ├─ http    已有远程服务                ← fallback
+    └─ wasm    （未做）WASI 上同一套 RPC
+```
+
+TS 作者的表面是 `serve({ search })`，见 `plugins/sdk-ts/websearch`。样板：`plugins.d/websearch-stdio-echo`（Python）、`plugins.d/websearch-node-echo`（Node）。
 
 ---
 
@@ -115,10 +143,11 @@ Go 没有 Node 那种「`pnpm add` 完同一进程就能 `import`」。接近 TS
 ```text
 internal/plugin/                 内核（无业务类型）
 internal/plugin/websearch/       内置联网搜索 bundle
-internal/plugin/runtime/         磁盘 JS / HTTP 加载器
+internal/plugin/protocol/        插件 ABI（JSON-RPC 2.0，与传输无关）
+internal/plugin/runtime/         stdio / js / http 绑定
 internal/plugin/boot/            进程 Host
 plugins.d/<id>/plugin.yaml       运行时插件（默认扫描）
-plugins/sdk-ts/websearch/        TS sidecar 协议与样例
+plugins/sdk-ts/websearch/        TS：serve() 读 stdin，不要开 HTTP
 config/plugin_profile.yaml       用户可改的组成
 ```
 
@@ -135,7 +164,7 @@ dig 装配 *web_search.Registry
 ```
 
 加一个**内置**引擎：`builtins()` 加一行。  
-加一个**免编译**引擎：在 `plugins.d/mysearch/` 放 `plugin.yaml` + `search.js`（或 HTTP sidecar），重启。类型会出现在 `/web-search-providers/types`。  
+加一个**免编译**引擎：在 `plugins.d/mysearch/` 放 `plugin.yaml` + 可执行入口（`runtime: stdio`）或 `search.js`，重启。类型会出现在 `/web-search-providers/types`。  
 **不再改 `container.go`，也不再改 `internal/plugin/boot`。**
 
 ---
@@ -162,7 +191,7 @@ dig 装配 *web_search.Registry
 | **5** | 分块策略、docreader 解析器 | 分块是函数变量；解析器在 Python 进程，需要独立 plugin 清单或 gRPC 能力协商 |
 | **6** | 前端缝 | 搜索/连接器/IM 的表单按插件元数据渲染，避免再改 Vue 才能「加完」 |
 | **7** | 包边界 | 低频实现迁到独立 Go module；Lite 用 build tag 或 profile 去掉重 SDK |
-| **8（搜索已做）** | 进程外 / 磁盘加载 | `runtime: js` 与 `runtime: http`；其它缝按同样 manifest 扩 |
+| **8（搜索已做）** | 进程外 / 磁盘加载 | 主路径 `runtime: stdio`（JSON-RPC）；`js` 轻脚本；`http` 仅 fallback |
 
 每阶段保持绞杀：旧接口不变，Host 先 Provide 现有 Registry，再让插件往上注册。
 
@@ -186,8 +215,9 @@ dig 装配 *web_search.Registry
 免编译（推荐给社区 / TS）：
 
 ```bash
-# 默认扫描 plugins.d/。仓库自带 plugins.d/websearch-js-echo/
-# 或自己写一个 HTTP sidecar：见 plugins/sdk-ts/websearch/
+# 默认扫描 plugins.d/。
+# 任意语言：plugins.d/websearch-stdio-echo/（Python）或 sdk-ts 的 serve()
+# 轻脚本：plugins.d/websearch-js-echo/
 ```
 
 Go 样板（仍要编进二进制时）：

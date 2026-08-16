@@ -11,8 +11,9 @@ import (
 
 // Runtime identifiers for disk-loaded plugins. native stays compile-time.
 const (
-	RuntimeJS   = "js"
-	RuntimeHTTP = "http"
+	RuntimeStdio = "stdio"
+	RuntimeJS    = "js"
+	RuntimeHTTP  = "http"
 )
 
 // ExternalBundle is the profile bundle assembled from WEKNORA_PLUGIN_DIR.
@@ -21,22 +22,25 @@ const ExternalBundle = "external"
 // Manifest is the on-disk contract (package.json analogue). Drop a folder
 // with plugin.yaml and WeKnora will register it without a blank import.
 type Manifest struct {
-	ID          string `yaml:"id"`
-	Name        string `yaml:"name,omitempty"`
-	Version     string `yaml:"version,omitempty"`
-	Description string `yaml:"description,omitempty"`
-	Seam        string `yaml:"seam"`
-	Runtime     string `yaml:"runtime"`
-	Entry       string `yaml:"entry,omitempty"`
-	Endpoint    string `yaml:"endpoint,omitempty"`
-	Provider    string `yaml:"provider,omitempty"`
-	DocsURL     string `yaml:"docs_url,omitempty"`
-	RequiresKey bool   `yaml:"requires_api_key,omitempty"`
-	AutoEnable  *bool  `yaml:"auto_enable,omitempty"`
-	Disabled    bool   `yaml:"disabled,omitempty"`
-	TimeoutMS   int    `yaml:"timeout_ms,omitempty"`
-	Config      Config `yaml:"config,omitempty"`
-	Dir         string `yaml:"-"`
+	ID          string            `yaml:"id"`
+	Name        string            `yaml:"name,omitempty"`
+	Version     string            `yaml:"version,omitempty"`
+	Description string            `yaml:"description,omitempty"`
+	Seam        string            `yaml:"seam"`
+	Runtime     string            `yaml:"runtime"`
+	Command     string            `yaml:"command,omitempty"`
+	Args        []string          `yaml:"args,omitempty"`
+	Entry       string            `yaml:"entry,omitempty"`
+	Endpoint    string            `yaml:"endpoint,omitempty"`
+	Provider    string            `yaml:"provider,omitempty"`
+	DocsURL     string            `yaml:"docs_url,omitempty"`
+	RequiresKey bool              `yaml:"requires_api_key,omitempty"`
+	AutoEnable  *bool             `yaml:"auto_enable,omitempty"`
+	Disabled    bool              `yaml:"disabled,omitempty"`
+	TimeoutMS   int               `yaml:"timeout_ms,omitempty"`
+	Env         map[string]string `yaml:"env,omitempty"`
+	Config      Config            `yaml:"config,omitempty"`
+	Dir         string            `yaml:"-"`
 }
 
 // Enabled reports whether the manifest should be mounted by default.
@@ -89,6 +93,19 @@ func (m Manifest) EntryPath() string {
 	return filepath.Join(m.Dir, m.Entry)
 }
 
+// Exec returns the argv host will launch for runtime: stdio.
+// command + args, with entry appended when both are set.
+func (m Manifest) Exec() (name string, args []string) {
+	args = append([]string{}, m.Args...)
+	if strings.TrimSpace(m.Command) != "" {
+		if m.Entry != "" {
+			args = append(args, m.EntryPath())
+		}
+		return m.Command, args
+	}
+	return m.EntryPath(), args
+}
+
 // Validate checks required fields for a disk plugin.
 func (m Manifest) Validate() error {
 	if m.ID == "" {
@@ -98,6 +115,10 @@ func (m Manifest) Validate() error {
 		return fmt.Errorf("plugin %s: seam is required", m.ID)
 	}
 	switch m.Runtime {
+	case RuntimeStdio:
+		if strings.TrimSpace(m.Command) == "" && strings.TrimSpace(m.Entry) == "" {
+			return fmt.Errorf("plugin %s: stdio runtime requires command or entry", m.ID)
+		}
 	case RuntimeJS:
 		if m.Entry == "" {
 			return fmt.Errorf("plugin %s: js runtime requires entry", m.ID)
@@ -107,7 +128,7 @@ func (m Manifest) Validate() error {
 			return fmt.Errorf("plugin %s: http runtime requires endpoint", m.ID)
 		}
 	default:
-		return fmt.Errorf("plugin %s: unsupported runtime %q (js|http)", m.ID, m.Runtime)
+		return fmt.Errorf("plugin %s: unsupported runtime %q (stdio|js|http)", m.ID, m.Runtime)
 	}
 	return nil
 }
