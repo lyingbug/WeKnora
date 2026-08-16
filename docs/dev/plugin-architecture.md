@@ -163,8 +163,8 @@ dig 装配 *web_search.Registry
   → ResourceCleaner 在退出时 Host.Unload()
 ```
 
-加一个**内置**引擎：`builtins()` 加一行。  
-加一个**免编译**引擎：在 `plugins.d/mysearch/` 放 `plugin.yaml` + 可执行入口（`runtime: stdio`）或 `search.js`，重启。类型会出现在 `/web-search-providers/types`。  
+加一个**内置**引擎：`builtins()` 加一行。
+加一个**免编译**引擎：在 `plugins.d/mysearch/` 放 `plugin.yaml` + 可执行入口（`runtime: stdio`）或 `search.js`，重启。类型会出现在 `/web-search-providers/types`。
 **不再改 `container.go`，也不再改 `internal/plugin/boot`。**
 
 ---
