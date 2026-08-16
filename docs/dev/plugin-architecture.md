@@ -95,12 +95,18 @@ WeKnora 比 dsh 重的地方：它是带租户、迁移、RBAC、异步任务的
 | emit / waterfall / parallel / serial | `plugin.EventBus` 四种模式。`chat_pipeline` 的 `next()` 就是 waterfall，后续可迁到 `chat/*` |
 | `ctx.effect()` | `Context.Effect` + 每插件一个 Isolate；`Registry.Unregister` 是 disposer |
 | profile / bundle / patch | `config/plugin_profile.yaml` + 代码里的 `base` bundle + `WEKNORA_PLUGINS` |
-| `--dump-config` | `Host.Mounted()`（后续可挂 `/api/v1/system/plugins`） |
+| `--dump-config` | `Host.Dump()`（启动 debug 日志会打印整棵树） |
 | capability seam | 继续用 `internal/types/interfaces` 当 Definition；插件只做 Provider |
-| TS 动态 `require` | **不抄。** Go 用 `plugin.Register` + 编译期 blank import；RPC/WASM 是后续阶段 |
+| TS 动态 `import()` | **不能进 Go 进程。** 用磁盘发现 + `runtime: js`（goja）或 `runtime: http`（TS sidecar）代替 blank import |
 | `go plugin` `.so` | **不用。** 构建标签、libc、无法跨版本，社区插件会碎 |
 
-Go 和 TS 的本质差别：dsh 可以在用户机器上 `pnpm` 装一个包再 patch 进树。WeKnora 的社区插件短期仍需 **一行 blank import**（或独立构建的 sidecar）。内核先统一组合与生命周期，加载机制可以换，缝不用换。
+Go 没有 Node 那种「`pnpm add` 完同一进程就能 `import`」。接近 TS 手感的是三条路，按灵活度：
+
+1. **`plugins.d/<id>/plugin.yaml` + `search.js`**：丢文件、重启，Host 扫目录挂上。脚本里的 `httpRequest` 走 SSRF 白名单。
+2. **`runtime: http`**：用 TypeScript 写一个小服务（见 `plugins/sdk-ts/websearch`），yaml 只写 endpoint。这是最像 npm 包的分发方式——插件继续是 TS，只是隔了一层 JSON。
+3. **Go `plugin.Register` + blank import**：只有要链进主二进制的实现才走这条。
+
+热重载 / `!!js` 配置表达式仍未做：改磁盘插件后需要重启进程。
 
 ---
 
@@ -109,8 +115,10 @@ Go 和 TS 的本质差别：dsh 可以在用户机器上 `pnpm` 装一个包再 
 ```text
 internal/plugin/                 内核（无业务类型）
 internal/plugin/websearch/       内置联网搜索 bundle
-internal/plugin/boot/            进程 Host：把已有 Registry Provide 上去再 Compose
-plugins/<id>/                    可抽出的 / 社区插件（同模块样板）
+internal/plugin/runtime/         磁盘 JS / HTTP 加载器
+internal/plugin/boot/            进程 Host
+plugins.d/<id>/plugin.yaml       运行时插件（默认扫描）
+plugins/sdk-ts/websearch/        TS sidecar 协议与样例
 config/plugin_profile.yaml       用户可改的组成
 ```
 
@@ -120,15 +128,15 @@ config/plugin_profile.yaml       用户可改的组成
 dig 装配 *web_search.Registry
   → boot.NewHost
       Provide(ServiceWebSearch, registry)
-      读 profile + WEKNORA_PLUGINS
-      Compose(base bundle + patch)
-  → 每个 websearch.* 插件 Effect: registry.Register(id, factory)
-  → ResourceCleaner 在退出时 Host.Unload() → Unregister
+      Discover(WEKNORA_PLUGIN_DIR) → RegisterManifests
+      Compose(base + external + profile patch + WEKNORA_PLUGINS)
+  → Effect: registry.Register + 动态写入 GetWebSearchProviderTypes()
+  → ResourceCleaner 在退出时 Host.Unload()
 ```
 
-加一个**内置**引擎：实现 `WebSearchProvider`，在 `internal/plugin/websearch` 的 `builtins()` 加一行。  
-加一个**树外**引擎：新建 `plugins/mysearch`，`plugin.Register("websearch.mysearch", ...)`，在 `internal/plugin/boot` blank import，profile / `WEKNORA_PLUGINS` 启用。  
-**不再改 `container.go`。**
+加一个**内置**引擎：`builtins()` 加一行。  
+加一个**免编译**引擎：在 `plugins.d/mysearch/` 放 `plugin.yaml` + `search.js`（或 HTTP sidecar），重启。类型会出现在 `/web-search-providers/types`。  
+**不再改 `container.go`，也不再改 `internal/plugin/boot`。**
 
 ---
 
@@ -154,7 +162,7 @@ dig 装配 *web_search.Registry
 | **5** | 分块策略、docreader 解析器 | 分块是函数变量；解析器在 Python 进程，需要独立 plugin 清单或 gRPC 能力协商 |
 | **6** | 前端缝 | 搜索/连接器/IM 的表单按插件元数据渲染，避免再改 Vue 才能「加完」 |
 | **7** | 包边界 | 低频实现迁到独立 Go module；Lite 用 build tag 或 profile 去掉重 SDK |
-| **8** | 进程外加载 | 仅当需要不重新编译就装社区插件时，再上 hashicorp/go-plugin 或 WASM |
+| **8（搜索已做）** | 进程外 / 磁盘加载 | `runtime: js` 与 `runtime: http`；其它缝按同样 manifest 扩 |
 
 每阶段保持绞杀：旧接口不变，Host 先 Provide 现有 Registry，再让插件往上注册。
 
@@ -163,7 +171,7 @@ dig 装配 *web_search.Registry
 - 不要用 `plugin.Open`（Go `.so`）当社区分发手段。
 - 不要把 dig 换成自研 DI。dig 继续管 Handler/Service/DB；plugin Host 只管 **可替换能力**。
 - 不要把业务规则（RBAC、配额、SSRF 白名单）做成「可卸载插件」。策略可以 listen 事件，但不能让社区插件关掉安全底线。
-- 不要在第一阶段追求热重载。先做到进程启动可组合、退出可撤销。
+- 不要在第一阶段追求热重载。磁盘插件改完重启即可；HMR 是 Cordis 的 TS 特权。
 
 ---
 
@@ -175,10 +183,16 @@ dig 装配 *web_search.Registry
 2. `internal/types/web_search_provider.go` 加类型常量与 `GetWebSearchProviderTypes()` 元数据（前端下拉仍读这里，阶段 6 再改成插件清单）。
 3. `internal/plugin/websearch/plugins.go` 的 `builtins()` 加 `{"brave", web_search.NewBraveProvider}`。
 
-树外 / 样板：
+免编译（推荐给社区 / TS）：
 
 ```bash
-# 启用仓库自带的 echo 样板（返回查询自身，仅供验证组合核）
+# 默认扫描 plugins.d/。仓库自带 plugins.d/websearch-js-echo/
+# 或自己写一个 HTTP sidecar：见 plugins/sdk-ts/websearch/
+```
+
+Go 样板（仍要编进二进制时）：
+
+```bash
 WEKNORA_PLUGINS=websearch.echo
 ```
 
@@ -208,6 +222,7 @@ patch:
 | `WEKNORA_PLUGIN_PROFILE` | profile 路径，默认 `config/plugin_profile.yaml` |
 | `WEKNORA_PLUGIN_PATCH` | 额外 overlay YAML（只读其中的 `patch`） |
 | `WEKNORA_PLUGINS` | 逗号分隔 factory id，insert-if-missing |
+| `WEKNORA_PLUGIN_DIR` | 运行时扫描目录，默认 `plugins.d`；`none` 关闭 |
 
 ---
 

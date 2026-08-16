@@ -1,17 +1,12 @@
 # WeKnora plugins
 
-Out-of-tree (or extractable) plugins live here. They register a factory with
-`plugin.Register` and implement a capability seam. The process host mounts
-them from `config/plugin_profile.yaml` / `WEKNORA_PLUGINS` — you do not edit
-`internal/container/container.go`.
+Two ways to add a plugin without editing `container.go`:
 
-| Path | Seam | How to enable |
-| --- | --- | --- |
-| `websearch-echo/` | `web_search` | `WEKNORA_PLUGINS=websearch.echo` |
+| Path | Language | Rebuild WeKnora? | How it loads |
+| --- | --- | --- | --- |
+| `../plugins.d/<id>/plugin.yaml` | JS (`runtime: js`) or any (`runtime: http`) | No | Host scans `WEKNORA_PLUGIN_DIR` |
+| `websearch-echo/` | Go | Yes (blank import) | `WEKNORA_PLUGINS=websearch.echo` |
+| `sdk-ts/websearch/` | TypeScript sidecar | No | HTTP + `plugin.yaml` |
 
-In-tree engines still ship in `internal/plugin/websearch` (bundle `base`).
-New community plugins: copy `websearch-echo`, register a unique factory id,
-blank-import the package from `internal/plugin/boot` (Go compile-time catalog),
-then enable it in the profile. Runtime RPC/WASM loading is a later phase.
-
+In-tree engines stay in `internal/plugin/websearch` (bundle `base`).
 Design: `docs/dev/plugin-architecture.md`.

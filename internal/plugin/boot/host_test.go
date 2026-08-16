@@ -29,10 +29,16 @@ func (c *nopCleaner) Cleanup(context.Context) []error { return nil }
 
 var _ interfaces.ResourceCleaner = (*nopCleaner)(nil)
 
-func TestNewHostMountsBuiltinSearch(t *testing.T) {
+func isolatePlugins(t *testing.T) {
+	t.Helper()
+	t.Setenv(envPluginDir, "none")
 	t.Setenv(envProfile, filepath.Join(t.TempDir(), "missing.yaml"))
 	t.Setenv(envPlugins, "")
 	t.Setenv(envPatch, "")
+}
+
+func TestNewHostMountsBuiltinSearch(t *testing.T) {
+	isolatePlugins(t)
 
 	reg := infra_web_search.NewRegistry()
 	cleaner := &nopCleaner{}
@@ -57,9 +63,8 @@ func TestNewHostMountsBuiltinSearch(t *testing.T) {
 }
 
 func TestNewHostEnablesEchoViaEnv(t *testing.T) {
-	t.Setenv(envProfile, filepath.Join(t.TempDir(), "missing.yaml"))
+	isolatePlugins(t)
 	t.Setenv(envPlugins, "websearch.echo")
-	t.Setenv(envPatch, "")
 
 	reg := infra_web_search.NewRegistry()
 	host, err := NewHost(reg, nil)
@@ -86,6 +91,7 @@ func TestLoadProfileUsesYAML(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv(envPluginDir, "none")
 	t.Setenv(envProfile, path)
 	t.Setenv(envPlugins, "")
 	t.Setenv(envPatch, "")
@@ -100,6 +106,48 @@ func TestLoadProfileUsesYAML(t *testing.T) {
 	}
 	if !reg.Has("bing") {
 		t.Fatal("bing should remain")
+	}
+	host.Unload()
+}
+
+func TestNewHostLoadsDiskJS(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "plugin.yaml"), []byte(`
+id: websearch.bootjs
+name: Boot JS
+seam: web_search
+runtime: js
+entry: search.js
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "search.js"), []byte(`
+function search(query) {
+  return [{ title: "boot", url: "https://weknora.local/boot", snippet: query, source: "bootjs" }];
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envPluginDir, dir)
+	t.Setenv(envProfile, filepath.Join(t.TempDir(), "missing.yaml"))
+	t.Setenv(envPlugins, "")
+	t.Setenv(envPatch, "")
+
+	reg := infra_web_search.NewRegistry()
+	host, err := NewHost(reg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reg.Has("bootjs") {
+		t.Fatalf("disk plugin missing, list=%v dump=\n%s", reg.List(), host.Dump())
+	}
+	p, err := reg.CreateProvider("bootjs", types.WebSearchProviderParameters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Search(context.Background(), "disk", 1, false)
+	if err != nil || len(got) != 1 || got[0].Source != "bootjs" {
+		t.Fatalf("search = %+v, %v", got, err)
 	}
 	host.Unload()
 }

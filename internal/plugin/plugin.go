@@ -67,3 +67,15 @@ func (c Config) Bool(key string) bool {
 	b, _ := v.(bool)
 	return b
 }
+
+// Merge returns a new Config with overlay keys winning.
+func (c Config) Merge(overlay Config) Config {
+	out := Config{}
+	for k, v := range c {
+		out[k] = v
+	}
+	for k, v := range overlay {
+		out[k] = v
+	}
+	return out
+}

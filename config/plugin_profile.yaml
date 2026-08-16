@@ -4,7 +4,8 @@
 #   1) each named bundle, in order  (code-defined; "base" = in-tree web search)
 #   2) this file's patch
 #   3) WEKNORA_PLUGIN_PATCH overlay (optional extra YAML)
-#   4) WEKNORA_PLUGINS=id1,id2      (insert-if-missing convenience)
+#   4) WEKNORA_PLUGIN_DIR           (scan plugins.d/*/plugin.yaml → bundle "external")
+#   5) WEKNORA_PLUGINS=id1,id2      (insert-if-missing convenience)
 #
 # A patch targets a row by id and replaces listed fields, or inserts a new
 # row when insert: true. See docs/dev/plugin-architecture.md.

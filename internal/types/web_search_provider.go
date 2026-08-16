@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/utils"
@@ -169,8 +170,68 @@ type WebSearchProviderConfigFieldOption struct {
 	Value    string `json:"value"`
 }
 
+var (
+	extraProviderMu    sync.RWMutex
+	extraProviderTypes = map[string]WebSearchProviderTypeInfo{}
+)
+
+// RegisterWebSearchProviderType adds a runtime plugin type to the UI catalog.
+// Built-in ids are left untouched.
+func RegisterWebSearchProviderType(info WebSearchProviderTypeInfo) {
+	if info.ID == "" {
+		return
+	}
+	extraProviderMu.Lock()
+	extraProviderTypes[info.ID] = info
+	extraProviderMu.Unlock()
+}
+
+// UnregisterWebSearchProviderType removes a runtime plugin type.
+func UnregisterWebSearchProviderType(id string) {
+	extraProviderMu.Lock()
+	delete(extraProviderTypes, id)
+	extraProviderMu.Unlock()
+}
+
+// LookupWebSearchProviderType finds built-in or runtime type metadata.
+func LookupWebSearchProviderType(id string) (WebSearchProviderTypeInfo, bool) {
+	for _, info := range builtinWebSearchProviderTypes() {
+		if info.ID == id {
+			return info, true
+		}
+	}
+	extraProviderMu.RLock()
+	info, ok := extraProviderTypes[id]
+	extraProviderMu.RUnlock()
+	return info, ok
+}
+
+// IsKnownWebSearchProviderType reports whether id is a built-in or disk plugin.
+func IsKnownWebSearchProviderType(id string) bool {
+	_, ok := LookupWebSearchProviderType(id)
+	return ok
+}
+
 // GetWebSearchProviderTypes returns metadata for all supported provider types.
 func GetWebSearchProviderTypes() []WebSearchProviderTypeInfo {
+	out := builtinWebSearchProviderTypes()
+	seen := make(map[string]struct{}, len(out))
+	for _, info := range out {
+		seen[info.ID] = struct{}{}
+	}
+	extraProviderMu.RLock()
+	extras := make([]WebSearchProviderTypeInfo, 0, len(extraProviderTypes))
+	for id, info := range extraProviderTypes {
+		if _, ok := seen[id]; !ok {
+			extras = append(extras, info)
+		}
+	}
+	extraProviderMu.RUnlock()
+	out = append(out, extras...)
+	return out
+}
+
+func builtinWebSearchProviderTypes() []WebSearchProviderTypeInfo {
 	return []WebSearchProviderTypeInfo{
 		{
 			ID:             "duckduckgo",
