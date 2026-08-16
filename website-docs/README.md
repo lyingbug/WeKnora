@@ -168,6 +168,7 @@ npm run preview  # 预览构建产物
 | [开发指南](06-development/01-dev-guide.md) | 环境要求、Makefile 全目标、开发模式、四条测试线、CI 与代码规范、调试技巧 |
 | [数据库与迁移](06-development/02-database-schema.md) | 40+ 张表结构与 ER 图、golang-migrate 双路径（versioned / sqlite）、新增迁移步骤、故障排查 |
 | [扩展点指南](06-development/03-extension-points.md) | 9 大扩展点：解析器/分块策略/检索引擎/模型 Provider/搜索引擎/数据源连接器/IM 适配器/Agent 工具/存储后端 |
+| [插件化架构](06-development/04-plugin-architecture.md) | Cordis 风格组合核：profile / bundle / 可撤销注册；联网搜索已迁到 `plugin.Host` |
 
 ## 系统组件速览
 

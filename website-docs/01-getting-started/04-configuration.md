@@ -252,6 +252,9 @@ AWS S3 的 `S3_ACCESS_KEY` / `S3_SECRET_KEY` 可以**同时留空**，此时走 
 | --- | --- | --- |
 | Sandbox 配置 | 设置页按空间维护 | 后端、凭据、模板、超时和私网访问策略不再读取 `WEKNORA_SANDBOX_*` |
 | `WEKNORA_SKILLS_DIR` | 空（镜像内 /app/skills/preloaded） | 自定义 Skills 目录 |
+| `WEKNORA_PLUGIN_PROFILE` | `config/plugin_profile.yaml` | 插件组合 profile（bundle + patch），见[插件化架构](../06-development/04-plugin-architecture.md) |
+| `WEKNORA_PLUGIN_PATCH` | 空 | 额外 overlay YAML（只读其中的 `patch`） |
+| `WEKNORA_PLUGINS` | 空 | 逗号分隔 factory id，启动时 insert-if-missing（如 `websearch.echo`） |
 | `WEKNORA_AGENT_LLM_TIMEOUT` | 120s | Agent 单次 LLM 调用超时（Go duration 或纯数字秒） |
 | `WEKNORA_AGENT_TOOL_APPROVAL_TIMEOUT` / `_FAIL_OPEN` | 600s / fail-close | MCP 工具人工审批等待与失败策略 |
 | `WEKNORA_CHAT_ATTACHMENT_TTL_HOURS` / `_WAIT_TIMEOUT_SEC` / `_OCR_CONCURRENCY` / `_OCR_MAX_PAGES` | 24 / 60 / 8 / 8 | 聊天附件解析保留时长、等待超时与 OCR 并发/页数上限 |
