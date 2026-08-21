@@ -639,3 +639,31 @@ export function batchReparseKnowledge(kbId: string, ids: string[], processConfig
     process_config: processConfig,
   });
 }
+
+// Filters accepted by the document list endpoint; batch reparse reuses them so
+// the server can rebuild every match without the browser paging through IDs.
+export interface KnowledgeListFilterParams {
+  tag_ids?: string;
+  keyword?: string;
+  file_type?: string;
+  parse_status?: string;
+  source?: string;
+  start_time?: string;
+  end_time?: string;
+}
+
+export function batchReparseKnowledgeByFilter(
+  kbId: string,
+  filter: KnowledgeListFilterParams,
+  processConfig?: KnowledgeProcessOverrides,
+) {
+  const { tag_ids, ...rest } = filter;
+  return post(`/api/v1/knowledge/batch-reparse`, {
+    kb_id: kbId,
+    filter: {
+      ...rest,
+      tag_ids: tag_ids ? tag_ids.split(',').filter(Boolean) : undefined,
+    },
+    process_config: processConfig,
+  });
+}

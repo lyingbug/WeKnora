@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import FolderPickerMenu, { type FolderOption } from './FolderPickerMenu.vue';
+import { canSelectAllFiltered as canSelectAllFilteredMatches } from '../batchReparseSelection';
 
-defineProps<{
+const props = defineProps<{
   count: number;
   deleteLoading?: boolean;
   reparseLoading?: boolean;
@@ -14,6 +15,12 @@ defineProps<{
   /** Hidden when the knowledge base has no folder structure to file into. */
   showMoveToFolder?: boolean;
   folderOptions?: FolderOption[];
+  /** True while any document filter (status, tag, keyword, ...) is applied. */
+  filterActive?: boolean;
+  /** How many documents match the active filter across all pages. */
+  filteredTotal?: number;
+  /** True once the user opted into the whole filtered result set. */
+  allFilteredSelected?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -22,11 +29,32 @@ const emit = defineEmits<{
   (e: 'reparse'): void;
   (e: 'batchTag'): void;
   (e: 'moveToFolder', folderPath: string): void;
+  (e: 'selectAllFiltered'): void;
 }>();
 
 const { t } = useI18n();
 
 const folderPickerVisible = ref(false);
+
+const busy = computed(() => !!props.deleteLoading || !!props.reparseLoading || !!props.tagLoading);
+// Rebuilding the whole filtered set targets every match, not just loaded rows.
+const targetCount = computed(() =>
+  props.allFilteredSelected ? props.filteredTotal || 0 : props.count,
+);
+const canSelectAllFiltered = computed(() =>
+  canSelectAllFilteredMatches({
+    filterActive: !!props.filterActive,
+    allFilteredSelected: !!props.allFilteredSelected,
+    filteredTotal: props.filteredTotal || 0,
+    selectedCount: props.count,
+  }),
+);
+// Selecting all matches is a rebuild-only affordance. Delete / tag / move keep
+// operating on explicitly checked rows so a cross-page selection can never
+// remove or relabel documents the user has not seen.
+const otherActionsDisabled = computed(
+  () => props.count === 0 || busy.value || !!props.allFilteredSelected,
+);
 </script>
 
 <template>
@@ -35,24 +63,33 @@ const folderPickerVisible = ref(false);
       :aria-label="t('knowledgeBase.selectedCount', { count })">
       <div class="batch-bar-inner">
         <div class="batch-bar-left">
-          <span class="batch-bar-count">{{ t('knowledgeBase.selectedCount', { count }) }}</span>
+          <span class="batch-bar-count">
+            {{ allFilteredSelected
+              ? t('knowledgeBase.allFilteredSelected', { count: filteredTotal || 0 })
+              : t('knowledgeBase.selectedCount', { count }) }}
+          </span>
+          <t-button v-if="canSelectAllFiltered" variant="text" theme="primary" size="small"
+            class="batch-bar-select-all" @click="emit('selectAllFiltered')">
+            {{ t('knowledgeBase.selectAllFiltered', { count: filteredTotal || 0 }) }}
+          </t-button>
           <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="emit('cancel')">
             {{ t('knowledgeBase.clearSelection') }}
           </t-button>
         </div>
         <div class="batch-bar-actions">
-          <t-popconfirm theme="warning" :content="t('knowledgeBase.confirmBatchReparseDocument', { count })"
+          <t-popconfirm theme="warning"
+            :content="t('knowledgeBase.confirmBatchReparseDocument', { count: targetCount })"
             :confirm-btn="{ content: t('knowledgeBase.confirmBatchReparse'), theme: 'warning' }"
             :cancel-btn="{ content: t('common.cancel') }" placement="top" @confirm="emit('reparse')">
             <t-button theme="default" variant="outline" size="small"
-              :disabled="count === 0 || deleteLoading || reparseLoading || tagLoading" :loading="reparseLoading" @click.stop>
+              :disabled="targetCount === 0 || busy" :loading="reparseLoading" @click.stop>
               <template #icon><t-icon name="refresh" size="14px" /></template>
               {{ t('knowledgeBase.rebuildDocument') }}
             </t-button>
           </t-popconfirm>
 
           <t-button theme="default" variant="outline" size="small"
-            :disabled="count === 0 || deleteLoading || reparseLoading || tagLoading" :loading="tagLoading"
+            :disabled="otherActionsDisabled" :loading="tagLoading"
             @click="emit('batchTag')">
             <template #icon><t-icon name="discount" size="14px" /></template>
             {{ t('knowledgeBase.batchTag') }}
@@ -60,8 +97,7 @@ const folderPickerVisible = ref(false);
 
           <t-popup v-if="showMoveToFolder" v-model:visible="folderPickerVisible" trigger="click"
             placement="top" overlay-class-name="card-more" destroy-on-close>
-            <t-button theme="default" variant="outline" size="small"
-              :disabled="count === 0 || deleteLoading || reparseLoading || tagLoading">
+            <t-button theme="default" variant="outline" size="small" :disabled="otherActionsDisabled">
               <template #icon><t-icon name="folder" size="14px" /></template>
               {{ t('knowledgeBase.moveToFolder.action') }}
             </t-button>
@@ -77,7 +113,7 @@ const folderPickerVisible = ref(false);
             :confirm-btn="{ content: t('knowledgeBase.confirmDelete'), theme: 'danger' }"
             :cancel-btn="{ content: t('common.cancel') }" placement="top" @confirm="emit('delete')">
             <t-button theme="danger" variant="outline" size="small"
-              :disabled="count === 0 || deleteLoading || reparseLoading || tagLoading" :loading="deleteLoading" @click.stop>
+              :disabled="otherActionsDisabled" :loading="deleteLoading" @click.stop>
               <template #icon><t-icon name="delete" size="14px" /></template>
               {{ t('knowledgeBase.batchDelete') }}
             </t-button>
@@ -93,7 +129,9 @@ const folderPickerVisible = ref(false);
   position: relative;
   z-index: 5;
   width: 100%;
-  max-width: 560px;
+  // Wide enough for the extra "select all matches" affordance without pushing
+  // the clear-selection button out of view.
+  max-width: 680px;
   margin: 0 auto;
   padding: 0 4px;
   box-sizing: border-box;
@@ -101,9 +139,10 @@ const folderPickerVisible = ref(false);
 
 .batch-bar-inner {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px 12px;
   padding: 8px 12px;
   background: var(--td-bg-color-container);
   border: 1px solid var(--td-component-stroke);
@@ -124,6 +163,13 @@ const folderPickerVisible = ref(false);
   font-weight: 500;
   color: var(--td-text-color-secondary);
   white-space: nowrap;
+}
+
+.batch-bar-select-all {
+  flex-shrink: 0;
+  padding: 0 6px !important;
+  height: 28px !important;
+  font-size: 12px;
 }
 
 .batch-bar-clear {
