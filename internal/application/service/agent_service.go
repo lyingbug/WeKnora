@@ -644,9 +644,11 @@ func (s *agentService) registerTools(
 				rerankModel,
 				chatModel,
 				s.cfg,
-			)
+			).WithRelevanceScope(registry.RelevanceScope())
 		case tools.ToolGrepChunks:
-			toolToRegister = tools.NewGrepChunksTool(s.db, config.SearchTargets)
+			toolToRegister = tools.NewGrepChunksTool(s.db, config.SearchTargets).
+				WithRelevanceScope(registry.RelevanceScope()).
+				WithReranker(rerankModel)
 			logger.Infof(ctx, "Registered grep_chunks tool with searchTargets: %d targets", len(config.SearchTargets))
 		case tools.ToolListKnowledgeChunks:
 			toolToRegister = tools.NewListKnowledgeChunksTool(s.knowledgeService, s.chunkService, config.SearchTargets)

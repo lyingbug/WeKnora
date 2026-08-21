@@ -214,6 +214,10 @@ func (e *AgentEngine) Execute(
 	// Ensure tools are cleaned up after execution
 	defer e.toolRegistry.Cleanup(ctx)
 
+	// Seed the retrieval prior so tools can judge relevance against the actual
+	// question even before any semantic search has run this turn.
+	e.toolRegistry.RelevanceScope().SetUserQuery(query)
+
 	common.PipelineInfo(ctx, "Agent", "execute_start", map[string]interface{}{
 		"session_id":   sessionID,
 		"message_id":   messageID,

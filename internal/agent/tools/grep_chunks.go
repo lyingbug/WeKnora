@@ -11,9 +11,11 @@ import (
 	"sync"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/models/rerank"
 	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var grepChunksTool = BaseTool{
@@ -68,6 +70,15 @@ type GrepChunksTool struct {
 	db            *gorm.DB
 	searchTargets types.SearchTargets
 
+	// scope carries the document ranking produced by semantic retrieval
+	// earlier in the same run, used to decide which documents this scan
+	// visits first. Never nil.
+	scope *RelevanceScope
+
+	// reranker scores individual matches when a regex hits far more chunks
+	// than the agent can be shown. Optional.
+	reranker rerank.Reranker
+
 	mu         sync.Mutex
 	seenChunks map[string]bool
 }
@@ -78,8 +89,24 @@ func NewGrepChunksTool(db *gorm.DB, searchTargets types.SearchTargets) *GrepChun
 		BaseTool:      grepChunksTool,
 		db:            db,
 		searchTargets: searchTargets,
+		scope:         NewRelevanceScope(),
 		seenChunks:    make(map[string]bool),
 	}
+}
+
+// WithRelevanceScope shares the run's relevance scope with this tool so its
+// scans start from the documents semantic retrieval already ranked highly.
+func (t *GrepChunksTool) WithRelevanceScope(scope *RelevanceScope) *GrepChunksTool {
+	if scope != nil {
+		t.scope = scope
+	}
+	return t
+}
+
+// WithReranker enables match-level reranking of grep hits.
+func (t *GrepChunksTool) WithReranker(reranker rerank.Reranker) *GrepChunksTool {
+	t.reranker = reranker
+	return t
 }
 
 // Execute executes the grep chunks tool
@@ -154,6 +181,9 @@ func (t *GrepChunksTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 	// Score chunks using compiled regex (counts + earliest-position boost).
 	scoredResults := t.scoreChunks(ctx, deduplicatedResults, compiled)
 
+	candidateCount := len(scoredResults)
+	scoredResults, matchReranked := t.applyMatchRelevance(ctx, scoredResults, query, limit)
+
 	finalResults := scoredResults
 	if len(scoredResults) > 10 {
 		mmrK := len(scoredResults)
@@ -200,12 +230,15 @@ func (t *GrepChunksTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 		knowledgeResultsForUI = knowledgeResultsForUI[:maxKnowledgeRows]
 	}
 
-	output := t.formatOutput(ctx, finalResults, queries, compiled)
+	output := t.formatOutput(ctx, finalResults, queries, compiled, candidateCount)
 
 	return &types.ToolResult{
 		Success: true,
 		Output:  output,
 		Data: map[string]interface{}{
+			"candidate_count":    candidateCount,
+			"match_reranked":     matchReranked,
+			"scope_documents":    len(t.scope.RankedDocuments(maxScopeDocuments)),
 			"query":              query,
 			"queries":            queries, // legacy alias for older frontends
 			"patterns":           queries, // legacy alias for older frontends
@@ -366,6 +399,101 @@ func scopeClause(
 	return "(" + strings.Join(clauses, " OR ") + ")", args
 }
 
+// maxFetchLimit bounds the candidate pool a single scan pulls out of the
+// database before scoring, deduplication and output truncation narrow it to
+// the handful of matches the agent actually sees.
+const maxFetchLimit = 500
+
+// fetchRelevanceOrdered pulls the candidate pool in relevance-guided order.
+//
+// A broad regex over a large knowledge base routinely matches far more chunks
+// than maxFetchLimit, so whatever the database returns first is all the agent
+// can ever see. Ordering that fetch by document recency means a decisive
+// excerpt in an older document is invisible no matter how well the regex was
+// written. When semantic retrieval has already ranked documents this turn,
+// those documents are therefore scanned first, and only the remaining budget
+// is spent on the rest of the corpus — the ranking steers traversal instead of
+// gating which content is allowed through.
+//
+// Falls back to a single recency-ordered scan when no ranking exists yet.
+func (t *GrepChunksTool) fetchRelevanceOrdered(
+	ctx context.Context,
+	baseQuery func() *gorm.DB,
+) ([]chunkWithTitle, error) {
+	const recencyOrder = "chunks.created_at DESC, " + grepOrderTieBreak
+
+	scopeDocs := t.scope.RankedDocuments(maxScopeDocuments)
+	if len(scopeDocs) == 0 {
+		var results []chunkWithTitle
+		err := baseQuery().
+			Order(recencyOrder).
+			Limit(maxFetchLimit).
+			Find(&results).Error
+		return results, err
+	}
+
+	// Pass 1: the documents semantic retrieval ranked, in that order.
+	var ranked []chunkWithTitle
+	if err := baseQuery().
+		Where("chunks.knowledge_id IN ?", scopeDocs).
+		Order(clause.OrderBy{Expression: scopeRankOrderExpr(scopeDocs)}).
+		Limit(maxFetchLimit).
+		Find(&ranked).Error; err != nil {
+		return nil, err
+	}
+
+	remaining := maxFetchLimit - len(ranked)
+	if remaining <= 0 {
+		logger.Infof(ctx, "[Tool][GrepChunks] Relevance-ordered scan filled the pool from %d ranked documents",
+			len(scopeDocs))
+		return ranked, nil
+	}
+
+	// Pass 2: everything the ranking did not cover. Keeping this pass is what
+	// preserves grep's real value — finding the literal string that semantic
+	// retrieval missed entirely.
+	var rest []chunkWithTitle
+	if err := baseQuery().
+		Where("chunks.knowledge_id NOT IN ?", scopeDocs).
+		Order(recencyOrder).
+		Limit(remaining).
+		Find(&rest).Error; err != nil {
+		return nil, err
+	}
+
+	logger.Infof(ctx, "[Tool][GrepChunks] Relevance-ordered scan: %d matches from %d ranked documents, %d beyond",
+		len(ranked), len(scopeDocs), len(rest))
+	return append(ranked, rest...), nil
+}
+
+// grepOrderTieBreak makes the candidate pool reproducible: without it, chunks
+// sharing a sort key come back in whatever order the storage engine chose, so
+// the same scan can show the agent different evidence on a retry.
+const grepOrderTieBreak = "chunks.knowledge_id ASC, chunks.chunk_index ASC, chunks.id ASC"
+
+// scopeRankOrderExpr renders a document ranking as a SQL ordering, so the
+// database returns matches in the order the documents were ranked rather than
+// in storage order. Document IDs are bound as parameters rather than inlined.
+//
+// The tie-break is part of the same expression because GORM's Order only
+// merges column lists; a second ordering clause alongside an expression would
+// be silently dropped.
+func scopeRankOrderExpr(docIDs []string) clause.Expr {
+	var sql strings.Builder
+	vars := make([]interface{}, 0, len(docIDs)*2+1)
+
+	sql.WriteString("CASE chunks.knowledge_id")
+	for i, id := range docIDs {
+		sql.WriteString(" WHEN ? THEN ?")
+		vars = append(vars, id, i)
+	}
+	sql.WriteString(" ELSE ? END, ")
+	vars = append(vars, len(docIDs))
+	sql.WriteString(grepOrderTieBreak)
+
+	return clause.Expr{SQL: sql.String(), Vars: vars}
+}
+
 // searchChunks performs the database search using regex queries.
 func (t *GrepChunksTool) searchChunks(
 	ctx context.Context,
@@ -382,15 +510,6 @@ func (t *GrepChunksTool) searchChunks(
 
 	regexOp := t.regexOperatorForDialect()
 
-	query := t.db.WithContext(ctx).Table("chunks").
-		Select("chunks.id, chunks.content, chunks.chunk_index, chunks.knowledge_id, "+
-			"chunks.knowledge_base_id, chunks.chunk_type, chunks.metadata, chunks.created_at, "+
-			"knowledges.title as knowledge_title").
-		Joins("JOIN knowledges ON chunks.knowledge_id = knowledges.id").
-		Where("chunks.is_enabled = ?", true).
-		Where("chunks.deleted_at IS NULL").
-		Where("knowledges.deleted_at IS NULL")
-
 	// Combine specific knowledge IDs, tag scopes, and full-KB scopes with OR so
 	// that mixing @KB with @tag/@file searches BOTH, mirroring knowledge_search's
 	// concurrent fan-out instead of dropping one side.
@@ -401,7 +520,6 @@ func (t *GrepChunksTool) searchChunks(
 	}
 	logger.Infof(ctx, "[Tool][GrepChunks] Scope: %d knowledge IDs, %d tag scopes, %d KBs",
 		len(knowledgeIDs), len(tagTargets), len(kbIDs))
-	query = query.Where(scopeSQL, scopeArgs...)
 
 	// For MySQL/SQLite REGEXP case-insensitivity we rely on the column's default
 	// collation (utf8mb4_general_ci etc.) OR the driver's REGEXP implementation,
@@ -416,12 +534,23 @@ func (t *GrepChunksTool) searchChunks(
 			fmt.Sprintf("(chunks.content %s ? OR knowledges.title %s ?)", regexOp, regexOp))
 		regexArgs = append(regexArgs, q, q)
 	}
-	query = query.Where("("+strings.Join(regexConditions, " OR ")+")", regexArgs...)
+	regexSQL := "(" + strings.Join(regexConditions, " OR ") + ")"
 
-	const maxFetchLimit = 500
+	baseQuery := func() *gorm.DB {
+		return t.db.WithContext(ctx).Table("chunks").
+			Select("chunks.id, chunks.content, chunks.chunk_index, chunks.knowledge_id, "+
+				"chunks.knowledge_base_id, chunks.chunk_type, chunks.metadata, chunks.created_at, "+
+				"knowledges.title as knowledge_title").
+			Joins("JOIN knowledges ON chunks.knowledge_id = knowledges.id").
+			Where("chunks.is_enabled = ?", true).
+			Where("chunks.deleted_at IS NULL").
+			Where("knowledges.deleted_at IS NULL").
+			Where(scopeSQL, scopeArgs...).
+			Where(regexSQL, regexArgs...)
+	}
 
-	var results []chunkWithTitle
-	if err := query.Order("chunks.created_at DESC").Limit(maxFetchLimit).Find(&results).Error; err != nil {
+	results, err := t.fetchRelevanceOrdered(ctx, baseQuery)
+	if err != nil {
 		logger.Errorf(ctx, "[Tool][GrepChunks] Failed to fetch results: %v", err)
 		return nil, err
 	}
@@ -475,12 +604,22 @@ func (t *GrepChunksTool) formatOutput(
 	results []chunkWithTitle,
 	queries []string,
 	compiled []*regexp.Regexp,
+	candidateCount int,
 ) string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("<grep_results chunk_count=\"%d\">\n", len(results)))
 	for _, q := range queries {
 		b.WriteString(fmt.Sprintf("<query>%s</query>\n", xmlEscape(q)))
+	}
+	// A regex can match far more chunks than fit in the reply. Saying so lets
+	// the agent narrow the pattern instead of concluding the shown matches are
+	// everything the knowledge base has.
+	if candidateCount > len(results) {
+		b.WriteString(fmt.Sprintf(
+			"<scan_summary candidates=\"%d\" shown=\"%d\" note=\"Matches were ranked by relevance to the current question; "+
+				"narrow the regex if the answer is not among them.\" />\n",
+			candidateCount, len(results)))
 	}
 
 	if len(results) == 0 {
