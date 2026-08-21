@@ -1,0 +1,31 @@
+apiVersion: weknora/v1
+kind: websearch
+id: ollama
+name: Ollama Web Search
+description: Ollama's hosted web search API.
+docURL: https://docs.ollama.com/web-search
+
+config:
+  - id: api_key
+    type: string
+    label: API Key
+    required: true
+    secret: true
+
+runtime:
+  type: http
+  request:
+    method: POST
+    url: https://ollama.com/api/web_search
+    headers:
+      Authorization: Bearer ${config.api_key}
+      User-Agent: WeKnora/1.0
+    body:
+      query: ${input.query}
+      max_results: ${input.max_results}
+  response:
+    items: results
+    fields:
+      title: title
+      url: url
+      snippet: content

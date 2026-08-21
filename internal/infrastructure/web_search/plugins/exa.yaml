@@ -1,0 +1,41 @@
+apiVersion: weknora/v1
+kind: websearch
+id: exa
+name: Exa
+description: Neural search API with page highlights and optional full text.
+docURL: https://docs.exa.ai/reference/search
+
+config:
+  - id: api_key
+    type: string
+    label: API Key
+    required: true
+    secret: true
+  - id: include_text
+    type: bool
+    label: Include full page text
+    help: Returns the extracted page body alongside highlights. Slower and larger.
+    default: false
+
+runtime:
+  type: http
+  request:
+    method: POST
+    url: https://api.exa.ai/search
+    headers:
+      x-api-key: ${config.api_key}
+    body:
+      query: ${input.query}
+      numResults: ${input.max_results}
+      contents:
+        highlights: true
+        text: ${config.include_text}
+  response:
+    items: results
+    errorPath: error
+    fields:
+      title: title
+      url: url
+      snippet: highlights.0
+      content: text
+      published_at: publishedDate

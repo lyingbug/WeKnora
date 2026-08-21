@@ -1,0 +1,36 @@
+apiVersion: weknora/v1
+kind: websearch
+id: baidu
+name: Baidu Search
+description: Baidu Qianfan AI search.
+docURL: https://cloud.baidu.com/doc/AppBuilder/s/Alp0omt4d
+
+config:
+  - id: api_key
+    type: string
+    label: API Key
+    required: true
+    secret: true
+
+runtime:
+  type: http
+  request:
+    method: POST
+    url: https://qianfan.baidubce.com/v2/ai_search/web_search
+    headers:
+      Authorization: Bearer ${config.api_key}
+    body:
+      messages:
+        - role: user
+          content: ${input.query}
+      search_source: baidu_search_v2
+      resource_type_filter:
+        - type: web
+          top_k: ${input.max_results}
+  response:
+    items: references
+    errorPath: message
+    fields:
+      title: title
+      url: url
+      snippet: content

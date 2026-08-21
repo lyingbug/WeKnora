@@ -1,0 +1,24 @@
+apiVersion: weknora/v1
+kind: websearch
+id: google
+name: Google Programmable Search
+description: Google Custom Search JSON API.
+docURL: https://developers.google.com/custom-search/v1/overview
+
+config:
+  - id: api_key
+    type: string
+    label: API Key
+    required: true
+    secret: true
+  - id: engine_id
+    type: string
+    label: Search Engine ID
+    help: The cx value of your Programmable Search Engine.
+    required: true
+
+runtime:
+  # Google is driven through its official Go client rather than a plain HTTP
+  # call, so it binds to a compiled-in implementation.
+  type: native
+  native: google

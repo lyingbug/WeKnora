@@ -1,0 +1,50 @@
+apiVersion: weknora/v1
+kind: websearch
+id: metaso
+name: Metaso AI Search
+description: Metaso search API with selectable corpora.
+
+config:
+  - id: api_key
+    type: string
+    label: API Key
+    required: true
+    secret: true
+  - id: scope
+    type: enum
+    label: Corpus
+    default: webpage
+    options:
+      - value: webpage
+        label: Web pages
+      - value: document
+        label: Documents
+      - value: scholar
+        label: Scholar
+      - value: podcast
+        label: Podcasts
+      - value: video
+        label: Video
+      - value: image
+        label: Images
+
+runtime:
+  type: http
+  request:
+    method: POST
+    url: https://metaso.cn/api/v1/search
+    headers:
+      Authorization: Bearer ${config.api_key}
+    body:
+      q: ${input.query}
+      scope: ${config.scope}
+      size: ${input.max_results}
+      includeSummary: true
+      conciseSnippet: true
+  response:
+    items: webpages
+    errorPath: errMsg
+    fields:
+      title: title
+      url: link
+      snippet: snippet

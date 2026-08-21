@@ -1,0 +1,31 @@
+apiVersion: weknora/v1
+kind: websearch
+id: tavily
+name: Tavily
+description: Search API built for LLM agents, returns cleaned page content.
+docURL: https://docs.tavily.com/api-reference/endpoint/search
+
+config:
+  - id: api_key
+    type: string
+    label: API Key
+    placeholder: tvly-...
+    required: true
+    secret: true
+
+runtime:
+  type: http
+  request:
+    method: POST
+    url: https://api.tavily.com/search
+    body:
+      api_key: ${config.api_key}
+      query: ${input.query}
+      max_results: ${input.max_results}
+      search_depth: basic
+  response:
+    items: results
+    fields:
+      title: title
+      url: url
+      snippet: content

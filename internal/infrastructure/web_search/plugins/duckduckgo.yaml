@@ -1,0 +1,20 @@
+apiVersion: weknora/v1
+kind: websearch
+id: duckduckgo
+name: DuckDuckGo
+description: Free search with no API key. Parses the public HTML endpoint.
+docURL: https://duckduckgo.com
+
+config:
+  - id: proxy_url
+    type: string
+    label: Proxy URL
+    help: Optional outbound proxy, for example http://host:port
+    placeholder: http://host:port
+
+runtime:
+  # DuckDuckGo has no JSON search API on the free tier, so this provider parses
+  # an HTML page. That cannot be expressed as request and response paths, which
+  # is what a native runtime is for.
+  type: native
+  native: duckduckgo

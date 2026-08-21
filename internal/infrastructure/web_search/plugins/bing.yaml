@@ -1,0 +1,31 @@
+apiVersion: weknora/v1
+kind: websearch
+id: bing
+name: Bing Search
+description: Microsoft Bing Web Search API.
+docURL: https://learn.microsoft.com/bing/search-apis/bing-web-search/reference/endpoints
+
+config:
+  - id: api_key
+    type: string
+    label: Subscription Key
+    required: true
+    secret: true
+
+runtime:
+  type: http
+  request:
+    method: GET
+    url: https://api.bing.microsoft.com/v7.0/search
+    query:
+      q: ${input.query}
+      count: ${input.max_results}
+    headers:
+      Ocp-Apim-Subscription-Key: ${config.api_key}
+      User-Agent: WeKnora/1.0
+  response:
+    items: webPages.value
+    fields:
+      title: name
+      url: url
+      snippet: snippet
