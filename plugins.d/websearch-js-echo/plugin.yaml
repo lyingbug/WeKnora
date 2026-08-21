@@ -1,0 +1,11 @@
+# Drop-in JS search plugin. No WeKnora rebuild, no blank import.
+# Copied into WEKNORA_PLUGIN_DIR (default: ./plugins.d).
+id: websearch.js-echo
+name: JS Echo
+version: 0.1.0
+description: Returns the query as a single result. Template for disk plugins.
+seam: web_search
+runtime: js
+entry: search.js
+provider: js-echo
+auto_enable: true

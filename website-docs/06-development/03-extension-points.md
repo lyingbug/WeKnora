@@ -2,6 +2,8 @@
 
 WeKnora 在文档解析、分块、检索、模型接入、联网搜索、数据源、IM 渠道、Agent 工具、对象存储九个层面都预留了清晰的扩展点。本章逐个给出：**核心接口定义（真实源码）→ 现有实现列表 → 新增实现步骤（含注册点文件）**。所有接口代码均摘自当前仓库源码。
 
+进程级组合（profile / bundle / 可撤销注册）见[插件化架构](./04-plugin-architecture.md)。联网搜索已经迁到 `plugin.Host`；其它缝仍按本章的旧注册点接入，迁移顺序写在 `docs/dev/plugin-architecture.md`。
+
 ## 0. 扩展点总览
 
 ```mermaid
@@ -31,12 +33,12 @@ graph LR
     P1 -.->|"文件读写"| P9
     P2 -.-> P9
     CT["container.go<br/>(依赖注入 / 注册中枢)"] -.->|"注册"| P3
-    CT -.->|"注册"| P5
+    PH["plugin.Host<br/>(profile / bundle)"] -.->|"注册"| P5
     CT -.->|"注册"| P6
     CT -.->|"注册"| P7
 ```
 
-Go 侧绝大多数扩展点的**注册中枢**是 `internal/container/container.go`（依赖注入容器）：检索引擎 `initRetrieveEngineRegistry()`、联网搜索 `registerWebSearchProviders()`、IM 适配器 `registerIMAdapterFactories()`、数据源连接器 `initConnectorRegistry()`。
+Go 侧多数扩展点的**注册中枢**仍是 `internal/container/container.go`（依赖注入容器）：检索引擎 `initRetrieveEngineRegistry()`、IM 适配器 `registerIMService()`、数据源连接器 `initConnectorRegistry()`。联网搜索改为 `internal/plugin/boot` 的 `plugin.Host`（`registerWebSearchProviders` 已删除）。
 
 ---
 
@@ -391,16 +393,18 @@ func (r *Registry) CreateProvider(providerType string, params types.WebSearchPro
 
 1. 在 `internal/types/web_search_provider.go` 增加 `WebSearchProviderType` 常量；
 2. 在 `internal/infrastructure/web_search/` 新建 `mysearch.go`，实现 `WebSearchProvider` 并暴露工厂 `func NewMySearchProvider(params types.WebSearchProviderParameters) (interfaces.WebSearchProvider, error)`；
-3. **注册点：`internal/container/container.go` 的 `registerWebSearchProviders()`**：
+3. **注册点：`internal/plugin/websearch/plugins.go` 的 `builtins()`**（不要再改 `container.go`）：
 
 ```go
-func registerWebSearchProviders(registry *infra_web_search.Registry) {
-    registry.Register("duckduckgo", infra_web_search.NewDuckDuckGoProvider)
-    registry.Register("google", infra_web_search.NewGoogleProvider)
-    // ... 在此追加：
-    registry.Register("mysearch", infra_web_search.NewMySearchProvider)
+func builtins() []spec {
+    return []spec{
+        // ...
+        {"mysearch", web_search.NewMySearchProvider},
+    }
 }
 ```
+
+树外插件优先丢 `plugins.d/mysearch/plugin.yaml`（`runtime: stdio` 或 `js`），无需重新编译；见[插件化架构](./04-plugin-architecture.md)。
 
 4. 前端的 provider 下拉与参数表单如需展示新引擎，同步 `frontend/` 相应配置页组件；租户配置持久化在 `web_search_providers` 表。
 
@@ -697,7 +701,7 @@ default:
 | 分块策略 | tier 函数 `func(text, cfg, profile) []Chunk` | `internal/infrastructure/chunker/strategy.go` | 同文件 `runTier()` + 策略常量 |
 | 检索引擎 | `RetrieveEngineRepository` | `internal/types/interfaces/retriever.go` | `container.go` `initRetrieveEngineRegistry()`（`RETRIEVE_DRIVER` 门控） |
 | 模型 Provider | `Provider` / `providerAdapter` / `Embedder` / `Reranker` | `internal/models/provider/provider.go` 等 | `provider.Register()` + `internal/models/chat/provider.go` |
-| 联网搜索 | `WebSearchProvider` | `internal/types/interfaces/web_search.go` | `container.go` `registerWebSearchProviders()` |
+| 联网搜索 | `WebSearchProvider` | `internal/types/interfaces/web_search.go` | `internal/plugin/websearch` `builtins()` + `plugin.Host` |
 | 数据源连接器 | `Connector` / `StreamingConnector` | `internal/datasource/connector.go` | `container.go` `initConnectorRegistry()` + `ConnectorMetadataRegistry` |
 | IM 适配器 | `Adapter`（+`StreamSender`/`FileDownloader`） | `internal/im/adapter.go` | `container.go` `registerIMAdapterFactories()` |
 | Agent 工具 | `types.Tool` | `internal/types/agent.go` | `internal/agent/tools/definitions.go` + `ToolRegistry.RegisterTool` |

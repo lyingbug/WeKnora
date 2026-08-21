@@ -1,0 +1,12 @@
+# Language-agnostic search plugin. Host launches the process and talks
+# JSON-RPC 2.0 on stdin/stdout — no HTTP server, no port.
+id: websearch.stdio-echo
+name: Stdio Echo
+version: 0.1.0
+description: Python sample for runtime stdio. Off by default.
+seam: web_search
+runtime: stdio
+command: python3
+entry: plugin.py
+provider: stdio-echo
+auto_enable: false
