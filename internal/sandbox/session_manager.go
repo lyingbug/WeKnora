@@ -162,6 +162,8 @@ func NewSessionBoundManager(deps SessionBoundManagerConfig) (*SessionBoundManage
 		applyCubeRuntimeDefaults(cfg)
 	case SandboxTypeE2B:
 		applyE2BRuntimeDefaults(cfg)
+	case SandboxTypeDocker:
+		applyDockerRuntimeDefaults(cfg)
 	}
 
 	// Build the provider-specific neutral create request using the
@@ -818,6 +820,26 @@ func buildSessionCreateRequest(provider RemoteProvider, cfg *Config) (RemoteCrea
 			},
 		}, nil
 
+	case SandboxTypeDocker:
+		ttl := cfg.DockerIdleTTL
+		if ttl <= 0 {
+			ttl = DefaultDockerIdleTTL
+		}
+		return RemoteCreateRequest{
+			TemplateID: cfg.DockerImage,
+			EnvVars:    envVars,
+			Timeout: RemoteTimeoutPolicy{
+				Mode:  RemoteTimeoutExplicit,
+				Value: ttl,
+				// Docker's pause keeps the container's memory resident on the
+				// host, so pausing an abandoned sandbox would reclaim nothing.
+				// Idle containers are deleted; the lifecycle rebinds the
+				// session exactly as it does for a provider-reaped sandbox.
+				Action:     RemoteOnTimeoutKill,
+				AutoResume: false,
+			},
+		}, nil
+
 	default:
 		return RemoteCreateRequest{}, fmt.Errorf(
 			"sandbox: unsupported remote provider %q for session create request",
@@ -842,6 +864,11 @@ func effectiveHTTPTimeout(provider RemoteProvider, cfg *Config) time.Duration {
 			return cfg.E2BHTTPTimeout
 		}
 		return DefaultE2BHTTPTimeout
+	case SandboxTypeDocker:
+		if cfg.DockerHTTPTimeout > 0 {
+			return cfg.DockerHTTPTimeout
+		}
+		return DefaultDockerHTTPTimeout
 	default:
 		return DefaultCubeHTTPTimeout
 	}

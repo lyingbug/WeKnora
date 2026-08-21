@@ -184,6 +184,15 @@
             <t-input v-model="docker.image" placeholder="wechatopenai/weknora-sandbox:latest"
               @input="onFieldInput('image')" />
           </t-form-item>
+          <t-form-item :label="$t('settings.sandbox.dockerHost')" :help="$t('settings.sandbox.dockerHostHelp')">
+            <t-input v-model="docker.host" placeholder="unix:///var/run/docker.sock"
+              @input="onFieldInput('host')" />
+          </t-form-item>
+          <t-form-item :label="$t('settings.sandbox.dockerTlsCertPath')"
+            :help="$t('settings.sandbox.dockerTlsCertPathHelp')">
+            <t-input v-model="docker.tls_cert_path" placeholder="/etc/weknora/docker-certs"
+              @input="onFieldInput('tls_cert_path')" />
+          </t-form-item>
         </template>
         <t-alert v-else theme="warning" class="compact-alert" :message="$t('settings.sandbox.localRuntimeWarning')" />
       </section>
@@ -292,6 +301,36 @@
                 placeholder="300" />
             </t-form-item>
             <p class="section-help section-help--field">{{ $t('settings.sandbox.sandboxTtlHelp') }}</p>
+          </template>
+          <!--
+            Docker has no provider-side timeout at all: an abandoned container
+            keeps its memory and CPU share on the daemon host until WeKnora
+            reclaims it, so the idle TTL and the resource caps are the only
+            things bounding what one workspace can hold.
+          -->
+          <template v-if="backend === 'docker'">
+            <t-form-item :label="$t('settings.sandbox.dockerIdleTtl')">
+              <t-input-number v-model="docker.idle_ttl_seconds" :min="0" theme="column" placeholder="1800" />
+            </t-form-item>
+            <p class="section-help section-help--field">{{ $t('settings.sandbox.dockerIdleTtlHelp') }}</p>
+            <t-form-item :label="$t('settings.sandbox.dockerCpuLimit')">
+              <t-input-number v-model="docker.cpu_limit" :min="0" :step="0.5" theme="column" placeholder="2" />
+            </t-form-item>
+            <t-form-item :label="$t('settings.sandbox.dockerMemoryLimit')">
+              <t-input-number v-model="docker.memory_limit_mb" :min="0" theme="column" placeholder="2048" />
+            </t-form-item>
+            <t-form-item :label="$t('settings.sandbox.dockerPidsLimit')">
+              <t-input-number v-model="docker.pids_limit" :min="0" theme="column" placeholder="512" />
+            </t-form-item>
+            <p class="section-help section-help--field">{{ $t('settings.sandbox.dockerResourceHelp') }}</p>
+            <t-form-item :label="$t('settings.sandbox.dockerNetworkMode')">
+              <t-select v-model="docker.network_mode" :placeholder="$t('settings.sandbox.dockerNetworkBridge')"
+                clearable>
+                <t-option value="bridge" :label="$t('settings.sandbox.dockerNetworkBridge')" />
+                <t-option value="none" :label="$t('settings.sandbox.dockerNetworkNone')" />
+              </t-select>
+            </t-form-item>
+            <p class="section-help section-help--field">{{ $t('settings.sandbox.dockerNetworkModeHelp') }}</p>
           </template>
           <t-form-item :label="$t('settings.sandbox.defaultTimeout')">
             <t-input-number v-model="defaultTimeoutSec" :min="0" theme="column" placeholder="60" />
@@ -407,6 +446,7 @@ import {
   type SandboxConflict,
   type SandboxCubeConfig,
   type SandboxE2BConfig,
+  type SandboxDockerConfig,
   type SandboxTemplate,
   isNamedSandboxBackend,
   NAMED_SANDBOX_BACKEND_TYPES,
@@ -455,7 +495,7 @@ const defaultTimeoutSec = ref<number | undefined>(undefined)
 const allowPrivateEndpoints = ref(false)
 const cube = reactive<SandboxCubeConfig>({})
 const e2b = reactive<SandboxE2BConfig>({})
-const docker = reactive<{ image?: string }>({})
+const docker = reactive<SandboxDockerConfig>({})
 // Tracks which secrets the tenant already has stored, so an empty input can
 // mean "keep the saved key" instead of "no key configured".
 const storedSecrets = reactive({ cube: false, e2b: false })
