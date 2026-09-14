@@ -36,7 +36,10 @@ func TestHandleMessageStreamFinalDelivery(t *testing.T) {
 	}{
 		{name: "successful card"},
 		{name: "fallback delivers answer", finalizeErr: cardErr, wantFallbackAttempts: 1},
-		{name: "both deliveries fail", finalizeErr: cardErr, sendErr: sendErr, wantFallbackAttempts: 1, wantErr: sendErr},
+		{
+			name: "both deliveries fail", finalizeErr: cardErr, sendErr: sendErr,
+			wantFallbackAttempts: 1, wantErr: sendErr,
+		},
 		{name: "end failure is reported without duplicate answer", endErr: endErr, wantErr: endErr},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -62,7 +65,8 @@ func TestHandleMessageStreamFinalDelivery(t *testing.T) {
 			if tt.finalizeErr != nil && tt.sendErr == nil && adapter.plainContent != "complete final answer" {
 				t.Fatalf("fallback content = %q", adapter.plainContent)
 			}
-			if messages.saved == nil || !messages.saved.IsCompleted || messages.saved.Content != "complete final answer" {
+			if messages.saved == nil || !messages.saved.IsCompleted ||
+				messages.saved.Content != "complete final answer" {
 				t.Fatalf("final answer not persisted despite delivery outcome: %+v", messages.saved)
 			}
 			if strings.Contains(adapter.finalContent, "思考") {

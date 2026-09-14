@@ -530,7 +530,14 @@ func (a *Adapter) ParseCallback(c *gin.Context) (*im.IncomingMessage, error) {
 // type), we retry once via the plain "send message" API so the reply still
 // reaches the user.
 func (a *Adapter) SendReply(ctx context.Context, incoming *im.IncomingMessage, reply *im.ReplyMessage) error {
-	for _, text := range splitTextReply(reply.Content) {
+	for i, text := range splitTextReply(reply.Content) {
+		// Leave headroom under the per-recipient 5 QPS limit. Other bots in a
+		// group share that quota, so API rate-limit responses also need retries.
+		if i > 0 {
+			if err := waitMessageSend(ctx, 250*time.Millisecond); err != nil {
+				return err
+			}
+		}
 		if err := a.sendTextReply(ctx, incoming, text); err != nil {
 			return err
 		}
@@ -667,7 +674,36 @@ func (a *Adapter) sendWithFallback(
 
 // postFeishuMessage POSTs a JSON payload to a Feishu IM message API and returns
 // the (code, msg) from the response body. Shared by reply and send paths.
-func (a *Adapter) postFeishuMessage(ctx context.Context, accessToken, url string, payload map[string]interface{}) (code int, msg string, err error) {
+func (a *Adapter) postFeishuMessage(
+	ctx context.Context, accessToken, url string, payload map[string]interface{},
+) (code int, msg string, err error) {
+	for attempt := 0; ; attempt++ {
+		code, msg, err = a.postFeishuMessageOnce(ctx, accessToken, url, payload)
+		// Only retry explicit rejections: a transport failure may have happened
+		// after delivery. Retry this endpoint and payload, not earlier chunks.
+		if err != nil || (code != 230020 && code != 99991400) || attempt >= 3 {
+			return code, msg, err
+		}
+		if err := waitMessageSend(ctx, time.Second<<attempt); err != nil {
+			return code, msg, err
+		}
+	}
+}
+
+func waitMessageSend(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return ctx.Err()
+	}
+}
+
+func (a *Adapter) postFeishuMessageOnce(
+	ctx context.Context, accessToken, url string, payload map[string]interface{},
+) (code int, msg string, err error) {
 	payloadBytes, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payloadBytes))
 	if err != nil {
